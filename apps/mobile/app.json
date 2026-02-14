@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "QuickRoutesAI",
+    "slug": "quickroutesai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "QuickRoutesAI needs your location to track deliveries.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "QuickRoutesAI tracks your location in the background during active deliveries.",
+        "UIBackgroundModes": ["location"]
+      }
+    },
+    "android": {
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "QuickRoutesAI tracks your location in the background during active deliveries.",
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ]
+    ]
+  }
+}
