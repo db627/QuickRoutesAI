@@ -24,44 +24,7 @@ quickroutesai/
 - **Firebase Project** with Auth + Firestore enabled
 - **Google Cloud** API keys (Maps JavaScript API, Directions API)
 
-## Setup
-
-### 1. Firebase Project
-
-1. Go to [Firebase Console](https://console.firebase.google.com) → Create project
-2. Enable **Authentication** → Email/Password sign-in method
-3. Enable **Cloud Firestore** → Start in test mode (deploy rules later)
-4. Go to **Project Settings** → **Service Accounts** → Generate new private key (JSON)
-5. Go to **Project Settings** → **General** → copy the web app Firebase config
-
-### 2. Google Maps API Keys
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/apis)
-2. Enable: **Maps JavaScript API**, **Directions API**, **Maps SDK for Android**, **Maps SDK for iOS**
-3. Create two API keys:
-   - **Browser key** (restricted to Maps JS API) → for web + mobile
-   - **Server key** (restricted to Directions API) → for backend
-
-### 3. Environment Variables
-
-```bash
-# Root — copy and fill in values
-cp .env.example .env
-
-# API
-cp apps/api/.env.example apps/api/.env
-# Fill in: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY, GOOGLE_MAPS_SERVER_KEY
-
-# Web
-cp apps/web/.env.local.example apps/web/.env.local
-# Fill in: all NEXT_PUBLIC_FIREBASE_* values and NEXT_PUBLIC_GOOGLE_MAPS_KEY
-
-# Mobile
-cp apps/mobile/.env.example apps/mobile/.env
-# Fill in: all EXPO_PUBLIC_FIREBASE_* values and EXPO_PUBLIC_GOOGLE_MAPS_KEY
-```
-
-### 4. Install & Run
+## Install & Run
 
 ```bash
 # Install all dependencies
