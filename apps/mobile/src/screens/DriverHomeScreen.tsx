@@ -139,7 +139,7 @@ export default function DriverHomeScreen() {
 
   return (
     <View className="flex-1 bg-gray-50">
-      {/* Status pill (driver availability, not connectivity) */}
+      {/* Status pill */}
       <View className="flex-row items-center justify-center py-2">
         <View className={`flex-row items-center rounded-full px-4 py-1.5 ${isOnline ? "bg-green-50" : "bg-gray-100"}`}>
           <View className={`h-2 w-2 rounded-full mr-2 ${isOnline ? "bg-green-500" : "bg-gray-400"}`} />

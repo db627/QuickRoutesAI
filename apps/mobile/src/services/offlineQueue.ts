@@ -11,7 +11,6 @@ interface QueuedWrite {
 const queue: QueuedWrite[] = [];
 let optimisticOnlineStatus: boolean | null = null;
 
-// --- simple listeners (no extra libs) ---
 type Listener<T> = (value: T) => void;
 
 const queueSizeListeners = new Set<Listener<number>>();
@@ -28,17 +27,17 @@ function emitOptimistic() {
 
 export function subscribeQueueSize(cb: Listener<number>) {
   queueSizeListeners.add(cb);
-  cb(queue.length); // immediately emit current value
+  cb(queue.length);
   return () => {
-    queueSizeListeners.delete(cb); // cleanup must return void
+    queueSizeListeners.delete(cb);
   };
 }
 
 export function subscribeOptimisticOnlineStatus(cb: Listener<boolean | null>) {
   optimisticListeners.add(cb);
-  cb(optimisticOnlineStatus); // immediately emit current value
+  cb(optimisticOnlineStatus); 
   return () => {
-    optimisticListeners.delete(cb); // cleanup must return void
+    optimisticListeners.delete(cb); 
   };
 }
 
@@ -64,7 +63,6 @@ export async function flushQueue() {
   queue.length = 0;
   emitQueueSize();
 
-  // once we start flushing, the optimistic override should be cleared
   optimisticOnlineStatus = null;
   emitOptimistic();
 
@@ -78,7 +76,6 @@ export async function flushQueue() {
       console.error(`[OfflineQueue] Failed ${write.path}/${write.docId}:`, err);
       queue.unshift(write);
       emitQueueSize();
-      // stop early; we'll retry next time connection is back
       return;
     }
   }
