@@ -5,19 +5,21 @@ import { doc, setDoc, onSnapshot } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 import { auth, firestore } from "../config/firebase";
 import { startTracking, stopTracking, getCurrentPosition } from "../services/location";
+import { enqueueWrite, getQueueSize } from "../services/offlineQueue";
+import { useNetworkStatus } from "../hooks/useNetworkStatus";
 
 export default function DriverHomeScreen() {
+  const { isConnected } = useNetworkStatus();
   const [isOnline, setIsOnline] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [queueSize, setQueueSize] = useState(0);
   const mapRef = useRef<MapView>(null);
 
   const uid = auth.currentUser?.uid;
 
-  // Ensure driver doc exists, then subscribe to it for online status
   useEffect(() => {
     if (!uid) return;
-    // Create the driver doc if it doesn't exist yet (merge preserves existing data)
     setDoc(
       doc(firestore, "drivers", uid),
       {
@@ -41,7 +43,6 @@ export default function DriverHomeScreen() {
     return unsub;
   }, [uid]);
 
-  // Get initial position
   useEffect(() => {
     getCurrentPosition().then((pos) => {
       if (pos) {
@@ -53,12 +54,16 @@ export default function DriverHomeScreen() {
   const toggleOnline = async () => {
     if (!uid) return;
     const newStatus = !isOnline;
+    const data = { isOnline: newStatus, updatedAt: new Date().toISOString() };
     try {
-      await setDoc(
-        doc(firestore, "drivers", uid),
-        { isOnline: newStatus, updatedAt: new Date().toISOString() },
-        { merge: true },
-      );
+      if (!isConnected) {
+        enqueueWrite("drivers", uid, data);
+        setIsOnline(newStatus);
+        setQueueSize(getQueueSize());
+        return;
+      }
+      await setDoc(doc(firestore, "drivers", uid), data, { merge: true });
+      setQueueSize(0);
       if (!newStatus && isTracking) {
         await stopTracking();
         setIsTracking(false);
@@ -110,6 +115,15 @@ export default function DriverHomeScreen() {
           </Text>
         </View>
       </View>
+
+      {/* Pending sync indicator */}
+      {queueSize > 0 && (
+        <View className="bg-orange-100 px-4 py-2 items-center">
+          <Text className="text-xs text-orange-700 font-medium">
+            Sync paused, waiting for connection.
+          </Text>
+        </View>
+      )}
 
       {/* Map */}
       <View className="flex-1 mx-4 mb-4 overflow-hidden rounded-2xl border border-gray-200">
