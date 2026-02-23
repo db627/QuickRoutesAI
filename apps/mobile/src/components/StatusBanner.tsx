@@ -1,13 +1,16 @@
 import React from "react";
 import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNetworkStatus } from '../hooks/useNetworkStatus';
+import { useNetworkStatus } from "../hooks/useNetworkStatus";
 
 export default function StatusBanner() {
-  const { isConnected } = useNetworkStatus();
+  const { isConnected, isInternetReachable } = useNetworkStatus();
   const insets = useSafeAreaInsets();
 
-  if (isConnected) return null;
+  const isOffline =
+    !isConnected || isInternetReachable === false;
+
+  if (!isOffline) return null;
 
   return (
     <View
