@@ -14,6 +14,7 @@ import HistoryScreen from "./src/screens/HistoryScreen";
 import ProfileScreen from "./src/screens/ProfileScreen";
 import { View, ActivityIndicator } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import StatusBanner from "./src/components/StatusBanner";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -77,6 +78,7 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar style="dark" />
       <NavigationContainer>
+        <StatusBanner />
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           {user ? (
             <Stack.Screen name="Main" component={DriverTabs} />
