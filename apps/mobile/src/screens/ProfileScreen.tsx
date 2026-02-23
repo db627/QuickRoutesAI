@@ -4,12 +4,20 @@ import { doc, onSnapshot, collection, query, where, getDocs, setDoc } from "fire
 import { signOut } from "firebase/auth";
 import { auth, firestore } from "../config/firebase";
 import { stopTracking } from "../services/location";
-import { enqueueWrite, getQueueSize } from "../services/offlineQueue";
+import {
+  enqueueWrite,
+  setOptimisticOnlineStatus,
+  getOptimisticOnlineStatus,
+  subscribeQueueSize,
+  subscribeOptimisticOnlineStatus,
+  flushQueue,
+} from "../services/offlineQueue";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 
 export default function ProfileScreen() {
   const uid = auth.currentUser?.uid;
   const { isConnected } = useNetworkStatus();
+
   const [profile, setProfile] = useState<{ name: string; email: string; role: string } | null>(null);
   const [isOnline, setIsOnline] = useState(false);
   const [stats, setStats] = useState({ tripsCompleted: 0, totalDistanceKm: 0 });
@@ -26,42 +34,81 @@ export default function ProfileScreen() {
   useEffect(() => {
     if (!uid) return;
     const unsub = onSnapshot(doc(firestore, "drivers", uid), (snap) => {
-      if (snap.exists()) setIsOnline(snap.data().isOnline ?? false);
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const optimistic = getOptimisticOnlineStatus();
+      setIsOnline(optimistic !== null ? optimistic : data.isOnline ?? false);
     });
     return unsub;
   }, [uid]);
 
+  // Sync queue size everywhere
+  useEffect(() => {
+    const unsub = subscribeQueueSize(setQueueSize);
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  // Sync optimistic online status everywhere
+  useEffect(() => {
+    const unsub = subscribeOptimisticOnlineStatus((optimistic) => {
+      if (optimistic !== null) setIsOnline(optimistic);
+    });
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  // Flush queued writes on reconnect
+  useEffect(() => {
+    if (isConnected) {
+      flushQueue().catch(() => {});
+    }
+  }, [isConnected]);
+
   useEffect(() => {
     if (!uid) return;
+
     const fetchStats = async () => {
       const q = query(
         collection(firestore, "trips"),
         where("driverId", "==", uid),
-        where("status", "==", "completed"),
+        where("status", "==", "completed")
       );
+
       const snapshot = await getDocs(q);
+
       let totalDist = 0;
       snapshot.docs.forEach((d) => {
         const data = d.data();
         if (data.route?.distanceMeters) totalDist += data.route.distanceMeters;
       });
-      setStats({ tripsCompleted: snapshot.size, totalDistanceKm: Math.round(totalDist / 1000) });
+
+      setStats({
+        tripsCompleted: snapshot.size,
+        totalDistanceKm: Math.round(totalDist / 1000),
+      });
     };
+
     fetchStats();
   }, [uid]);
 
   const toggleOnline = async () => {
     if (!uid) return;
+
     const newStatus = !isOnline;
     const data = { isOnline: newStatus, updatedAt: new Date().toISOString() };
+
     if (!isConnected) {
       enqueueWrite("drivers", uid, data);
+      setOptimisticOnlineStatus(newStatus);
       setIsOnline(newStatus);
-      setQueueSize(getQueueSize());
       return;
     }
+
     await setDoc(doc(firestore, "drivers", uid), data, { merge: true });
-    setQueueSize(0);
+
     if (!newStatus) await stopTracking();
   };
 
@@ -71,7 +118,7 @@ export default function ProfileScreen() {
       await setDoc(
         doc(firestore, "drivers", uid),
         { isOnline: false, updatedAt: new Date().toISOString() },
-        { merge: true },
+        { merge: true }
       );
     }
     await signOut(auth);
@@ -81,11 +128,10 @@ export default function ProfileScreen() {
     <View className="flex-1 bg-gray-50">
       {queueSize > 0 && (
         <View className="bg-orange-100 px-4 py-2 items-center">
-          <Text className="text-xs text-orange-700 font-medium">
-            Sync paused, waiting for connection.
-          </Text>
+          <Text className="text-xs text-orange-700 font-medium">Sync paused, waiting for connection.</Text>
         </View>
       )}
+
       <ScrollView className="flex-1 px-6 pt-8">
         {/* Avatar */}
         <View className="items-center mb-6">
@@ -94,8 +140,10 @@ export default function ProfileScreen() {
               {profile?.name?.charAt(0)?.toUpperCase() || "?"}
             </Text>
           </View>
+
           <Text className="text-xl font-bold text-gray-900">{profile?.name || "Driver"}</Text>
           <Text className="text-sm text-gray-500">{profile?.email}</Text>
+
           <View className="mt-2 flex-row items-center">
             <View className={`h-2.5 w-2.5 rounded-full mr-2 ${isOnline ? "bg-green-500" : "bg-gray-300"}`} />
             <Text className="text-sm text-gray-500">{isOnline ? "Online" : "Offline"}</Text>
@@ -108,6 +156,7 @@ export default function ProfileScreen() {
             <Text className="text-2xl font-bold text-brand-600">{stats.tripsCompleted}</Text>
             <Text className="text-xs text-gray-500 mt-1">Trips Done</Text>
           </View>
+
           <View className="flex-1 items-center rounded-xl border border-gray-200 bg-white py-4 ml-2">
             <Text className="text-2xl font-bold text-brand-600">{stats.totalDistanceKm}</Text>
             <Text className="text-xs text-gray-500 mt-1">km Driven</Text>

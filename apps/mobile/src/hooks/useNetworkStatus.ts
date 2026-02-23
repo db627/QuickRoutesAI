@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
-import { flushQueue } from "../services/offlineQueue";
+import { useEffect, useState } from "react";
+import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
+
 export interface NetworkStatus {
   isConnected: boolean;
   isInternetReachable: boolean | null;
@@ -20,17 +20,11 @@ const useNetworkStatus = (): NetworkStatus => {
       });
     });
 
-    // Subscribe to network changes
     const unsubscribe = NetInfo.addEventListener((state: NetInfoState) => {
-      const connected = state.isConnected ?? false;
       setNetworkStatus({
         isConnected: state.isConnected ?? false,
         isInternetReachable: state.isInternetReachable,
       });
-      
-      if (connected) {
-        flushQueue();
-      }
     });
 
     return () => unsubscribe();
