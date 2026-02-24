@@ -26,12 +26,13 @@ quickroutesai/
 
 ## Install & Run
 
+npm install -g pnpm
 ```bash
 # Install all dependencies
 pnpm install
 
 # Run API + Web together
-pnpm dev
+npx pnpm dev
 
 # Run individually
 pnpm --filter api dev        # http://localhost:3001

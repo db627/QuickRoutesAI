@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { verifyFirebaseToken } from "../../middleware/auth";
 import healthRoutes from "../../routes/health";
+import authRoutes from "../../routes/auth";
 import meRoutes from "../../routes/me";
 import driverRoutes from "../../routes/drivers";
 import tripRoutes from "../../routes/trips";
@@ -30,10 +31,24 @@ jest.mock("../../config/firebase", () => {
     },
     auth: {
       verifyIdToken: jest.fn(),
+      createUser: jest.fn(),
     },
     db: mockFirestore,
   };
 });
+
+// Mock env config
+jest.mock("../../config/env", () => ({
+  env: {
+    PORT: 3001,
+    NODE_ENV: "test",
+    FIREBASE_PROJECT_ID: "test-project",
+    FIREBASE_CLIENT_EMAIL: "test@test.iam.gserviceaccount.com",
+    FIREBASE_PRIVATE_KEY: "test-key",
+    FIREBASE_API_KEY: "test-api-key",
+    GOOGLE_MAPS_SERVER_KEY: "test-maps-key",
+  },
+}));
 
 // Mock Google Maps
 jest.mock("../../services/directions", () => ({
@@ -48,6 +63,7 @@ export function createTestApp() {
   app.use(cors());
   app.use(express.json());
   app.use("/health", healthRoutes);
+  app.use("/auth", authRoutes);
   app.use("/me", verifyFirebaseToken, meRoutes);
   app.use("/drivers", verifyFirebaseToken, driverRoutes);
   app.use("/trips", verifyFirebaseToken, tripRoutes);

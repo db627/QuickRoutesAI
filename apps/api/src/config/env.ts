@@ -6,6 +6,7 @@ const envSchema = z.object({
   FIREBASE_PROJECT_ID: z.string().min(1),
   FIREBASE_CLIENT_EMAIL: z.string().email(),
   FIREBASE_PRIVATE_KEY: z.string().min(1),
+  FIREBASE_API_KEY: z.string().min(1),
   GOOGLE_MAPS_SERVER_KEY: z.string().min(1),
 });
 
