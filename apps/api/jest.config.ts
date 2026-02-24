@@ -8,7 +8,7 @@ const config: Config = {
   moduleNameMapper: {
     "^@quickroutesai/shared$": "<rootDir>/../../packages/shared/src",
   },
-  setupFilesAfterSetup: [],
+  setupFilesAfterEnv: [],
   clearMocks: true,
 };
 
