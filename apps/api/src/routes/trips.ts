@@ -7,6 +7,7 @@ import {
   createTripSchema,
   assignTripSchema,
   updateTripStatusSchema,
+  tripStopSchema,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
 import { randomUUID } from "crypto";
@@ -153,42 +154,30 @@ router.get("/:id", async (req, res) => {
 
 router.patch("/:id", validate(createTripSchema.partial()), async (req, res) => {
   try {
-
-    const { data } = req.body;
-
+    const { notes,stops } = req.body;
 
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
+
     if (!tripDoc.exists) {
       return res.status(404).json({ error: "Not Found", message: "Trip not found" });
     }
 
+    if ( stops.isEmpty() && stops.validate(tripStopSchema.array()) instanceof Error) {
+      return res.status(400).json({ error: "Bad Request", message: "Invalid stops format" });
+    }
     const trip = tripDoc.data();
 
-    // Drivers can only update their own assigned trips
-    if (req.userRole === "driver") {
-      if (trip?.driverId !== req.uid) {
-        return res.status(403).json({ error: "Forbidden", message: "Not your trip" });
-      }
-    }
     if (trip?.status !== "draft") {
-        return res.status(400).json({ error: "Bad Request", message: "Trip has already been assigned first" });
-      }
-    
+      return res.status(409).json({ error: "Bad Request", message: "Only draft trips can be updated" });
+    }
+
     await tripRef.update({
-      data,
+      notes: notes || trip?.notes || "",
+      stops: stops || trip?.stops || [],
       updatedAt: new Date().toISOString(),
     });
 
-    // Log status change event
-    await db.collection("events").add({
-      type: "trip_update",
-      driverId: trip?.driverId || req.uid,
-      payload: { tripId: req.params.id, data },
-      createdAt: new Date().toISOString(),
-    });
-
-    res.json({ ok: true, data });
   } catch (err) {
     return res.status(500).json({ error: "Internal Error", message: "Failed to update trip" });
   }
