@@ -1,0 +1,43 @@
+name: Mobile CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - "packages/shared/**"
+      - "pnpm-lock.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - "packages/shared/**"
+      - "pnpm-lock.yaml"
+
+jobs:
+  test-and-build:
+    name: Test & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck shared
+        run: pnpm --filter @quickroutesai/shared typecheck
+
+      - name: Typecheck mobile
+        run: pnpm --filter mobile typecheck
+
+      - name: Export app
+        run: pnpm --filter mobile exec expo export --platform web

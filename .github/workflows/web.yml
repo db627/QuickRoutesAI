@@ -1,0 +1,43 @@
+name: Web CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "packages/shared/**"
+      - "pnpm-lock.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "packages/shared/**"
+      - "pnpm-lock.yaml"
+
+jobs:
+  test-and-build:
+    name: Test & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck shared
+        run: pnpm --filter @quickroutesai/shared typecheck
+
+      - name: Typecheck web
+        run: pnpm --filter web typecheck
+
+      - name: Build
+        run: pnpm --filter web build
