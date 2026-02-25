@@ -5,19 +5,30 @@ import { doc, setDoc, onSnapshot } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 import { auth, firestore } from "../config/firebase";
 import { startTracking, stopTracking, getCurrentPosition } from "../services/location";
+import {
+  enqueueWrite,
+  setOptimisticOnlineStatus,
+  getOptimisticOnlineStatus,
+  subscribeQueueSize,
+  subscribeOptimisticOnlineStatus,
+  flushQueue,
+} from "../services/offlineQueue";
+import { useNetworkStatus } from "../hooks/useNetworkStatus";
 
 export default function DriverHomeScreen() {
+  const { isConnected } = useNetworkStatus();
+
   const [isOnline, setIsOnline] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const mapRef = useRef<MapView>(null);
+  const [queueSize, setQueueSize] = useState(0);
 
+  const mapRef = useRef<MapView>(null);
   const uid = auth.currentUser?.uid;
 
-  // Ensure driver doc exists, then subscribe to it for online status
   useEffect(() => {
     if (!uid) return;
-    // Create the driver doc if it doesn't exist yet (merge preserves existing data)
+
     setDoc(
       doc(firestore, "drivers", uid),
       {
@@ -27,21 +38,19 @@ export default function DriverHomeScreen() {
         lastHeading: 0,
         updatedAt: new Date().toISOString(),
       },
-      { merge: true },
+      { merge: true }
     ).catch(() => {});
+
     const unsub = onSnapshot(doc(firestore, "drivers", uid), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setIsOnline(data.isOnline ?? false);
-        if (data.lastLocation) {
-          setLocation(data.lastLocation);
-        }
-      }
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const optimistic = getOptimisticOnlineStatus();
+      setIsOnline(optimistic !== null ? optimistic : data.isOnline ?? false);
     });
+
     return unsub;
   }, [uid]);
 
-  // Get initial position
   useEffect(() => {
     getCurrentPosition().then((pos) => {
       if (pos) {
@@ -50,15 +59,47 @@ export default function DriverHomeScreen() {
     });
   }, []);
 
+  // Sync queue size everywhere
+  useEffect(() => {
+    const unsub = subscribeQueueSize(setQueueSize);
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  // Sync optimistic online status everywhere
+  useEffect(() => {
+    const unsub = subscribeOptimisticOnlineStatus((optimistic) => {
+      if (optimistic !== null) setIsOnline(optimistic);
+    });
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  // Flush queued writes on reconnect
+  useEffect(() => {
+    if (isConnected) {
+      flushQueue().catch(() => {});
+    }
+  }, [isConnected]);
+
   const toggleOnline = async () => {
     if (!uid) return;
+
     const newStatus = !isOnline;
+    const data = { isOnline: newStatus, updatedAt: new Date().toISOString() };
+
     try {
-      await setDoc(
-        doc(firestore, "drivers", uid),
-        { isOnline: newStatus, updatedAt: new Date().toISOString() },
-        { merge: true },
-      );
+      if (!isConnected) {
+        enqueueWrite("drivers", uid, data);
+        setOptimisticOnlineStatus(newStatus);
+        setIsOnline(newStatus);
+        return;
+      }
+
+      await setDoc(doc(firestore, "drivers", uid), data, { merge: true });
+
       if (!newStatus && isTracking) {
         await stopTracking();
         setIsTracking(false);
@@ -79,11 +120,8 @@ export default function DriverHomeScreen() {
       setIsTracking(false);
     } else {
       const success = await startTracking();
-      if (success) {
-        setIsTracking(true);
-      } else {
-        Alert.alert("Permission Denied", "Location permission is required to track deliveries.");
-      }
+      if (success) setIsTracking(true);
+      else Alert.alert("Permission Denied", "Location permission is required to track deliveries.");
     }
   };
 
@@ -93,7 +131,7 @@ export default function DriverHomeScreen() {
       await setDoc(
         doc(firestore, "drivers", uid),
         { isOnline: false, updatedAt: new Date().toISOString() },
-        { merge: true },
+        { merge: true }
       );
     }
     await signOut(auth);
@@ -111,6 +149,13 @@ export default function DriverHomeScreen() {
         </View>
       </View>
 
+      {/* Pending sync indicator */}
+      {queueSize > 0 && (
+        <View className="bg-orange-100 px-4 py-2 items-center">
+          <Text className="text-xs text-orange-700 font-medium">Sync paused, waiting for connection.</Text>
+        </View>
+      )}
+
       {/* Map */}
       <View className="flex-1 mx-4 mb-4 overflow-hidden rounded-2xl border border-gray-200">
         <MapView
@@ -119,29 +164,13 @@ export default function DriverHomeScreen() {
           style={{ flex: 1 }}
           region={
             location
-              ? {
-                  latitude: location.lat,
-                  longitude: location.lng,
-                  latitudeDelta: 0.01,
-                  longitudeDelta: 0.01,
-                }
-              : {
-                  latitude: 40.7128,
-                  longitude: -74.006,
-                  latitudeDelta: 0.05,
-                  longitudeDelta: 0.05,
-                }
+              ? { latitude: location.lat, longitude: location.lng, latitudeDelta: 0.01, longitudeDelta: 0.01 }
+              : { latitude: 40.7128, longitude: -74.006, latitudeDelta: 0.05, longitudeDelta: 0.05 }
           }
           showsUserLocation
           showsMyLocationButton
         >
-          {location && (
-            <Marker
-              coordinate={{ latitude: location.lat, longitude: location.lng }}
-              title="You"
-              pinColor="#2563eb"
-            />
-          )}
+          {location && <Marker coordinate={{ latitude: location.lat, longitude: location.lng }} title="You" pinColor="#2563eb" />}
         </MapView>
       </View>
 
@@ -150,24 +179,16 @@ export default function DriverHomeScreen() {
         <View className="flex-row gap-3">
           <TouchableOpacity
             onPress={toggleOnline}
-            className={`flex-1 items-center rounded-xl py-3 ${
-              isOnline ? "bg-red-500" : "bg-green-500"
-            }`}
+            className={`flex-1 items-center rounded-xl py-3 ${isOnline ? "bg-red-500" : "bg-green-500"}`}
           >
-            <Text className="font-semibold text-white">
-              {isOnline ? "Go Offline" : "Go Online"}
-            </Text>
+            <Text className="font-semibold text-white">{isOnline ? "Go Offline" : "Go Online"}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={toggleTracking}
-            className={`flex-1 items-center rounded-xl py-3 ${
-              isTracking ? "bg-yellow-500" : "bg-brand-600"
-            }`}
+            className={`flex-1 items-center rounded-xl py-3 ${isTracking ? "bg-yellow-500" : "bg-brand-600"}`}
           >
-            <Text className="font-semibold text-white">
-              {isTracking ? "Stop Tracking" : "Start Tracking"}
-            </Text>
+            <Text className="font-semibold text-white">{isTracking ? "Stop Tracking" : "Start Tracking"}</Text>
           </TouchableOpacity>
         </View>
       </View>
