@@ -86,3 +86,8 @@ All endpoints except `/health` require `Authorization: Bearer <firebase-id-token
 | Maps      | Google Maps JS API + Directions API       |
 | Validation| Zod (shared schemas)                     |
 | Monorepo  | pnpm workspaces                          |
+
+
+# Practices
+
+Ensure all code is tested with backend and frontend tests before raisng PR!
