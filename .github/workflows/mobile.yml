@@ -7,12 +7,14 @@ on:
       - "apps/mobile/**"
       - "packages/shared/**"
       - "pnpm-lock.yaml"
+      - ".github/workflows/mobile.yml"
   pull_request:
     branches: [main]
     paths:
       - "apps/mobile/**"
       - "packages/shared/**"
       - "pnpm-lock.yaml"
+      - ".github/workflows/mobile.yml"
 
 jobs:
   test-and-build:

@@ -7,12 +7,14 @@ on:
       - "apps/web/**"
       - "packages/shared/**"
       - "pnpm-lock.yaml"
+      - ".github/workflows/web.yml"
   pull_request:
     branches: [main]
     paths:
       - "apps/web/**"
       - "packages/shared/**"
       - "pnpm-lock.yaml"
+      - ".github/workflows/web.yml"
 
 jobs:
   test-and-build:
