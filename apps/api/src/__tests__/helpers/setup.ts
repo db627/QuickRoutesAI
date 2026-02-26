@@ -5,19 +5,38 @@ import healthRoutes from "../../routes/health";
 import meRoutes from "../../routes/me";
 import driverRoutes from "../../routes/drivers";
 import tripRoutes from "../../routes/trips";
+import userRoutes from "../../routes/users";
 
 // Mock Firebase Admin SDK
 jest.mock("../../config/firebase", () => {
+
+  const mockCountGet = jest.fn().mockResolvedValue({
+    data: () => ({ count: 0 }),
+  });
+
   const mockFirestore = {
     collection: jest.fn().mockReturnThis(),
     doc: jest.fn().mockReturnThis(),
-    get: jest.fn(),
+    get: jest.fn().mockResolvedValue({
+      docs: [],
+    }),
     set: jest.fn(),
     add: jest.fn(),
     update: jest.fn(),
     where: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
     limit: jest.fn().mockReturnThis(),
+
+    // pagination
+    offset: jest.fn().mockReturnThis(),
+    startAfter: jest.fn().mockReturnThis(),
+
+    // aggregation
+    count: jest.fn(() => ({
+      get: jest.fn().mockResolvedValue({
+        data: () => ({ count: 0 }),
+      }),
+    })),
   };
 
   return {
@@ -25,6 +44,7 @@ jest.mock("../../config/firebase", () => {
     default: {
       firestore: {
         FieldValue: { serverTimestamp: jest.fn(() => new Date().toISOString()) },
+        FieldPath: { documentId: jest.fn(() => "__name__") },
         Query: class {},
       },
     },
@@ -51,6 +71,7 @@ export function createTestApp() {
   app.use("/me", verifyFirebaseToken, meRoutes);
   app.use("/drivers", verifyFirebaseToken, driverRoutes);
   app.use("/trips", verifyFirebaseToken, tripRoutes);
+  app.use("/users", verifyFirebaseToken, userRoutes);
   return app;
 }
 
@@ -75,10 +96,29 @@ export function mockUserRole(uid: string, role: string, name: string = "Test Use
         doc: (docId: string) => ({
           get: jest.fn().mockResolvedValue({
             exists: true,
-            data: () => ({ email: "test@example.com", name, role, createdAt: new Date().toISOString() }),
+            data: () => ({
+              email: "test@example.com",
+              name,
+              role,
+              createdAt: new Date().toISOString(),
+            }),
           }),
           set: jest.fn().mockResolvedValue(undefined),
         }),
+
+        // ⭐ ADD THESE (same as main mock)
+        get: jest.fn().mockResolvedValue({ docs: [] }),
+        where: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        offset: jest.fn().mockReturnThis(),
+        startAfter: jest.fn().mockReturnThis(),
+
+        count: jest.fn(() => ({
+          get: jest.fn().mockResolvedValue({
+            data: () => ({ count: 0 }),
+          }),
+        })),
       };
     }
     // Return default chainable mock for other collections
@@ -88,9 +128,21 @@ export function mockUserRole(uid: string, role: string, name: string = "Test Use
       set: jest.fn().mockResolvedValue(undefined),
       add: jest.fn().mockResolvedValue({ id: "mock-id" }),
       update: jest.fn().mockResolvedValue(undefined),
+
       where: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
+
+      // NEW (pagination)
+      offset: jest.fn().mockReturnThis(),
+      startAfter: jest.fn().mockReturnThis(),
+
+      // NEW (aggregation)
+      count: jest.fn().mockReturnValue({
+        get: jest.fn().mockResolvedValue({
+          data: () => ({ count: 0 }),
+        }),
+      }),
     };
   });
 }
