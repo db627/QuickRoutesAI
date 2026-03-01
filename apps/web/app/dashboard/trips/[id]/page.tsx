@@ -273,7 +273,7 @@ export default function TripDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {!trip.route && (
             <button
               onClick={computeRoute}
@@ -329,10 +329,11 @@ export default function TripDetailPage() {
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         {MAPS_KEY ? (
           <APIProvider apiKey={MAPS_KEY}>
+            <div className="h-[280px] sm:h-[400px] lg:h-[500px]">
             <Map
               defaultCenter={mapCenter}
               defaultZoom={13}
-              style={{ width: "100%", height: "500px" }}
+              style={{ width: "100%", height: "100%" }}
               mapId="quickroutesai-trip-detail"
               gestureHandling="greedy"
               disableDefaultUI
@@ -380,9 +381,10 @@ export default function TripDetailPage() {
                 </AdvancedMarker>
               )}
             </Map>
+            </div>
           </APIProvider>
         ) : (
-          <div className="flex h-[500px] items-center justify-center text-gray-400">
+          <div className="flex h-[280px] items-center justify-center text-gray-400 sm:h-[400px] lg:h-[500px]">
             Set NEXT_PUBLIC_GOOGLE_MAPS_KEY to enable the map
           </div>
         )}

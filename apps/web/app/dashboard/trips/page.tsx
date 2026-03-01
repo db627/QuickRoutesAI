@@ -57,7 +57,7 @@ export default function TripsPage() {
       </div>
 
       {/* Filter tabs */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {filterTabs.map((tab) => (
           <button
             key={tab.value}
