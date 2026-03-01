@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from "react-native";
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { auth, firestore } from "../config/firebase";
 import { apiFetch } from "../services/api";
 import type { Trip, TripStop } from "@quickroutesai/shared";
+import { useNetworkStatus } from "../hooks/useNetworkStatus";
 
 // Decode Google Maps encoded polyline
 function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
@@ -43,6 +44,7 @@ export default function TripScreen() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
   const uid = auth.currentUser?.uid;
+  const { isConnected } = useNetworkStatus();
 
   useEffect(() => {
     if (!uid) return;
@@ -59,15 +61,19 @@ export default function TripScreen() {
   }, [uid]);
 
   const updateStatus = async (tripId: string, status: "in_progress" | "completed") => {
-    try {
-      await apiFetch(`/trips/${tripId}/status`, {
-        method: "POST",
-        body: JSON.stringify({ status }),
-      });
-    } catch (err) {
-      console.error("Failed to update trip status:", err);
-    }
-  };
+  if (!isConnected) {
+    Alert.alert("No Connection", "Trip status cannot be updated while offline.");
+    return;
+  }
+  try {
+    await apiFetch(`/trips/${tripId}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status }),
+    });
+  } catch (err) {
+    console.error("Failed to update trip status:", err);
+  }
+};
 
   if (loading) {
     return (
