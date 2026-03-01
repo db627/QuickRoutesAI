@@ -183,7 +183,7 @@ describe("tripTransitionGuard middleware", () => {
     }
     
     /* 
-    Test valid/invalid cancelled transitions
+    Test invalid cancelled transitions
     */
     for(const nextStatus of ["draft", "assigned", "in_progress", "cancelled"]){
         it(`rejects invalid transition from cancelled to ${nextStatus}`, async () => {
