@@ -10,6 +10,8 @@ import {
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
 import { randomUUID } from "crypto";
+import { pagination } from "../middleware/pagination";
+import { paginateFirestore } from "../utils/paginateFirestore";
 
 const router = Router();
 
@@ -61,10 +63,13 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
 });
 
 /**
- * GET /trips — list trips with optional filters
- * Query params: ?status=draft&driverId=xyz&limit=50
+ * GET /trips — list trips with optional filters + pagination
+ * Query params:
+ *   filters: ?status=draft&driverId=xyz
+ *   page pagination: ?page=1&limit=20
+ *   cursor pagination: ?cursor=...&limit=20
  */
-router.get("/", async (req, res) => {
+router.get("/", pagination, async (req, res) => {
   try {
     let ref: admin.firestore.Query = db.collection("trips");
 
@@ -81,13 +86,14 @@ router.get("/", async (req, res) => {
       ref = ref.where("driverId", "==", req.query.driverId);
     }
 
-    const limitNum = Math.min(parseInt(String(req.query.limit || "50"), 10), 100);
-    ref = ref.orderBy("createdAt", "desc").limit(limitNum);
+    // NOTE: ordering is enforced inside paginateFirestore for stable cursor pagination.
+    const result = await paginateFirestore(ref, req.pagination!, {
+      orderField: "createdAt",
+      orderDirection: "desc",
+    });
 
-    const snapshot = await ref.get();
-    const trips = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-
-    res.json(trips);
+    // Response envelope: { data, total, page, hasMore, nextCursor? }
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: "Internal Error", message: "Failed to fetch trips" });
   }
