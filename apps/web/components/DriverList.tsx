@@ -5,7 +5,11 @@ import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import type { DriverRecord, UserProfile } from "@quickroutesai/shared";
 
-export default function DriverList() {
+interface Props {
+  onSelectDriver?: (uid: string) => void;
+}
+
+export default function DriverList({ onSelectDriver }: Props) {
   const [drivers, setDrivers] = useState<(DriverRecord & { uid: string })[]>([]);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
 
@@ -53,7 +57,11 @@ export default function DriverList() {
           <p className="px-5 py-6 text-center text-sm text-gray-400">No drivers online</p>
         )}
         {drivers.map((d) => (
-          <div key={d.uid} className="flex items-center justify-between px-5 py-3">
+          <button
+            key={d.uid}
+            onClick={() => onSelectDriver?.(d.uid)}
+            className="flex w-full items-center justify-between px-5 py-3 text-left hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50"
+          >
             <div>
               <p className="text-sm font-medium text-gray-900">
                 {userNames[d.uid] || d.uid}
@@ -80,7 +88,7 @@ export default function DriverList() {
                 {isStale(d.updatedAt) ? "Stale" : "Live"}
               </span>
             </div>
-          </div>
+          </button>
         ))}
       </div>
     </div>
