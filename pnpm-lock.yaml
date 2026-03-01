@@ -196,6 +196,9 @@ importers:
       firebase:
         specifier: ^10.12.5
         version: 10.14.1(@react-native-async-storage/async-storage@2.2.0(react-native@0.81.5(@babel/core@7.29.0)(@react-native-community/cli@13.6.9)(@types/react@19.1.17)(react@19.1.0)))
+      lucide-react:
+        specifier: ^0.575.0
+        version: 0.575.0(react@18.3.1)
       next:
         specifier: ^14.2.5
         version: 14.2.35(@opentelemetry/api@1.9.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)

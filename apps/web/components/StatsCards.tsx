@@ -4,6 +4,13 @@ import { useEffect, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 
+import {
+  Users,
+  Truck,
+  Loader,
+  CheckCircle,
+} from "lucide-react";
+
 interface Stats {
   activeDrivers: number;
   totalTrips: number;
@@ -12,6 +19,7 @@ interface Stats {
 }
 
 export default function StatsCards() {
+  const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<Stats>({
     activeDrivers: 0,
     totalTrips: 0,
@@ -55,6 +63,7 @@ export default function StatsCards() {
         inProgressTrips: inProgress,
         completedToday,
       }));
+      setLoading(false);
     });
 
     return () => {
@@ -64,23 +73,81 @@ export default function StatsCards() {
   }, []);
 
   const cards = [
-    { label: "Active Drivers", value: stats.activeDrivers, color: "text-green-600" },
-    { label: "Total Trips", value: stats.totalTrips, color: "text-gray-900" },
-    { label: "In-Progress Trips", value: stats.inProgressTrips, color: "text-brand-600" },
-    { label: "Completed Today", value: stats.completedToday, color: "text-purple-600" },
+    {
+      label: "Active Drivers",
+      value: stats.activeDrivers,
+      color: "text-green-600",
+      icon: Users,
+    },
+    {
+      label: "Total Trips",
+      value: stats.totalTrips,
+      color: "text-gray-900",
+      icon: Truck,
+    },
+    {
+      label: "In-Progress Trips",
+      value: stats.inProgressTrips,
+      color: "text-brand-600",
+      icon: Loader,
+    },
+    {
+      label: "Completed Today",
+      value: stats.completedToday,
+      color: "text-purple-600",
+      icon: CheckCircle,
+    },
   ];
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {cards.map((card) => (
+  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+
+    {loading ? (
+
+      Array.from({ length: 4 }).map((_, i) => (
+
         <div
-          key={card.label}
-          className="rounded-xl border border-gray-200 bg-gray-50 px-5 py-4"
-        >
-          <p className="text-sm text-gray-500">{card.label}</p>
-          <p className={`mt-1 text-3xl font-bold ${card.color}`}>{card.value}</p>
-        </div>
-      ))}
-    </div>
-  );
+          key={i}
+          className="animate-pulse rounded-xl border border-gray-200 bg-gray-200 h-24"
+        />
+
+      ))
+
+    ) : (
+
+      cards.map((card) => {
+
+        const Icon = card.icon;
+
+        return (
+
+          <div
+            key={card.label}
+            className="rounded-xl border border-gray-200 bg-gray-50 px-5 py-4"
+          >
+
+            <div className="flex items-center justify-between">
+
+              <p className="text-sm text-gray-500">
+                {card.label}
+              </p>
+
+              <Icon className="h-5 w-5 text-gray-400" />
+
+            </div>
+
+            <p className={`mt-1 text-3xl font-bold ${card.color}`}>
+              {card.value}
+            </p>
+
+          </div>
+
+        );
+
+      })
+
+    )}
+
+  </div>
+);
 }
