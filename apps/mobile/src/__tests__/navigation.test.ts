@@ -1,0 +1,93 @@
+import { Linking, Platform, Alert } from 'react-native';
+import { openNavigation } from '../services/navigation';
+
+jest.mock('react-native', () => ({
+  Linking: {
+    canOpenURL: jest.fn(),
+    openURL: jest.fn(),
+  },
+  Platform: {
+    OS: 'ios',
+  },
+  Alert: {
+    alert: jest.fn(),
+  },
+}));
+
+const mockStops = [
+  {
+    stopId: 'stop1',
+    sequence: 0,
+    lat: 40.744,
+    lng: -74.1901,
+    address: '150 Bergen St, Newark, NJ',
+    notes: '',
+  },
+  {
+    stopId: 'stop2',
+    sequence: 1,
+    lat: 40.7347,
+    lng: -74.1645,
+    address: '1 Raymond Plaza W, Newark, NJ',
+    notes: '',
+  },
+];
+
+describe('openNavigation', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('shows alert when no stops provided', async () => {
+    await openNavigation([]);
+    expect(Alert.alert).toHaveBeenCalledWith('No Stops', 'This trip has no stops to navigate to.');
+  });
+
+  it('opens Apple Maps on iOS when available', async () => {
+    (Platform as any).OS = 'ios';
+    (Linking.canOpenURL as jest.Mock).mockResolvedValue(true);
+
+    await openNavigation(mockStops);
+
+    expect(Linking.openURL).toHaveBeenCalledWith(
+      expect.stringContaining('maps://')
+    );
+  });
+
+  it('opens Google Maps app when Apple Maps not available', async () => {
+    (Platform as any).OS = 'android';
+    (Linking.canOpenURL as jest.Mock).mockResolvedValue(true);
+
+    await openNavigation(mockStops);
+
+    expect(Linking.openURL).toHaveBeenCalledWith(
+      expect.stringContaining('comgooglemaps://')
+    );
+  });
+
+  it('falls back to browser when no maps app available', async () => {
+    (Platform as any).OS = 'ios';
+    (Linking.canOpenURL as jest.Mock)
+      .mockResolvedValueOnce(false) // Apple Maps not available
+      .mockResolvedValueOnce(false) // Google Maps not available
+      .mockResolvedValueOnce(true); // Browser available
+
+    await openNavigation(mockStops);
+
+    expect(Linking.openURL).toHaveBeenCalledWith(
+      expect.stringContaining('google.com/maps')
+    );
+  });
+
+  it('shows error alert when no maps or browser available', async () => {
+    (Platform as any).OS = 'ios';
+    (Linking.canOpenURL as jest.Mock).mockResolvedValue(false);
+
+    await openNavigation(mockStops);
+
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Error',
+      'Unable to open maps. Please install Google Maps or Apple Maps.'
+    );
+  });
+});

@@ -6,6 +6,7 @@ import { auth, firestore } from "../config/firebase";
 import { apiFetch } from "../services/api";
 import type { Trip, TripStop } from "@quickroutesai/shared";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
+import { openNavigation } from "../services/navigation";
 
 // Decode Google Maps encoded polyline
 function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
@@ -181,12 +182,23 @@ export default function TripScreen() {
           </TouchableOpacity>
         )}
         {trip.status === "in_progress" && (
-          <TouchableOpacity
-            onPress={() => updateStatus(trip.id, "completed")}
-            className="items-center rounded-xl bg-brand-600 py-3"
-          >
-            <Text className="font-semibold text-white">Complete Trip</Text>
-          </TouchableOpacity>
+          <View className="flex-row gap-3">
+            <TouchableOpacity
+              onPress={() => openNavigation(trip.stops)}
+              disabled={!trip.route}
+              className={`flex-1 items-center rounded-xl py-3 ${
+                trip.route ? "bg-blue-500" : "bg-gray-300"
+              }`}
+            >
+              <Text className="font-semibold text-white">Navigate</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => updateStatus(trip.id, "completed")}
+              className="flex-1 items-center rounded-xl bg-brand-600 py-3"
+            >
+              <Text className="font-semibold text-white">Complete Trip</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
     </View>
