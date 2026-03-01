@@ -10,6 +10,7 @@ import {
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
 import { randomUUID } from "crypto";
+import { tripTransitionGuard } from "../middleware/trips";
 
 const router = Router();
 
@@ -96,7 +97,7 @@ router.get("/", async (req, res) => {
 /**
  * POST /trips/:id/assign — dispatcher assigns a driver to this trip
  */
-router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTripSchema), async (req, res) => {
+router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTripSchema),tripTransitionGuard, async (req, res) => {
   const { driverId } = req.body;
 
   try {
@@ -185,7 +186,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) =
  * Drivers can move to in_progress or completed (if assigned to them).
  * Dispatchers can set any status.
  */
-router.post("/:id/status", validate(updateTripStatusSchema), async (req, res) => {
+router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard, async (req, res) => {
   const { status } = req.body;
 
   try {
