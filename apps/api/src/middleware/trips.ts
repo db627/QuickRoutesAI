@@ -35,7 +35,6 @@ export async function tripTransitionGuard(req: Request, res: Response, next: Nex
         };
 
         if (!tripStatuses.includes(curr_status as TripStatus)) {
-            console.error(`Invalid current trip status: ${curr_status}`);
             return res.status(400).json({ error: "Bad Request", message: "Invalid current trip status" });
         }
         

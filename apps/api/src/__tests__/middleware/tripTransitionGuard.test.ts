@@ -59,6 +59,9 @@ beforeEach(() => {
 describe("tripTransitionGuard middleware", () => {
   const app = createValidationApp();
 
+  /* 
+  Test valid/invalid draft transitions
+  */
   it("passes from draft to assigned", async () => {
     const response = await request(app)
       .post("/test")
@@ -70,4 +73,158 @@ describe("tripTransitionGuard middleware", () => {
     expect(response.body.ok).toBe(true);
     expect(response.body.body).toBeDefined();
   });
+
+  it("passes from draft to cancelled", async () => {
+    const response = await request(app)
+      .post("/test")
+      .send({ 
+        current_status_test: "draft", 
+        status_test: "cancelled" 
+        });
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.body).toBeDefined();
+  });
+
+  it("rejects invalid transition from draft to completed", async () => {
+    const response = await request(app)
+      .post("/test")
+      .send({
+        current_status_test: "draft",
+        status_test: "completed",
+      });
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe("Bad Request");
+    expect(response.body.message).toBe("draft trips cannot transition to completed");
+  });
+
+  /* 
+  Test valid/invalid assigned transitions
+  */
+  it("passes from assigned to in_progress", async () => {
+    const response = await request(app)
+      .post("/test")
+      .send({
+        current_status_test: "assigned",
+        status_test: "in_progress",
+      });
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.body).toBeDefined();
+  });
+
+  it("passes from assigned to cancelled", async () => {
+    const response = await request(app)
+      .post("/test")
+      .send({
+        current_status_test: "assigned",
+        status_test: "cancelled",
+      });
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.body).toBeDefined();
+  });
+
+  it("rejects invalid transition from assigned to completed", async () => {
+    const response = await request(app)
+      .post("/test")
+      .send({
+        current_status_test: "assigned",
+        status_test: "completed",
+      });
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe("Bad Request");
+    expect(response.body.message).toBe("assigned trips cannot transition to completed");
+  });
+
+  /* 
+  Test valid/invalid in_progress transitions
+  */
+
+  it("passes from in_progress to completed", async () => {
+    const response = await request(app)
+      .post("/test")
+      .send({
+        current_status_test: "in_progress",
+        status_test: "completed",
+      });
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.body).toBeDefined();
+  });
+
+  it("rejects invalid transition from in_progress to cancelled", async () => {
+    const response = await request(app)
+      .post("/test")
+      .send({
+        current_status_test: "in_progress",
+        status_test: "cancelled",
+      });
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe("Bad Request");
+    expect(response.body.message).toBe("in_progress trips cannot transition to cancelled");
+  });
+
+    /* 
+    Test valid/invalid completed transitions
+    */
+    for(const nextStatus of ["draft", "assigned", "in_progress", "cancelled"]){
+        it(`rejects invalid transition from completed to ${nextStatus}`, async () => {
+            const response = await request(app)
+            .post("/test")
+            .send({
+                current_status_test: "completed",
+                status_test: nextStatus,
+            });
+            expect(response.status).toBe(409);
+            expect(response.body.error).toBe("Bad Request");
+            expect(response.body.message).toBe(`completed trips cannot transition to ${nextStatus}`);
+        });
+    }
+    
+    /* 
+    Test valid/invalid cancelled transitions
+    */
+    for(const nextStatus of ["draft", "assigned", "in_progress", "cancelled"]){
+        it(`rejects invalid transition from cancelled to ${nextStatus}`, async () => {
+            const response = await request(app)
+            .post("/test")
+            .send({
+                current_status_test: "cancelled",
+                status_test: nextStatus,
+            });
+            expect(response.status).toBe(409);
+            expect(response.body.error).toBe("Bad Request");
+            expect(response.body.message).toBe(`cancelled trips cannot transition to ${nextStatus}`);
+        });
+    }
+
+    /*
+    Test invalid transition
+    */
+   it(`rejects invalid current_status`, async () => {
+            const response = await request(app)
+            .post("/test")
+            .send({
+                current_status_test: "dropped_off",
+                status_test: "cancelled",
+            });
+            expect(response.status).toBe(400);
+            expect(response.body.error).toBe("Bad Request");
+            expect(response.body.message).toBe("Invalid current trip status");
+    });
+
+    it(`rejects invalid status`, async () => {
+            const response = await request(app)
+            .post("/test")
+            .send({
+                current_status_test: "draft",
+                status_test: "dropped_off",
+            });
+            expect(response.status).toBe(400);
+            expect(response.body.error).toBe("Bad Request");
+            expect(response.body.message).toBe("Unknown transition occurring");
+    });
+
+  
 });
