@@ -116,8 +116,8 @@ router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTr
     }
 
     const trip = tripDoc.data();
-    if (trip?.status !== "draft") {
-      return res.status(400).json({ error: "Bad Request", message: "Trip can only be assigned from draft status" });
+    if (trip?.status !== "draft" && trip?.status !== "assigned") {
+      return res.status(400).json({ error: "Bad Request", message: "Trip can only be assigned from draft or assigned status" });
     }
 
     await tripRef.update({
@@ -277,6 +277,11 @@ router.post("/:id/status", validate(updateTripStatusSchema), async (req, res) =>
 
     const trip = tripDoc.data();
 
+    // Cannot move to in_progress or completed without a driver assigned
+    if ((status === "in_progress" || status === "completed") && !trip?.driverId) {
+      return res.status(400).json({ error: "Bad Request", message: "Cannot start a trip without a driver assigned" });
+    }
+
     // Drivers can only update their own assigned trips
     if (req.userRole === "driver") {
       if (trip?.driverId !== req.uid) {
@@ -287,10 +292,16 @@ router.post("/:id/status", validate(updateTripStatusSchema), async (req, res) =>
       }
     }
 
-    await tripRef.update({
+    const update: Record<string, unknown> = {
       status,
       updatedAt: new Date().toISOString(),
-    });
+    };
+    // Clear driver when resetting to draft
+    if (status === "draft") {
+      update.driverId = null;
+    }
+
+    await tripRef.update(update);
 
     // Log status change event
     await db.collection("events").add({

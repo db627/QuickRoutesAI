@@ -35,7 +35,7 @@ export type AssignTripInput = z.infer<typeof assignTripSchema>;
 
 // ── Update Trip Status ──
 export const updateTripStatusSchema = z.object({
-  status: z.enum(["in_progress", "completed"]),
+  status: z.enum(["draft", "assigned", "in_progress", "completed"]),
 });
 export type UpdateTripStatusInput = z.infer<typeof updateTripStatusSchema>;
 

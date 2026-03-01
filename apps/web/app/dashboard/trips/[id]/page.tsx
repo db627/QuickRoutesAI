@@ -62,6 +62,7 @@ function RoutePolyline({ path }: { path: { lat: number; lng: number }[] }) {
 /* ------------------------------------------------------------------ */
 interface DriverOption {
   uid: string;
+  name: string;
   isOnline: boolean;
 }
 
@@ -77,11 +78,12 @@ function AssignDriverDropdown({
   const [drivers, setDrivers] = useState<DriverOption[]>([]);
   const [open, setOpen] = useState(false);
   const [assigning, setAssigning] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     // Fetch drivers list from the API
-    apiFetch<DriverOption[]>("/drivers")
-      .then(setDrivers)
+    apiFetch<{ data: DriverOption[] }>("/drivers")
+      .then((res) => setDrivers(res.data))
       .catch(() => {
         // Fallback: subscribe to the drivers collection
         const q = query(collection(firestore, "drivers"));
@@ -89,6 +91,7 @@ function AssignDriverDropdown({
           setDrivers(
             snap.docs.map((d) => ({
               uid: d.id,
+              name: d.id.slice(0, 12),
               isOnline: (d.data() as DriverRecord).isOnline,
             })),
           );
@@ -99,6 +102,7 @@ function AssignDriverDropdown({
 
   const assign = async (driverId: string) => {
     setAssigning(true);
+    setError("");
     try {
       await apiFetch(`/trips/${tripId}/assign`, {
         method: "POST",
@@ -107,7 +111,7 @@ function AssignDriverDropdown({
       onAssigned();
       setOpen(false);
     } catch (err) {
-      console.error("Failed to assign driver", err);
+      setError(err instanceof Error ? err.message : "Failed to assign driver");
     } finally {
       setAssigning(false);
     }
@@ -123,6 +127,9 @@ function AssignDriverDropdown({
       </button>
       {open && (
         <div className="absolute right-0 z-50 mt-2 w-64 rounded-lg border border-gray-200 bg-white shadow-xl">
+          {error && (
+            <p className="px-4 py-2 text-xs text-red-600">{error}</p>
+          )}
           <div className="max-h-60 overflow-y-auto divide-y divide-gray-200">
             {drivers.length === 0 && (
               <p className="px-4 py-3 text-sm text-gray-400">No drivers found</p>
@@ -134,7 +141,7 @@ function AssignDriverDropdown({
                 disabled={assigning}
                 className="flex w-full items-center justify-between px-4 py-3 text-left text-sm text-gray-900 hover:bg-gray-100 disabled:opacity-50"
               >
-                <span className="truncate">{d.uid.slice(0, 16)}...</span>
+                <span className="truncate">{d.name}</span>
                 <span
                   className={`ml-2 rounded-full px-2 py-0.5 text-xs font-medium ${
                     d.isOnline
@@ -161,8 +168,10 @@ export default function TripDetailPage() {
   const router = useRouter();
   const [trip, setTrip] = useState<Trip | null>(null);
   const [loading, setLoading] = useState(true);
+  const [driverName, setDriverName] = useState<string | null>(null);
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
   const [computing, setComputing] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
   const [error, setError] = useState("");
 
   // Subscribe to trip document in real-time
@@ -178,6 +187,23 @@ export default function TripDetailPage() {
     });
     return unsub;
   }, [id]);
+
+  // Fetch driver name when driver is assigned
+  useEffect(() => {
+    const driverId = trip?.driverId;
+    if (!driverId) {
+      setDriverName(null);
+      return;
+    }
+    const unsub = onSnapshot(doc(firestore, "users", driverId), (snap) => {
+      if (snap.exists()) {
+        setDriverName((snap.data() as { name?: string }).name || driverId.slice(0, 12));
+      } else {
+        setDriverName(driverId.slice(0, 12));
+      }
+    });
+    return unsub;
+  }, [trip?.driverId]);
 
   // Subscribe to driver's live position when driver is assigned
   useEffect(() => {
@@ -197,6 +223,22 @@ export default function TripDetailPage() {
     });
     return unsub;
   }, [trip?.driverId]);
+
+  const changeStatus = useCallback(async (newStatus: string) => {
+    if (!id) return;
+    setUpdatingStatus(true);
+    setError("");
+    try {
+      await apiFetch(`/trips/${id}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status: newStatus }),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update status");
+    } finally {
+      setUpdatingStatus(false);
+    }
+  }, [id]);
 
   const computeRoute = useCallback(async () => {
     if (!id) return;
@@ -274,6 +316,15 @@ export default function TripDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {trip.status !== "draft" && (
+            <button
+              onClick={() => changeStatus("draft")}
+              disabled={updatingStatus}
+              className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:border-gray-300 disabled:opacity-50"
+            >
+              Reset to Draft
+            </button>
+          )}
           {!trip.route && (
             <button
               onClick={computeRoute}
@@ -308,7 +359,7 @@ export default function TripDetailPage() {
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
           <p className="text-xs text-gray-500">Driver</p>
           <p className="mt-0.5 text-sm font-medium text-gray-900">
-            {trip.driverId ? trip.driverId.slice(0, 12) + "..." : "Unassigned"}
+            {trip.driverId ? (driverName || "Loading...") : "Unassigned"}
           </p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
