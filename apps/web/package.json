@@ -6,7 +6,10 @@
     "dev": "next dev --port 3000",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
     "@quickroutesai/shared": "workspace:*",
@@ -18,10 +21,16 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/jest": "^29.5.14",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.20",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
     "postcss": "^8.4.41",
     "tailwindcss": "^3.4.10",
     "typescript": "^5.5.4"

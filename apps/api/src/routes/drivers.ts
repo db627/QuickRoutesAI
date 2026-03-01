@@ -4,6 +4,8 @@ import { requireRole } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { locationPingSchema } from "@quickroutesai/shared";
 import admin from "firebase-admin";
+import { pagination } from "../middleware/pagination";
+import { paginateFirestore } from "../utils/paginateFirestore";
 
 const router = Router();
 
@@ -69,22 +71,40 @@ router.get("/active", requireRole("dispatcher", "admin"), async (_req, res) => {
 /**
  * GET /drivers — list all drivers (for dispatcher assignment dropdowns, etc.)
  */
-router.get("/", requireRole("dispatcher", "admin"), async (_req, res) => {
+router.get("/", requireRole("dispatcher", "admin"), pagination, async (req, res) => {
   try {
-    const snapshot = await db.collection("drivers").get();
-    const drivers = await Promise.all(
-      snapshot.docs.map(async (driverDoc) => {
-        const userDoc = await db.collection("users").doc(driverDoc.id).get();
-        const userData = userDoc.data();
+    // paginate the drivers collection first
+    const baseQuery = db.collection("drivers");
+
+    const pageResult = await paginateFirestore(baseQuery, req.pagination!, {
+      orderField: "updatedAt",
+      orderDirection: "desc",
+    });
+
+    // enrich only the returned page with user info
+    const enriched = await Promise.all(
+      pageResult.data.map(async (driver: any) => {
+        // paginateFirestore returns { id, ...data() }
+        const uid = driver.id;
+        const userDoc = await db.collection("users").doc(uid).get();
+        const userData = userDoc.exists ? userDoc.data() : null;
+
+        // remove id, replace with uid to keep your existing response style
+        const { id, ...driverData } = driver;
+
         return {
-          uid: driverDoc.id,
+          uid,
           name: userData?.name || "Unknown",
           email: userData?.email || "",
-          ...driverDoc.data(),
+          ...driverData,
         };
       }),
     );
-    res.json(drivers);
+
+    res.json({
+      ...pageResult,
+      data: enriched,
+    });
   } catch (err) {
     res.status(500).json({ error: "Internal Error", message: "Failed to fetch drivers" });
   }
