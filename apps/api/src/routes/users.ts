@@ -25,6 +25,9 @@ router.get(
     try {
       let ref: admin.firestore.Query = db.collection("users");
 
+      if (req.query.role === "driver") {
+        ref = ref.where("role", "==", "driver");
+      }
       const result = await paginateFirestore(ref, req.pagination!, {
         orderField: "createdAt",
         orderDirection: "desc",
@@ -41,5 +44,10 @@ router.get(
     }
   },
 );
+
+router.patch("/:id", requireRole("admin"), async (req, res) => {
+
+});
+
 
 export default router;
