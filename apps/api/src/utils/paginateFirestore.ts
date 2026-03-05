@@ -76,8 +76,7 @@ export async function paginateFirestore<T>(
   // 2) doc id tie-breaker so cursor pagination is deterministic
   let ordered;
   if((baseQuery instanceof admin.firestore.CollectionReference) === false) {
-    
-    ordered = baseQuery.orderBy(admin.firestore.FieldPath.documentId(), orderDirection);
+    ordered = baseQuery;
   }else{
     ordered = baseQuery.orderBy(orderField, orderDirection).orderBy(admin.firestore.FieldPath.documentId(), orderDirection);
   }
