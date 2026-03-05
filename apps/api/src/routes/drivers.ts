@@ -74,7 +74,14 @@ router.get("/active", requireRole("dispatcher", "admin"), async (_req, res) => {
 router.get("/", requireRole("dispatcher", "admin"), pagination, async (req, res) => {
   try {
     // paginate the drivers collection first
-    const baseQuery = db.collection("drivers");
+
+    const isOnline = req.query.online === "true" ? true : null;
+
+    var baseQuery: admin.firestore.Query = db.collection("drivers");
+
+    if (isOnline !== null) {
+      baseQuery = baseQuery.where("isOnline", "==", isOnline);
+    }
 
     const pageResult = await paginateFirestore(baseQuery, req.pagination!, {
       orderField: "updatedAt",

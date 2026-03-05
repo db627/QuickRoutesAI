@@ -68,13 +68,20 @@ export async function paginateFirestore<T>(
   // Count total *without* limit/offset/startAfter applied.
   // (baseQuery should include filters, but not pagination yet)
   const countSnap = await baseQuery.count().get();
+
   const total = countSnap.data().count;
 
   // Apply stable ordering:
   // 1) primary orderField
   // 2) doc id tie-breaker so cursor pagination is deterministic
-  let ordered = baseQuery.orderBy(orderField, orderDirection).orderBy(admin.firestore.FieldPath.documentId(), orderDirection);
-
+  let ordered;
+  if((baseQuery instanceof admin.firestore.CollectionReference) === false) {
+    
+    ordered = baseQuery.orderBy(admin.firestore.FieldPath.documentId(), orderDirection);
+  }else{
+    ordered = baseQuery.orderBy(orderField, orderDirection).orderBy(admin.firestore.FieldPath.documentId(), orderDirection);
+  }
+  
   // Cursor-mode
   if (options.mode === "cursor") {
     const payload = decodeCursor(options.cursor);
@@ -119,6 +126,7 @@ export async function paginateFirestore<T>(
   // We only fetch the requested page.
   const snap = await ordered.offset(offset).limit(options.limit).get();
 
+  const snap = await ordered.offset(offset).limit(options.limit).get();
   const data = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as unknown as T[];
 
   const hasMore = options.page * options.limit < total;
