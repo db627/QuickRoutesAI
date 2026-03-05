@@ -126,7 +126,6 @@ export async function paginateFirestore<T>(
   // We only fetch the requested page.
   const snap = await ordered.offset(offset).limit(options.limit).get();
 
-  const snap = await ordered.offset(offset).limit(options.limit).get();
   const data = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as unknown as T[];
 
   const hasMore = options.page * options.limit < total;
