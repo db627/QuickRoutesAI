@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+import { randomUUID } from "crypto";
 // ── Driver Location ──
 export const locationPingSchema = z.object({
   lat: z.number().min(-90).max(90),
@@ -12,6 +12,7 @@ export type LocationPingInput = z.infer<typeof locationPingSchema>;
 
 // ── Trip Stop ──
 export const tripStopSchema = z.object({
+  stopId: z.string().min(1).default(() => randomUUID()),
   address: z.string().min(1),
   lat: z.number().min(-90).max(90).optional(),
   lng: z.number().min(-180).max(180).optional(),
@@ -37,6 +38,13 @@ export const updateTripStatusSchema = z.object({
   status: z.enum(["in_progress", "completed"]),
 });
 export type UpdateTripStatusInput = z.infer<typeof updateTripStatusSchema>;
+
+// ── Update Trip Notes ──
+export const updateTripSchema = z.object({
+  notes: z.string().max(1000).optional(),
+  stops: z.array(tripStopSchema).optional(),
+});
+export type UpdateTripInput = z.infer<typeof updateTripSchema>;
 
 // ── User Registration ──
 export const userRoleSchema = z.enum(["driver", "dispatcher", "admin"]);

@@ -35,8 +35,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Typecheck shared
-        run: pnpm --filter @quickroutesai/shared typecheck
+      - name: Build shared
+        run: pnpm --filter @quickroutesai/shared build
 
       - name: Typecheck API
         run: pnpm --filter api typecheck

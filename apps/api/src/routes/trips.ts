@@ -7,9 +7,13 @@ import {
   createTripSchema,
   assignTripSchema,
   updateTripStatusSchema,
+  tripStopSchema,
+  updateTripSchema,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
 import { randomUUID } from "crypto";
+import { pagination } from "../middleware/pagination";
+import { paginateFirestore } from "../utils/paginateFirestore";
 import { tripTransitionGuard } from "../middleware/trips";
 
 const router = Router();
@@ -49,6 +53,7 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
       status: "draft" as const,
       stops: resolvedStops,
       route: null,
+      notes: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -62,10 +67,13 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
 });
 
 /**
- * GET /trips — list trips with optional filters
- * Query params: ?status=draft&driverId=xyz&limit=50
+ * GET /trips — list trips with optional filters + pagination
+ * Query params:
+ *   filters: ?status=draft&driverId=xyz
+ *   page pagination: ?page=1&limit=20
+ *   cursor pagination: ?cursor=...&limit=20
  */
-router.get("/", async (req, res) => {
+router.get("/", pagination, async (req, res) => {
   try {
     let ref: admin.firestore.Query = db.collection("trips");
 
@@ -82,13 +90,14 @@ router.get("/", async (req, res) => {
       ref = ref.where("driverId", "==", req.query.driverId);
     }
 
-    const limitNum = Math.min(parseInt(String(req.query.limit || "50"), 10), 100);
-    ref = ref.orderBy("createdAt", "desc").limit(limitNum);
+    // NOTE: ordering is enforced inside paginateFirestore for stable cursor pagination.
+    const result = await paginateFirestore(ref, req.pagination!, {
+      orderField: "createdAt",
+      orderDirection: "desc",
+    });
 
-    const snapshot = await ref.get();
-    const trips = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-
-    res.json(trips);
+    // Response envelope: { data, total, page, hasMore, nextCursor? }
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: "Internal Error", message: "Failed to fetch trips" });
   }
@@ -99,7 +108,6 @@ router.get("/", async (req, res) => {
  */
 router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTripSchema),tripTransitionGuard, async (req, res) => {
   const { driverId } = req.body;
-
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
@@ -149,6 +157,77 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+/**
+ * PATCH /trips/:id -- update trip details
+ */
+
+router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
+  try {
+    const { notes,stops } = req.body;
+
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
+
+  
+    if (!tripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+    
+    const trip = tripDoc.data();
+
+    if (trip?.status !== "draft") {
+      return res.status(409).json({ error: "Bad Request", message: "Only draft trips can be updated" });
+    }
+
+    var updateData: Partial<{ notes: string; stops: any[]; updatedAt: string }> = { updatedAt: new Date().toISOString() };
+    if (notes !== undefined) updateData.notes = notes;
+    if (stops !== undefined) updateData.stops = stops;
+
+    await tripRef.update(updateData);
+
+    await db.collection("events").add({
+      type: "trip_update",
+      uid: req.uid,
+      payload: { tripId: req.params.id, from: { notes: trip?.notes || null, stops: trip?.stops || null }, to: updateData },
+      createdAt: new Date().toISOString(),
+    });
+    
+
+    res.json({ ok: true, ...updateData });
+
+  } catch (err) {
+    return res.status(500).json({ error: "Internal Error", message: "Failed to update trip" });
+  }
+});
+
+/**
+ * DELETE /trips/:id — delete a trip (only if draft)
+ */
+router.delete("/:id", requireRole("dispatcher", "admin"), async (req, res) => {
+  try {
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
+    if (!tripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+    const trip = tripDoc.data();
+    if (trip?.status !== "draft") {
+      return res.status(409).json({ error: "Bad Request", message: "Only draft trips can be deleted" });
+    }
+
+    await tripRef.delete();
+    await db.collection("events").add({
+      type: "trip_delete",
+      uid: req.uid,
+      payload: trip,
+      createdAt: new Date().toISOString(),
+    });
+    res.json({ ok: true, message: "Trip deleted" });
+    
+  }catch (err) {
+    return res.status(500).json({ error: "Internal Error", message: "Failed to delete trip" });
+  }
+});
 /**
  * POST /trips/:id/route — compute route using Google Directions API
  */

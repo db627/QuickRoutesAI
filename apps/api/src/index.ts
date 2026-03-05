@@ -10,7 +10,7 @@ import meRoutes from "./routes/me";
 import authRoutes from "./routes/auth";
 import driverRoutes from "./routes/drivers";
 import tripRoutes from "./routes/trips";
-
+import userRoutes from "./routes/users";
 const app = express();
 
 // Global middleware
@@ -27,6 +27,7 @@ app.use("/auth", authRoutes); // login & signup are public; setup applies its ow
 app.use("/me", verifyFirebaseToken, meRoutes);
 app.use("/drivers", verifyFirebaseToken, driverRoutes);
 app.use("/trips", verifyFirebaseToken, tripRoutes);
+app.use("/users", verifyFirebaseToken, userRoutes);
 
 // Global error handler
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
