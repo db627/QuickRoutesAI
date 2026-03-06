@@ -103,6 +103,39 @@ router.get("/", pagination, async (req, res) => {
 });
 
 /**
+ * GET /trips/stats — summary counts for the dashboard stats cards.
+ * Uses simple count() queries to avoid composite index requirements.
+ * Returns: { totalTrips, inProgressTrips, completedToday }
+ */
+router.get("/stats", requireRole("dispatcher", "admin"), async (_req, res) => {
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const [totalSnap, inProgressSnap, completedSnap] = await Promise.all([
+      db.collection("trips").count().get(),
+      db.collection("trips").where("status", "==", "in_progress").count().get(),
+      // Fetch completed trips and filter by date server-side to avoid a
+      // composite index on (status, updatedAt).
+      db.collection("trips").where("status", "==", "completed").get(),
+    ]);
+
+    const completedToday = completedSnap.docs.filter((doc) => {
+      const updatedAt = doc.data().updatedAt as string | undefined;
+      return updatedAt && updatedAt >= todayStart.toISOString();
+    }).length;
+
+    res.json({
+      totalTrips: totalSnap.data().count,
+      inProgressTrips: inProgressSnap.data().count,
+      completedToday,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Internal Error", message: "Failed to fetch trip stats" });
+  }
+});
+
+/**
  * POST /trips/:id/assign — dispatcher assigns a driver to this trip
  */
 router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTripSchema), async (req, res) => {
