@@ -21,6 +21,7 @@ import {
 import { firestore } from "@/lib/firebase";
 import { apiFetch } from "@/lib/api";
 import { decodePolyline, formatDistance, formatDuration } from "@/lib/utils";
+import { useToast } from "@/lib/toast-context";
 import type { Trip, DriverRecord } from "@quickroutesai/shared";
 
 const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || "";
@@ -74,6 +75,7 @@ function AssignDriverDropdown({
   currentDriverId: string | null;
   onAssigned: () => void;
 }) {
+  const { toast } = useToast();
   const [drivers, setDrivers] = useState<DriverOption[]>([]);
   const [open, setOpen] = useState(false);
   const [assigning, setAssigning] = useState(false);
@@ -104,10 +106,11 @@ function AssignDriverDropdown({
         method: "POST",
         body: JSON.stringify({ driverId }),
       });
+      toast.success("Driver assigned successfully");
       onAssigned();
       setOpen(false);
     } catch (err) {
-      console.error("Failed to assign driver", err);
+      toast.error(err instanceof Error ? err.message : "Failed to assign driver");
     } finally {
       setAssigning(false);
     }
@@ -159,11 +162,11 @@ function AssignDriverDropdown({
 export default function TripDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { toast } = useToast();
   const [trip, setTrip] = useState<Trip | null>(null);
   const [loading, setLoading] = useState(true);
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
   const [computing, setComputing] = useState(false);
-  const [error, setError] = useState("");
 
   // Subscribe to trip document in real-time
   useEffect(() => {
@@ -201,15 +204,15 @@ export default function TripDetailPage() {
   const computeRoute = useCallback(async () => {
     if (!id) return;
     setComputing(true);
-    setError("");
     try {
       await apiFetch(`/trips/${id}/route`, { method: "POST" });
+      toast.success("Route computed successfully");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to compute route");
+      toast.error(err instanceof Error ? err.message : "Failed to compute route");
     } finally {
       setComputing(false);
     }
-  }, [id]);
+  }, [id, toast]);
 
   if (loading) {
     return (
@@ -290,12 +293,6 @@ export default function TripDetailPage() {
           />
         </div>
       </div>
-
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600">
-          {error}
-        </div>
-      )}
 
       {/* Metadata cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
