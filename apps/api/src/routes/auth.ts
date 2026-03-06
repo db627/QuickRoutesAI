@@ -70,6 +70,7 @@ router.post("/signup", signupLimiter, validate(signupSchema), async (req, res) =
       email,
       name,
       role: role || "driver",
+      active: true,
       createdAt: new Date().toISOString(),
     };
     await db.collection("users").doc(userRecord.uid).set(profile);

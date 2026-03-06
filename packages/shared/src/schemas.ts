@@ -69,3 +69,8 @@ export const loginSchema = z.object({
   password: z.string().min(1),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
+
+export const updateUserSchema = z.object({
+  role: userRoleSchema.optional(),
+  active: z.boolean().optional(),
+});
