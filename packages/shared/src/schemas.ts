@@ -69,3 +69,10 @@ export const loginSchema = z.object({
   password: z.string().min(1),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
+
+// ── Update User (admin) ──
+export const updateUserSchema = z.object({
+  role: userRoleSchema.optional(),
+  status: z.enum(["active", "deactivated"]).optional(),
+});
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;
