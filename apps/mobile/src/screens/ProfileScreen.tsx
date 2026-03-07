@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, TouchableOpacity, ScrollView } from "react-native";
+import React, { useEffect, useState, useCallback } from "react";
+import { View, Text, TouchableOpacity, ScrollView, RefreshControl } from "react-native";
 import { doc, onSnapshot, collection, query, where, getDocs, setDoc } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 import { auth, firestore } from "../config/firebase";
@@ -22,6 +22,7 @@ export default function ProfileScreen() {
   const [isOnline, setIsOnline] = useState(false);
   const [stats, setStats] = useState({ tripsCompleted: 0, totalDistanceKm: 0 });
   const [queueSize, setQueueSize] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (!uid) return;
@@ -67,32 +68,34 @@ export default function ProfileScreen() {
     }
   }, [isConnected]);
 
-  useEffect(() => {
+  const fetchStats = useCallback(async () => {
     if (!uid) return;
-
-    const fetchStats = async () => {
-      const q = query(
-        collection(firestore, "trips"),
-        where("driverId", "==", uid),
-        where("status", "==", "completed")
-      );
-
-      const snapshot = await getDocs(q);
-
-      let totalDist = 0;
-      snapshot.docs.forEach((d) => {
-        const data = d.data();
-        if (data.route?.distanceMeters) totalDist += data.route.distanceMeters;
-      });
-
-      setStats({
-        tripsCompleted: snapshot.size,
-        totalDistanceKm: Math.round(totalDist / 1000),
-      });
-    };
-
-    fetchStats();
+    const q = query(
+      collection(firestore, "trips"),
+      where("driverId", "==", uid),
+      where("status", "==", "completed")
+    );
+    const snapshot = await getDocs(q);
+    let totalDist = 0;
+    snapshot.docs.forEach((d) => {
+      const data = d.data();
+      if (data.route?.distanceMeters) totalDist += data.route.distanceMeters;
+    });
+    setStats({
+      tripsCompleted: snapshot.size,
+      totalDistanceKm: Math.round(totalDist / 1000),
+    });
+    setRefreshing(false);
   }, [uid]);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchStats();
+  }, [fetchStats]);
 
   const toggleOnline = async () => {
     if (!uid) return;
@@ -132,7 +135,17 @@ export default function ProfileScreen() {
         </View>
       )}
 
-      <ScrollView className="flex-1 px-6 pt-8">
+      <ScrollView
+        className="flex-1 px-6 pt-8"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={["#3b82f6"]}
+            tintColor="#3b82f6"
+          />
+        }
+      >
         {/* Avatar */}
         <View className="items-center mb-6">
           <View className="h-20 w-20 items-center justify-center rounded-full bg-brand-600 mb-3">
