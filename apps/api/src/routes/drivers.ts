@@ -70,11 +70,36 @@ router.get("/active", requireRole("dispatcher", "admin"), async (_req, res) => {
 
 /**
  * GET /drivers — list all drivers (for dispatcher assignment dropdowns, etc.)
+ * Supports pagination: ?page=1&limit=20 or ?cursor=...&limit=20
+ * Optional filters: ?online=true, ?available=true
+ *   - available=true filters out drivers with in_progress trips
  */
 router.get("/", requireRole("dispatcher", "admin"), pagination, async (req, res) => {
   try {
     // paginate the drivers collection first
-    const baseQuery = db.collection("drivers");
+
+    const isOnline = req.query.online === "true" ? true : null;
+    const isAvailable = req.query.available === "true" ? true : null;
+    var baseQuery: admin.firestore.Query = db.collection("drivers");
+
+    if(isAvailable !== null) {
+      const inProgressTrips = await db.collection("trips").where("status", "==", "in_progress").get();
+      const busyDriverIds = new Set(inProgressTrips.docs.map(doc => doc.data().driverId));
+      console.log("Busy drivers: ", Array.from(busyDriverIds));
+      for (let i =0; i < busyDriverIds.size; i+=10) {
+        const idBatch = Array.from(busyDriverIds).slice(i, i+10);
+        console.log("Filtering out busy drivers ", idBatch);
+        baseQuery = baseQuery.where(admin.firestore.FieldPath.documentId(), "not-in", idBatch);
+      }
+
+      const busyDriversSnap = await baseQuery.get();
+      const busyDrivers = busyDriversSnap.docs.map(doc => doc.id);
+      console.log("Not Busy Drivers: ", busyDrivers);
+    }
+    
+    if (isOnline !== null) {
+      baseQuery = baseQuery.where("isOnline", "==", isOnline);
+    }
 
     const pageResult = await paginateFirestore(baseQuery, req.pagination!, {
       orderField: "updatedAt",
