@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useToast } from "@/lib/toast-context";
 import type { Trip } from "@quickroutesai/shared";
 
 interface TripFormProps {
@@ -9,9 +10,9 @@ interface TripFormProps {
 }
 
 export default function TripForm({ onCreated }: TripFormProps) {
+  const { toast } = useToast();
   const [stops, setStops] = useState<string[]>(["", ""]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
   const updateStop = (index: number, value: string) => {
     setStops((prev) => prev.map((s, i) => (i === index ? value : s)));
@@ -26,7 +27,6 @@ export default function TripForm({ onCreated }: TripFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
     setLoading(true);
 
     try {
@@ -43,9 +43,10 @@ export default function TripForm({ onCreated }: TripFormProps) {
         body: JSON.stringify(payload),
       });
 
+      toast.success("Trip created successfully");
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create trip");
+      toast.error(err instanceof Error ? err.message : "Failed to create trip");
     } finally {
       setLoading(false);
     }
@@ -78,8 +79,6 @@ export default function TripForm({ onCreated }: TripFormProps) {
           )}
         </div>
       ))}
-
-      {error && <p className="text-sm text-red-600">{error}</p>}
 
       <div className="flex gap-3">
         <button
