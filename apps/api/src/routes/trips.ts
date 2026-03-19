@@ -7,11 +7,14 @@ import {
   createTripSchema,
   assignTripSchema,
   updateTripStatusSchema,
+  tripStopSchema,
+  updateTripSchema,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
 import { randomUUID } from "crypto";
 import { pagination } from "../middleware/pagination";
 import { paginateFirestore } from "../utils/paginateFirestore";
+import { tripTransitionGuard } from "../middleware/trips";
 
 const router = Router();
 
@@ -50,6 +53,7 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
       status: "draft" as const,
       stops: resolvedStops,
       route: null,
+      notes: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -135,9 +139,8 @@ router.get("/stats", requireRole("dispatcher", "admin"), async (_req, res) => {
 /**
  * POST /trips/:id/assign — dispatcher assigns a driver to this trip
  */
-router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTripSchema), async (req, res) => {
+router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTripSchema),tripTransitionGuard, async (req, res) => {
   const { driverId } = req.body;
-
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
@@ -188,6 +191,77 @@ router.get("/:id", async (req, res) => {
 });
 
 /**
+ * PATCH /trips/:id -- update trip details
+ */
+
+router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
+  try {
+    const { notes,stops } = req.body;
+
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
+
+  
+    if (!tripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+    
+    const trip = tripDoc.data();
+
+    if (trip?.status !== "draft") {
+      return res.status(409).json({ error: "Bad Request", message: "Only draft trips can be updated" });
+    }
+
+    var updateData: Partial<{ notes: string; stops: any[]; updatedAt: string }> = { updatedAt: new Date().toISOString() };
+    if (notes !== undefined) updateData.notes = notes;
+    if (stops !== undefined) updateData.stops = stops;
+
+    await tripRef.update(updateData);
+
+    await db.collection("events").add({
+      type: "trip_update",
+      uid: req.uid,
+      payload: { tripId: req.params.id, from: { notes: trip?.notes || null, stops: trip?.stops || null }, to: updateData },
+      createdAt: new Date().toISOString(),
+    });
+    
+
+    res.json({ ok: true, ...updateData });
+
+  } catch (err) {
+    return res.status(500).json({ error: "Internal Error", message: "Failed to update trip" });
+  }
+});
+
+/**
+ * DELETE /trips/:id — delete a trip (only if draft)
+ */
+router.delete("/:id", requireRole("dispatcher", "admin"), async (req, res) => {
+  try {
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
+    if (!tripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+    const trip = tripDoc.data();
+    if (trip?.status !== "draft") {
+      return res.status(409).json({ error: "Bad Request", message: "Only draft trips can be deleted" });
+    }
+
+    await tripRef.delete();
+    await db.collection("events").add({
+      type: "trip_delete",
+      uid: req.uid,
+      payload: trip,
+      createdAt: new Date().toISOString(),
+    });
+    res.json({ ok: true, message: "Trip deleted" });
+    
+  }catch (err) {
+    return res.status(500).json({ error: "Internal Error", message: "Failed to delete trip" });
+  }
+});
+/**
  * POST /trips/:id/route — compute route using Google Directions API
  */
 router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) => {
@@ -224,7 +298,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) =
  * Drivers can move to in_progress or completed (if assigned to them).
  * Dispatchers can set any status.
  */
-router.post("/:id/status", validate(updateTripStatusSchema), async (req, res) => {
+router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard, async (req, res) => {
   const { status } = req.body;
 
   try {
