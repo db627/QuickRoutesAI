@@ -27,6 +27,9 @@ router.get(
     try {
       let ref: admin.firestore.Query = db.collection("users");
 
+      if (req.query.role === "driver") {
+        ref = ref.where("role", "==", "driver");
+      }
       const result = await paginateFirestore(ref, req.pagination!, {
         orderField: "createdAt",
         orderDirection: "desc",
@@ -72,6 +75,7 @@ router.patch(
         return res.status(404).json({ error: "Not Found", message: "User not found" });
       }
 
+      const data = userDoc.data();
       const updates: Record<string, string> = { updatedAt: new Date().toISOString() };
       if (role !== undefined) updates.role = role;
       if (status !== undefined) updates.status = status;
@@ -83,6 +87,13 @@ router.patch(
         await auth.updateUser(id, { disabled: status === "deactivated" });
       }
 
+      await db.collection("events").add({
+        createdAt: new Date().toISOString(),
+        payload: { from: { status: data?.status ?? "active", role: data?.role ?? "driver" }, to: updates, userId: id },
+        type: "user_updated",
+        uid: req.uid,
+      });
+
       res.json({ ok: true, ...updates });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to update user";
@@ -90,5 +101,37 @@ router.patch(
     }
   },
 );
+
+/**
+ * DELETE /users/:id — permanently delete a user.
+ * Admin only.
+ */
+router.delete("/:id", requireRole("admin"), async (req, res) => {
+  try {
+    const userRef = db.collection("users").doc(req.params.id);
+    const userDoc = await userRef.get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "User not found" });
+    }
+
+    const data = userDoc.data();
+
+    await userRef.delete();
+    await auth.deleteUser(req.params.id);
+
+    await db.collection("events").add({
+      createdAt: new Date().toISOString(),
+      payload: { userId: req.params.id, ...data },
+      type: "user_deleted",
+      uid: req.uid,
+    });
+
+    res.json({ ok: true, message: "User deleted successfully" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to delete user";
+    return res.status(500).json({ error: "Internal Error", message });
+  }
+});
 
 export default router;

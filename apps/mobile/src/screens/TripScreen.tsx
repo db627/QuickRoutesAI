@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert, RefreshControl } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { auth, firestore } from "../config/firebase";
@@ -44,37 +44,50 @@ function decodePolyline(encoded: string): { latitude: number; longitude: number 
 export default function TripScreen() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const uid = auth.currentUser?.uid;
   const { isConnected } = useNetworkStatus();
+  const unsubRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
+  const fetchTrips = useCallback(() => {
     if (!uid) return;
+    unsubRef.current?.();
     const q = query(
       collection(firestore, "trips"),
       where("driverId", "==", uid),
       where("status", "in", ["assigned", "in_progress"]),
     );
-    const unsub = onSnapshot(q, (snapshot) => {
+    unsubRef.current = onSnapshot(q, (snapshot) => {
       setTrips(snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() as Omit<Trip, "id">) })));
       setLoading(false);
+      setRefreshing(false);
     });
-    return unsub;
   }, [uid]);
 
+  useEffect(() => {
+    fetchTrips();
+    return () => unsubRef.current?.();
+  }, [fetchTrips]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchTrips();
+  }, [fetchTrips]);
+
   const updateStatus = async (tripId: string, status: "in_progress" | "completed") => {
-  if (!isConnected) {
-    Alert.alert("No Connection", "Trip status cannot be updated while offline.");
-    return;
-  }
-  try {
-    await apiFetch(`/trips/${tripId}/status`, {
-      method: "POST",
-      body: JSON.stringify({ status }),
-    });
-  } catch (err) {
-    console.error("Failed to update trip status:", err);
-  }
-};
+    if (!isConnected) {
+      Alert.alert("No Connection", "Trip status cannot be updated while offline.");
+      return;
+    }
+    try {
+      await apiFetch(`/trips/${tripId}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status }),
+      });
+    } catch (err) {
+      console.error("Failed to update trip status:", err);
+    }
+  };
 
   if (loading) {
     return (
@@ -154,6 +167,14 @@ export default function TripScreen() {
         data={trip.stops.sort((a, b) => a.sequence - b.sequence)}
         keyExtractor={(item) => item.stopId}
         className="flex-1 mx-4 mt-3"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={["#3b82f6"]}
+            tintColor="#3b82f6"
+          />
+        }
         renderItem={({ item, index }) => (
           <View className="flex-row items-center border-b border-gray-100 bg-white px-4 py-3 first:rounded-t-xl last:rounded-b-xl">
             <View className={`mr-3 h-8 w-8 items-center justify-center rounded-full ${

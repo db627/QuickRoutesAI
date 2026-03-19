@@ -27,7 +27,7 @@ export interface DriverRecord {
 }
 
 // ── Trip ──
-export type TripStatus = "draft" | "assigned" | "in_progress" | "completed";
+export type TripStatus = "draft" | "assigned" | "in_progress" | "completed" | "cancelled";
 
 export interface TripStop {
   stopId: string;
