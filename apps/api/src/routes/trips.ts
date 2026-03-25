@@ -7,6 +7,7 @@ import {
   createTripSchema,
   assignTripSchema,
   updateTripStatusSchema,
+  updateTripSchema,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
 import { randomUUID } from "crypto";
@@ -224,6 +225,87 @@ router.post("/:id/status", validate(updateTripStatusSchema), async (req, res) =>
     res.json({ ok: true, status });
   } catch (err) {
     res.status(500).json({ error: "Internal Error", message: "Failed to update status" });
+  }
+});
+
+/**
+ * PATCH /trips/:id — dispatcher updates stops on a draft trip
+ * Clears any existing computed route since stops have changed.
+ */
+router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema), async (req, res) => {
+  const { stops } = req.body;
+
+  try {
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
+
+    if (!tripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+
+    const trip = tripDoc.data();
+    if (trip?.status !== "draft") {
+      return res.status(400).json({ error: "Bad Request", message: "Only draft trips can be edited" });
+    }
+
+    const resolvedStops = await Promise.all(
+      stops.map(async (s: { address: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
+        let lat = s.lat;
+        let lng = s.lng;
+        if (lat == null || lng == null) {
+          const coords = await geocodeAddress(s.address);
+          lat = coords.lat;
+          lng = coords.lng;
+        }
+        return {
+          stopId: randomUUID(),
+          address: s.address,
+          lat,
+          lng,
+          sequence: s.sequence ?? i,
+          notes: s.notes || "",
+        };
+      }),
+    );
+
+    await tripRef.update({
+      stops: resolvedStops,
+      route: null,
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.json({ ok: true, stops: resolvedStops });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to update trip";
+    res.status(500).json({ error: "Internal Error", message });
+  }
+});
+
+/**
+ * POST /trips/:id/cancel — dispatcher cancels a draft or assigned trip
+ */
+router.post("/:id/cancel", requireRole("dispatcher", "admin"), async (req, res) => {
+  try {
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
+
+    if (!tripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+
+    const trip = tripDoc.data();
+    if (!["draft", "assigned"].includes(trip?.status)) {
+      return res.status(400).json({ error: "Bad Request", message: "Only draft or assigned trips can be cancelled" });
+    }
+
+    await tripRef.update({
+      status: "cancelled",
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.json({ ok: true, status: "cancelled" });
+  } catch (err) {
+    res.status(500).json({ error: "Internal Error", message: "Failed to cancel trip" });
   }
 });
 

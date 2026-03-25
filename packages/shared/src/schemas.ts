@@ -38,6 +38,12 @@ export const updateTripStatusSchema = z.object({
 });
 export type UpdateTripStatusInput = z.infer<typeof updateTripStatusSchema>;
 
+// ── Update Trip Stops (edit) ──
+export const updateTripSchema = z.object({
+  stops: z.array(tripStopSchema).min(1, "At least one stop is required"),
+});
+export type UpdateTripInput = z.infer<typeof updateTripSchema>;
+
 // ── User Registration ──
 export const userRoleSchema = z.enum(["driver", "dispatcher", "admin"]);
 

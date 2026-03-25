@@ -6,12 +6,16 @@ import type { Trip } from "@quickroutesai/shared";
 
 interface TripFormProps {
   onCreated: () => void;
+  tripId?: string;
+  initialStops?: string[];
 }
 
-export default function TripForm({ onCreated }: TripFormProps) {
-  const [stops, setStops] = useState<string[]>(["", ""]);
+export default function TripForm({ onCreated, tripId, initialStops }: TripFormProps) {
+  const [stops, setStops] = useState<string[]>(initialStops ?? ["", ""]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const isEditMode = !!tripId;
 
   const updateStop = (index: number, value: string) => {
     setStops((prev) => prev.map((s, i) => (i === index ? value : s)));
@@ -38,14 +42,27 @@ export default function TripForm({ onCreated }: TripFormProps) {
         })),
       };
 
-      await apiFetch<Trip>("/trips", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+      if (isEditMode) {
+        await apiFetch<Trip>(`/trips/${tripId}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await apiFetch<Trip>("/trips", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      }
 
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create trip");
+      setError(
+        err instanceof Error
+          ? err.message
+          : isEditMode
+            ? "Failed to update trip"
+            : "Failed to create trip",
+      );
     } finally {
       setLoading(false);
     }
@@ -56,7 +73,9 @@ export default function TripForm({ onCreated }: TripFormProps) {
       onSubmit={handleSubmit}
       className="rounded-xl border border-gray-200 bg-white p-5 space-y-4"
     >
-      <h3 className="font-semibold text-gray-900">New Trip</h3>
+      <h3 className="font-semibold text-gray-900">
+        {isEditMode ? "Edit Trip" : "New Trip"}
+      </h3>
 
       {stops.map((address, i) => (
         <div key={i} className="flex gap-2">
@@ -94,7 +113,13 @@ export default function TripForm({ onCreated }: TripFormProps) {
           disabled={loading}
           className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         >
-          {loading ? "Creating..." : "Create Trip"}
+          {loading
+            ? isEditMode
+              ? "Saving..."
+              : "Creating..."
+            : isEditMode
+              ? "Save Changes"
+              : "Create Trip"}
         </button>
       </div>
     </form>
