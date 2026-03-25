@@ -40,6 +40,7 @@ export interface TripRoute {
   polyline: string; // encoded polyline from Directions API
   distanceMeters: number;
   durationSeconds: number;
+  createdAt: string;
 }
 
 export interface Trip {

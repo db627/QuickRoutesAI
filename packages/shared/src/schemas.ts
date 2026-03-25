@@ -16,7 +16,7 @@ export const tripStopSchema = z.object({
   address: z.string().min(1),
   lat: z.number().min(-90).max(90).optional(),
   lng: z.number().min(-180).max(180).optional(),
-  sequence: z.number().int().min(0),
+  sequence: z.number().int().min(0).optional(),
   notes: z.string().default(""),
 });
 export type TripStopInput = z.infer<typeof tripStopSchema>;

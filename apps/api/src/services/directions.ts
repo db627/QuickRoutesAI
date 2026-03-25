@@ -50,6 +50,7 @@ export async function computeRoute(stops: TripStop[]): Promise<TripRoute> {
   const waypoints = sorted.slice(1, -1);
 
   try {
+    
     const response = await client.directions({
       params: {
         origin: { lat: origin.lat, lng: origin.lng },
@@ -62,7 +63,7 @@ export async function computeRoute(stops: TripStop[]): Promise<TripRoute> {
         key: apiKey,
       },
     });
-
+    
     if (response.data.status !== Status.OK) {
       throw new Error(
         `Directions API error: ${response.data.status}` +
@@ -87,8 +88,10 @@ export async function computeRoute(stops: TripStop[]): Promise<TripRoute> {
       polyline: route.overview_polyline.points,
       distanceMeters,
       durationSeconds,
+      createdAt: new Date().toISOString(),
     };
   } catch (err) {
+    console.log(err)
     if (err instanceof Error && err.message.startsWith("Directions API error")) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Directions request failed: ${msg}`);

@@ -181,7 +181,28 @@ router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchem
 
     var updateData: Partial<{ notes: string; stops: any[]; updatedAt: string }> = { updatedAt: new Date().toISOString() };
     if (notes !== undefined) updateData.notes = notes;
-    if (stops !== undefined) updateData.stops = stops;
+    if (stops !== undefined){
+        const resolvedStops = await Promise.all(
+        stops.map(async (s: { address: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
+          let lat = s.lat;
+          let lng = s.lng;
+          if (lat == null || lng == null) {
+            const coords = await geocodeAddress(s.address);
+            lat = coords.lat;
+            lng = coords.lng;
+          }
+          return {
+            stopId: randomUUID(),
+            address: s.address,
+            lat,
+            lng,
+            sequence: s.sequence ?? i,
+            notes: s.notes || "",
+          };
+        }),
+      );
+      updateData.stops = resolvedStops;
+    } 
 
     await tripRef.update(updateData);
 
@@ -248,8 +269,12 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) =
 
     const routeResult = await computeRoute(stops);
 
+    let routes = trip?.route || [];
+
+    routes.push(routes)
+
     await db.collection("trips").doc(req.params.id).update({
-      route: routeResult,
+      route: routes,
       updatedAt: new Date().toISOString(),
     });
 
