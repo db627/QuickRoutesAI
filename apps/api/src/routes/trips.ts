@@ -37,7 +37,6 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
           lng = coords.lng;
         }
         return {
-          stopId: randomUUID(),
           address: s.address,
           lat,
           lng,
@@ -51,15 +50,29 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
       driverId: null,
       createdBy: req.uid,
       status: "draft" as const,
-      stops: resolvedStops,
       route: null,
       notes: null,
       createdAt: now,
       updatedAt: now,
     };
 
-    const ref = await db.collection("trips").add(tripData);
-    res.status(201).json({ id: ref.id, ...tripData });
+    const tripDocRef = await db.collection("trips").add(tripData);
+    const stopsCollectionRef = tripDocRef.collection("stops");
+
+    const batch = db.batch();
+
+    resolvedStops.forEach((stop, i) => {
+      const stopDocRef = stopsCollectionRef.doc();
+
+      batch.set(stopDocRef, {
+        ...stop,
+        stopId: stopDocRef.id,
+        sequence: stop.sequence ?? i,
+      });
+    });
+
+    await batch.commit();
+    res.status(201).json({ id: tripDocRef.id, ...tripData });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to create trip";
     res.status(500).json({ error: "Internal Error", message });
