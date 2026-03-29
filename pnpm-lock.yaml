@@ -50,6 +50,9 @@ importers:
       firebase-admin:
         specifier: ^12.3.1
         version: 12.7.0
+      openai:
+        specifier: ^6.33.0
+        version: 6.33.0(ws@8.19.0)(zod@3.25.76)
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -162,7 +165,7 @@ importers:
         version: 5.4.3(react-native@0.81.5(@babel/core@7.29.0)(@react-native-community/cli@13.6.9)(@types/react@19.1.17)(react@19.1.0))(react-test-renderer@19.1.0(react@19.1.0))(react@19.1.0)
       '@testing-library/react-native':
         specifier: ^13.3.3
-        version: 13.3.3(jest@29.7.0(@types/node@20.19.33)(ts-node@10.9.2(@types/node@20.19.33)(typescript@5.9.3)))(react-native@0.81.5(@babel/core@7.29.0)(@react-native-community/cli@13.6.9)(@types/react@19.1.17)(react@19.1.0))(react-test-renderer@19.1.0(react@19.1.0))(react@19.1.0)
+        version: 13.3.3(jest@29.7.0)(react-native@0.81.5(@babel/core@7.29.0)(@react-native-community/cli@13.6.9)(@types/react@19.1.17)(react@19.1.0))(react-test-renderer@19.1.0(react@19.1.0))(react@19.1.0)
       '@types/react':
         specifier: ~19.1.0
         version: 19.1.17
@@ -174,7 +177,7 @@ importers:
         version: 29.7.0(@types/node@20.19.33)(ts-node@10.9.2(@types/node@20.19.33)(typescript@5.9.3))
       jest-expo:
         specifier: ^54.0.17
-        version: 54.0.17(@babel/core@7.29.0)(expo@54.0.33)(jest@29.7.0(@types/node@20.19.33)(ts-node@10.9.2(@types/node@20.19.33)(typescript@5.9.3)))(react-native@0.81.5(@babel/core@7.29.0)(@react-native-community/cli@13.6.9)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
+        version: 54.0.17(@babel/core@7.29.0)(expo@54.0.33)(jest@29.7.0)(react-native@0.81.5(@babel/core@7.29.0)(@react-native-community/cli@13.6.9)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
       react-test-renderer:
         specifier: ^19.1.0
         version: 19.1.0(react@19.1.0)
@@ -4612,6 +4615,18 @@ packages:
     resolution: {integrity: sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ==}
     engines: {node: '>=12'}
 
+  openai@6.33.0:
+    resolution: {integrity: sha512-xAYN1W3YsDXJWA5F277135YfkEk6H7D3D6vWwRhJ3OEkzRgcyK8z/P5P9Gyi/wB4N8kK9kM5ZjprfvyHagKmpw==}
+    hasBin: true
+    peerDependencies:
+      ws: ^8.18.0
+      zod: ^3.25 || ^4.0
+    peerDependenciesMeta:
+      ws:
+        optional: true
+      zod:
+        optional: true
+
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
     engines: {node: '>= 0.8.0'}
@@ -8265,7 +8280,7 @@ snapshots:
       react-test-renderer: 19.1.0(react@19.1.0)
       redent: 3.0.0
 
-  '@testing-library/react-native@13.3.3(jest@29.7.0(@types/node@20.19.33)(ts-node@10.9.2(@types/node@20.19.33)(typescript@5.9.3)))(react-native@0.81.5(@babel/core@7.29.0)(@react-native-community/cli@13.6.9)(@types/react@19.1.17)(react@19.1.0))(react-test-renderer@19.1.0(react@19.1.0))(react@19.1.0)':
+  '@testing-library/react-native@13.3.3(jest@29.7.0)(react-native@0.81.5(@babel/core@7.29.0)(@react-native-community/cli@13.6.9)(@types/react@19.1.17)(react@19.1.0))(react-test-renderer@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
       jest-matcher-utils: 30.2.0
       picocolors: 1.1.1
@@ -10559,7 +10574,7 @@ snapshots:
       jest-mock: 29.7.0
       jest-util: 29.7.0
 
-  jest-expo@54.0.17(@babel/core@7.29.0)(expo@54.0.33)(jest@29.7.0(@types/node@20.19.33)(ts-node@10.9.2(@types/node@20.19.33)(typescript@5.9.3)))(react-native@0.81.5(@babel/core@7.29.0)(@react-native-community/cli@13.6.9)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0):
+  jest-expo@54.0.17(@babel/core@7.29.0)(expo@54.0.33)(jest@29.7.0)(react-native@0.81.5(@babel/core@7.29.0)(@react-native-community/cli@13.6.9)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0):
     dependencies:
       '@expo/config': 12.0.13
       '@expo/json-file': 10.0.8
@@ -10570,7 +10585,7 @@ snapshots:
       jest-environment-jsdom: 29.7.0
       jest-snapshot: 29.7.0
       jest-watch-select-projects: 2.0.0
-      jest-watch-typeahead: 2.2.1(jest@29.7.0(@types/node@20.19.33)(ts-node@10.9.2(@types/node@20.19.33)(typescript@5.9.3)))
+      jest-watch-typeahead: 2.2.1(jest@29.7.0)
       json5: 2.2.3
       lodash: 4.17.23
       react-native: 0.81.5(@babel/core@7.29.0)(@react-native-community/cli@13.6.9)(@types/react@19.1.17)(react@19.1.0)
@@ -10781,7 +10796,7 @@ snapshots:
       chalk: 3.0.0
       prompts: 2.4.2
 
-  jest-watch-typeahead@2.2.1(jest@29.7.0(@types/node@20.19.33)(ts-node@10.9.2(@types/node@20.19.33)(typescript@5.9.3))):
+  jest-watch-typeahead@2.2.1(jest@29.7.0):
     dependencies:
       ansi-escapes: 6.2.1
       chalk: 4.1.2
@@ -11562,6 +11577,11 @@ snapshots:
       define-lazy-prop: 2.0.0
       is-docker: 2.2.1
       is-wsl: 2.2.0
+
+  openai@6.33.0(ws@8.19.0)(zod@3.25.76):
+    optionalDependencies:
+      ws: 8.19.0
+      zod: 3.25.76
 
   optionator@0.9.4:
     dependencies:

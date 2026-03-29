@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   doc,
+  getDoc,
   onSnapshot,
   collection,
   query,
@@ -22,7 +23,7 @@ import { firestore } from "@/lib/firebase";
 import { apiFetch } from "@/lib/api";
 import { decodePolyline, formatDistance, formatDuration } from "@/lib/utils";
 import { useToast } from "@/lib/toast-context";
-import type { Trip, DriverRecord } from "@quickroutesai/shared";
+import type { Trip, TripStop, DriverRecord } from "@quickroutesai/shared";
 
 const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || "";
 const DEFAULT_CENTER = { lat: 40.7128, lng: -74.006 };
@@ -63,29 +64,31 @@ function RoutePolyline({ path }: { path: { lat: number; lng: number }[] }) {
 /* ------------------------------------------------------------------ */
 interface DriverOption {
   uid: string;
+  name?: string;
   isOnline: boolean;
 }
 
 function AssignDriverDropdown({
   tripId,
   currentDriverId,
+  tripStatus,
   onAssigned,
 }: {
   tripId: string;
   currentDriverId: string | null;
+  tripStatus: string;
   onAssigned: () => void;
 }) {
   const { toast } = useToast();
   const [drivers, setDrivers] = useState<DriverOption[]>([]);
   const [open, setOpen] = useState(false);
   const [assigning, setAssigning] = useState(false);
+  const [autoAssigning, setAutoAssigning] = useState(false);
 
   useEffect(() => {
-    // Fetch drivers list from the API
-    apiFetch<DriverOption[]>("/drivers")
-      .then(setDrivers)
+    apiFetch<{ data: DriverOption[] }>("/drivers")
+      .then((res) => setDrivers(res.data))
       .catch(() => {
-        // Fallback: subscribe to the drivers collection
         const q = query(collection(firestore, "drivers"));
         const unsub = onSnapshot(q, (snap) => {
           setDrivers(
@@ -116,8 +119,33 @@ function AssignDriverDropdown({
     }
   };
 
+  const autoAssign = async () => {
+    setAutoAssigning(true);
+    try {
+      const result = await apiFetch<{ driverId: string; reason: string }>("/ai/auto-assign", {
+        method: "POST",
+        body: JSON.stringify({ tripId }),
+      });
+      toast.success(`AI assigned driver: ${result.reason}`);
+      onAssigned();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Auto-assign failed");
+    } finally {
+      setAutoAssigning(false);
+    }
+  };
+
   return (
-    <div className="relative">
+    <div className="relative flex gap-2">
+      {tripStatus === "draft" && (
+        <button
+          onClick={autoAssign}
+          disabled={autoAssigning}
+          className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+        >
+          {autoAssigning ? "AI Picking..." : "Smart Assign"}
+        </button>
+      )}
       <button
         onClick={() => setOpen(!open)}
         className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-900 hover:border-gray-300"
@@ -125,7 +153,7 @@ function AssignDriverDropdown({
         {currentDriverId ? "Reassign Driver" : "Assign Driver"}
       </button>
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-64 rounded-lg border border-gray-200 bg-white shadow-xl">
+        <div className="absolute right-0 z-50 mt-10 w-64 rounded-lg border border-gray-200 bg-white shadow-xl">
           <div className="max-h-60 overflow-y-auto divide-y divide-gray-200">
             {drivers.length === 0 && (
               <p className="px-4 py-3 text-sm text-gray-400">No drivers found</p>
@@ -137,7 +165,7 @@ function AssignDriverDropdown({
                 disabled={assigning}
                 className="flex w-full items-center justify-between px-4 py-3 text-left text-sm text-gray-900 hover:bg-gray-100 disabled:opacity-50"
               >
-                <span className="truncate">{d.uid.slice(0, 16)}...</span>
+                <span className="truncate">{d.name || d.uid.slice(0, 16) + "..."}</span>
                 <span
                   className={`ml-2 rounded-full px-2 py-0.5 text-xs font-medium ${
                     d.isOnline
@@ -157,6 +185,324 @@ function AssignDriverDropdown({
 }
 
 /* ------------------------------------------------------------------ */
+/*  Inline stop editor (add / remove stops on ongoing trips)           */
+/* ------------------------------------------------------------------ */
+function StopEditor({
+  tripId,
+  currentStops,
+  editable,
+}: {
+  tripId: string;
+  currentStops: TripStop[];
+  editable: boolean;
+}) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [stops, setStops] = useState<TripStop[]>([]);
+  const [newAddress, setNewAddress] = useState("");
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Sync local state when props change and not editing
+  useEffect(() => {
+    if (!editing) {
+      setStops([...currentStops].sort((a, b) => a.sequence - b.sequence));
+    }
+  }, [currentStops, editing]);
+
+  const startEditing = () => {
+    setStops([...currentStops].sort((a, b) => a.sequence - b.sequence));
+    setEditing(true);
+    setTimeout(() => inputRef.current?.focus(), 100);
+  };
+
+  const cancel = () => {
+    setEditing(false);
+    setNewAddress("");
+  };
+
+  const addStop = () => {
+    const addr = newAddress.trim();
+    if (!addr) return;
+    setStops((prev) => [
+      ...prev,
+      {
+        stopId: crypto.randomUUID(),
+        address: addr,
+        lat: 0,
+        lng: 0,
+        sequence: prev.length,
+        notes: "",
+      },
+    ]);
+    setNewAddress("");
+    inputRef.current?.focus();
+  };
+
+  const removeStop = (stopId: string) => {
+    setStops((prev) =>
+      prev
+        .filter((s) => s.stopId !== stopId)
+        .map((s, i) => ({ ...s, sequence: i })),
+    );
+  };
+
+  const save = async () => {
+    if (stops.length < 1) {
+      toast.error("A trip must have at least one stop");
+      return;
+    }
+    setSaving(true);
+    try {
+      // Send stops — server will geocode any with lat=0/lng=0 and recompute route
+      const payload = stops.map((s, i) => ({
+        stopId: s.stopId,
+        address: s.address,
+        lat: s.lat || undefined,
+        lng: s.lng || undefined,
+        sequence: i,
+        notes: s.notes,
+        ...(s.timeWindow?.start && s.timeWindow?.end ? { timeWindow: s.timeWindow } : {}),
+      }));
+      await apiFetch(`/trips/${tripId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ stops: payload }),
+      });
+      toast.success("Stops updated & route recalculated");
+      setEditing(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update stops");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white">
+      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+        <h2 className="font-semibold text-gray-900">
+          Stops ({sorted.length})
+        </h2>
+        {editable && !editing && (
+          <button
+            onClick={startEditing}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-gray-300 hover:text-gray-900"
+          >
+            Edit Stops
+          </button>
+        )}
+        {editing && (
+          <div className="flex gap-2">
+            <button
+              onClick={cancel}
+              disabled={saving}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:border-gray-300"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={save}
+              disabled={saving}
+              className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save & Recalculate"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="divide-y divide-gray-200">
+        {sorted.map((stop, idx) => (
+          <div key={stop.stopId} className="flex items-start gap-4 px-5 py-4">
+            <div
+              className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${
+                idx === 0
+                  ? "bg-green-600"
+                  : idx === sorted.length - 1
+                    ? "bg-red-600"
+                    : "bg-blue-600"
+              }`}
+            >
+              {idx + 1}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-gray-900">{stop.address}</p>
+              {stop.lat !== 0 && stop.lng !== 0 && (
+                <p className="text-xs text-gray-400">
+                  {stop.lat.toFixed(5)}, {stop.lng.toFixed(5)}
+                </p>
+              )}
+              {stop.notes && (
+                <p className="mt-1 text-xs text-gray-500">{stop.notes}</p>
+              )}
+              {stop.timeWindow && !editing && (
+                <p className="mt-1 text-xs text-amber-600">
+                  Deliver: {stop.timeWindow.start} - {stop.timeWindow.end}
+                </p>
+              )}
+              {editing && (
+                <div className="mt-1.5 flex items-center gap-2">
+                  <span className="text-xs text-gray-400">Window:</span>
+                  <input
+                    type="time"
+                    value={stop.timeWindow?.start || ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setStops((prev) =>
+                        prev.map((s) =>
+                          s.stopId === stop.stopId
+                            ? { ...s, timeWindow: val ? { start: val, end: s.timeWindow?.end || "" } : undefined }
+                            : s,
+                        ),
+                      );
+                    }}
+                    className="rounded border border-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                  />
+                  <span className="text-xs text-gray-400">to</span>
+                  <input
+                    type="time"
+                    value={stop.timeWindow?.end || ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setStops((prev) =>
+                        prev.map((s) =>
+                          s.stopId === stop.stopId
+                            ? { ...s, timeWindow: val ? { start: s.timeWindow?.start || "", end: val } : undefined }
+                            : s,
+                        ),
+                      );
+                    }}
+                    className="rounded border border-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                  />
+                </div>
+              )}
+            </div>
+            {editing && (
+              <button
+                onClick={() => removeStop(stop.stopId)}
+                className="flex-shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                title="Remove stop"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Add stop input */}
+      {editing && (
+        <div className="border-t border-gray-200 px-5 py-3">
+          <div className="flex gap-2">
+            <input
+              ref={inputRef}
+              type="text"
+              value={newAddress}
+              onChange={(e) => setNewAddress(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addStop()}
+              placeholder="Enter address to add..."
+              className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+            <button
+              onClick={addStop}
+              disabled={!newAddress.trim()}
+              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-30"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  AI ETA Prediction panel                                            */
+/* ------------------------------------------------------------------ */
+function ETAPanel({ tripId }: { tripId: string }) {
+  const { toast } = useToast();
+  const [prediction, setPrediction] = useState<{
+    estimatedArrivalMinutes: number;
+    confidence: number;
+    factors: string[];
+    perStopETA: { stopIndex: number; address: string; etaMinutes: number }[];
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchETA = async () => {
+    setLoading(true);
+    try {
+      const res = await apiFetch<{ prediction: typeof prediction }>("/ai/eta", {
+        method: "POST",
+        body: JSON.stringify({ tripId }),
+      });
+      setPrediction(res.prediction);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "ETA prediction failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-indigo-200 bg-indigo-50">
+      <div className="flex items-center justify-between border-b border-indigo-200 px-5 py-3">
+        <h2 className="font-semibold text-indigo-900">AI ETA Prediction</h2>
+        <button
+          onClick={fetchETA}
+          disabled={loading}
+          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {loading ? "Predicting..." : prediction ? "Refresh ETA" : "Predict ETA"}
+        </button>
+      </div>
+      {prediction && (
+        <div className="px-5 py-4 space-y-3">
+          <div className="flex items-center gap-6">
+            <div>
+              <p className="text-xs text-indigo-600">Total ETA</p>
+              <p className="text-2xl font-bold text-indigo-900">
+                {prediction.estimatedArrivalMinutes} min
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-indigo-600">Confidence</p>
+              <p className="text-lg font-semibold text-indigo-900">
+                {Math.round(prediction.confidence * 100)}%
+              </p>
+            </div>
+          </div>
+          {prediction.factors.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {prediction.factors.map((f, i) => (
+                <span key={i} className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs text-indigo-700">
+                  {f}
+                </span>
+              ))}
+            </div>
+          )}
+          {prediction.perStopETA.length > 0 && (
+            <div className="space-y-1">
+              {prediction.perStopETA.map((s) => (
+                <div key={s.stopIndex} className="flex items-center justify-between text-sm">
+                  <span className="text-gray-600 truncate max-w-[200px]">{s.address}</span>
+                  <span className="font-medium text-indigo-700">{s.etaMinutes} min</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main page component                                                */
 /* ------------------------------------------------------------------ */
 export default function TripDetailPage() {
@@ -165,8 +511,15 @@ export default function TripDetailPage() {
   const { toast } = useToast();
   const [trip, setTrip] = useState<Trip | null>(null);
   const [loading, setLoading] = useState(true);
-  const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [driverPos, setDriverPos] = useState<{
+    lat: number;
+    lng: number;
+    speedMps: number;
+    heading: number;
+    updatedAt: string | null;
+  } | null>(null);
   const [computing, setComputing] = useState(false);
+  const [driverName, setDriverName] = useState<string | null>(null);
 
   // Subscribe to trip document in real-time
   useEffect(() => {
@@ -192,13 +545,32 @@ export default function TripDetailPage() {
       if (snap.exists()) {
         const data = snap.data() as DriverRecord;
         if (data.isOnline && data.lastLocation) {
-          setDriverPos({ lat: data.lastLocation.lat, lng: data.lastLocation.lng });
+          setDriverPos({
+            lat: data.lastLocation.lat,
+            lng: data.lastLocation.lng,
+            speedMps: data.lastSpeedMps ?? 0,
+            heading: data.lastHeading ?? 0,
+            updatedAt: data.updatedAt ?? null,
+          });
         } else {
           setDriverPos(null);
         }
       }
     });
     return unsub;
+  }, [trip?.driverId]);
+
+  // Resolve driver name from users collection
+  useEffect(() => {
+    if (!trip?.driverId) {
+      setDriverName(null);
+      return;
+    }
+    getDoc(doc(firestore, "users", trip.driverId)).then((snap) => {
+      if (snap.exists()) {
+        setDriverName(snap.data()?.name || null);
+      }
+    });
   }, [trip?.driverId]);
 
   const computeRoute = useCallback(async () => {
@@ -291,13 +663,14 @@ export default function TripDetailPage() {
           <AssignDriverDropdown
             tripId={trip.id}
             currentDriverId={trip.driverId}
+            tripStatus={trip.status}
             onAssigned={() => {}}
           />
         </div>
       </div>
 
       {/* Metadata cards */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
           <p className="text-xs text-gray-500">Status</p>
           <p className="mt-0.5 text-sm font-medium text-gray-900 capitalize">
@@ -307,7 +680,7 @@ export default function TripDetailPage() {
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
           <p className="text-xs text-gray-500">Driver</p>
           <p className="mt-0.5 text-sm font-medium text-gray-900">
-            {trip.driverId ? trip.driverId.slice(0, 12) + "..." : "Unassigned"}
+            {trip.driverId ? (driverName || trip.driverId.slice(0, 12) + "...") : "Unassigned"}
           </p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
@@ -321,6 +694,19 @@ export default function TripDetailPage() {
           <p className="mt-0.5 text-sm font-medium text-gray-900">
             {trip.route ? formatDuration(trip.route.durationSeconds) : "--"}
           </p>
+        </div>
+        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3">
+          <p className="text-xs text-green-600">Fuel Savings</p>
+          <p className="mt-0.5 text-sm font-bold text-green-700">
+            {trip.route?.fuelSavingsGallons != null
+              ? `${trip.route.fuelSavingsGallons.toFixed(2)} gal`
+              : "--"}
+          </p>
+          {trip.route?.naiveDistanceMeters != null && trip.route.naiveDistanceMeters > 0 && (
+            <p className="text-xs text-green-500">
+              vs {formatDistance(trip.route.naiveDistanceMeters)} unoptimized
+            </p>
+          )}
         </div>
       </div>
 
@@ -356,7 +742,7 @@ export default function TripDetailPage() {
                         background={colors.bg}
                         glyphColor={colors.glyph}
                         borderColor={colors.border}
-                        glyph={String(idx + 1)}
+                        glyphText={String(idx + 1)}
                       />
                     </AdvancedMarker>
                   );
@@ -389,43 +775,40 @@ export default function TripDetailPage() {
         )}
       </div>
 
-      {/* Stop list */}
-      <div className="rounded-xl border border-gray-200 bg-white">
-        <div className="border-b border-gray-200 px-5 py-3">
-          <h2 className="font-semibold text-gray-900">
-            Stops ({stops.length})
-          </h2>
+      {/* Live driver info */}
+      {driverPos && (
+        <div className="flex items-center gap-6 rounded-xl border border-brand-200 bg-brand-50 px-5 py-3">
+          <div className="flex items-center gap-2">
+            <div className="h-2.5 w-2.5 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-sm font-medium text-gray-900">Driver Live</span>
+          </div>
+          <div className="flex items-center gap-4 text-sm text-gray-600">
+            <span>
+              {(driverPos.speedMps * 2.237).toFixed(0)} mph
+            </span>
+            <span>
+              {driverPos.heading.toFixed(0)}&deg; heading
+            </span>
+            {driverPos.updatedAt && (
+              <span className="text-xs text-gray-400">
+                Updated {new Date(driverPos.updatedAt).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="divide-y divide-gray-200">
-          {stops
-            .slice()
-            .sort((a, b) => a.sequence - b.sequence)
-            .map((stop, idx) => (
-              <div key={stop.stopId} className="flex items-start gap-4 px-5 py-4">
-                <div
-                  className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${
-                    idx === 0
-                      ? "bg-green-600"
-                      : idx === stops.length - 1
-                        ? "bg-red-600"
-                        : "bg-blue-600"
-                  }`}
-                >
-                  {idx + 1}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-900">{stop.address}</p>
-                  <p className="text-xs text-gray-400">
-                    {stop.lat.toFixed(5)}, {stop.lng.toFixed(5)}
-                  </p>
-                  {stop.notes && (
-                    <p className="mt-1 text-xs text-gray-500">{stop.notes}</p>
-                  )}
-                </div>
-              </div>
-            ))}
-        </div>
-      </div>
+      )}
+
+      {/* AI ETA Prediction */}
+      {trip.status === "in_progress" && (
+        <ETAPanel tripId={trip.id} />
+      )}
+
+      {/* Stops (editable for non-terminal trips) */}
+      <StopEditor
+        tripId={trip.id}
+        currentStops={stops}
+        editable={trip.status !== "completed" && trip.status !== "cancelled"}
+      />
 
       {/* Created / Updated */}
       <div className="flex gap-6 text-xs text-gray-400">

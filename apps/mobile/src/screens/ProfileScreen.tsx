@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, RefreshControl } from "react-
 import { doc, onSnapshot, collection, query, where, getDocs, setDoc } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 import { auth, firestore } from "../config/firebase";
-import { stopTracking } from "../services/location";
+import { stopTracking, getCurrentPosition } from "../services/location";
 import {
   enqueueWrite,
   setOptimisticOnlineStatus,
@@ -83,7 +83,7 @@ export default function ProfileScreen() {
     });
     setStats({
       tripsCompleted: snapshot.size,
-      totalDistanceKm: Math.round(totalDist / 1000),
+      totalDistanceKm: Math.round(totalDist / 1609.344),
     });
     setRefreshing(false);
   }, [uid]);
@@ -101,7 +101,15 @@ export default function ProfileScreen() {
     if (!uid) return;
 
     const newStatus = !isOnline;
-    const data = { isOnline: newStatus, updatedAt: new Date().toISOString() };
+    const data: Record<string, unknown> = { isOnline: newStatus, updatedAt: new Date().toISOString() };
+
+    // When going online, include current GPS position so the web dashboard shows the driver immediately
+    if (newStatus) {
+      const pos = await getCurrentPosition();
+      if (pos) {
+        data.lastLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      }
+    }
 
     if (!isConnected) {
       enqueueWrite("drivers", uid, data);
@@ -172,7 +180,7 @@ export default function ProfileScreen() {
 
           <View className="flex-1 items-center rounded-xl border border-gray-200 bg-white py-4 ml-2">
             <Text className="text-2xl font-bold text-brand-600">{stats.totalDistanceKm}</Text>
-            <Text className="text-xs text-gray-500 mt-1">km Driven</Text>
+            <Text className="text-xs text-gray-500 mt-1">Miles Driven</Text>
           </View>
         </View>
 

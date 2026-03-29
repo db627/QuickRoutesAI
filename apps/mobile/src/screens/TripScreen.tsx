@@ -102,7 +102,9 @@ export default function TripScreen() {
         stopTracking().catch((err) => console.warn("GPS stop unavailable:", err));
       }
     } catch (err) {
-      console.error("Failed to update trip status:", err);
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("Failed to update trip status:", msg);
+      Alert.alert("Error", `Failed to update trip status: ${msg}`);
     }
   };
 
@@ -189,7 +191,7 @@ export default function TripScreen() {
         </View>
         {trip.route && (
           <Text className="mt-1 text-xs text-gray-500">
-            {(trip.route.distanceMeters / 1000).toFixed(1)} km &middot;{" "}
+            {(trip.route.distanceMeters / 1609.344).toFixed(1)} mi &middot;{" "}
             {Math.round(trip.route.durationSeconds / 60)} min
           </Text>
         )}

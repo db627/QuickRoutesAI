@@ -196,25 +196,66 @@ router.get("/:id", async (req, res) => {
 
 router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
   try {
-    const { notes,stops } = req.body;
+    const { notes, stops } = req.body;
 
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
 
-  
     if (!tripDoc.exists) {
       return res.status(404).json({ error: "Not Found", message: "Trip not found" });
     }
-    
+
     const trip = tripDoc.data();
 
-    if (trip?.status !== "draft") {
-      return res.status(409).json({ error: "Bad Request", message: "Only draft trips can be updated" });
+    // Allow editing draft, assigned, and in_progress trips (not completed/cancelled)
+    if (trip?.status === "completed" || trip?.status === "cancelled") {
+      return res.status(409).json({ error: "Bad Request", message: "Completed or cancelled trips cannot be updated" });
     }
 
-    var updateData: Partial<{ notes: string; stops: any[]; updatedAt: string }> = { updatedAt: new Date().toISOString() };
+    // Geocode any new stops missing lat/lng
+    let resolvedStops = stops;
+    if (stops !== undefined) {
+      resolvedStops = await Promise.all(
+        stops.map(async (s: any, i: number) => {
+          let lat = s.lat;
+          let lng = s.lng;
+          if (lat == null || lng == null) {
+            const coords = await geocodeAddress(s.address);
+            lat = coords.lat;
+            lng = coords.lng;
+          }
+          return {
+            stopId: s.stopId || randomUUID(),
+            address: s.address,
+            lat,
+            lng,
+            sequence: s.sequence ?? i,
+            notes: s.notes || "",
+          };
+        }),
+      );
+    }
+
+    const updateData: Record<string, unknown> = { updatedAt: new Date().toISOString() };
     if (notes !== undefined) updateData.notes = notes;
-    if (stops !== undefined) updateData.stops = stops;
+    if (resolvedStops !== undefined) updateData.stops = resolvedStops;
+
+    // If stops changed and there are 2+, recompute the route and optimize stop order
+    let routeResult = null;
+    if (resolvedStops && resolvedStops.length >= 2) {
+      try {
+        const { route, optimizedStops } = await computeRoute(resolvedStops);
+        routeResult = route;
+        updateData.route = route;
+        updateData.stops = optimizedStops;
+      } catch (routeErr) {
+        // Route computation is best-effort; save stops even if it fails
+        console.error("Auto route recomputation failed:", routeErr);
+      }
+    } else if (resolvedStops && resolvedStops.length < 2) {
+      // Clear route if fewer than 2 stops remain
+      updateData.route = null;
+    }
 
     await tripRef.update(updateData);
 
@@ -224,12 +265,12 @@ router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchem
       payload: { tripId: req.params.id, from: { notes: trip?.notes || null, stops: trip?.stops || null }, to: updateData },
       createdAt: new Date().toISOString(),
     });
-    
 
-    res.json({ ok: true, ...updateData });
+    res.json({ ok: true, ...updateData, route: routeResult });
 
   } catch (err) {
-    return res.status(500).json({ error: "Internal Error", message: "Failed to update trip" });
+    const message = err instanceof Error ? err.message : "Failed to update trip";
+    return res.status(500).json({ error: "Internal Error", message });
   }
 });
 
@@ -279,16 +320,18 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) =
       return res.status(400).json({ error: "Bad Request", message: "Need at least 2 stops to compute route" });
     }
 
-    const routeResult = await computeRoute(stops);
+    const { route: routeResult, optimizedStops } = await computeRoute(stops);
 
     await db.collection("trips").doc(req.params.id).update({
       route: routeResult,
+      stops: optimizedStops,
       updatedAt: new Date().toISOString(),
     });
 
-    res.json({ ok: true, route: routeResult });
+    res.json({ ok: true, route: routeResult, stops: optimizedStops });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to compute route";
+    console.error("Route computation failed:", message);
     res.status(500).json({ error: "Internal Error", message });
   }
 });

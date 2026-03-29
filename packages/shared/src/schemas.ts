@@ -10,6 +10,12 @@ export const locationPingSchema = z.object({
 });
 export type LocationPingInput = z.infer<typeof locationPingSchema>;
 
+// ── Time Window ──
+export const timeWindowSchema = z.object({
+  start: z.string().regex(/^\d{2}:\d{2}$/, "Must be HH:mm format"),
+  end: z.string().regex(/^\d{2}:\d{2}$/, "Must be HH:mm format"),
+});
+
 // ── Trip Stop ──
 export const tripStopSchema = z.object({
   stopId: z.string().min(1).default(() => randomUUID()),
@@ -18,6 +24,7 @@ export const tripStopSchema = z.object({
   lng: z.number().min(-180).max(180).optional(),
   sequence: z.number().int().min(0),
   notes: z.string().default(""),
+  timeWindow: timeWindowSchema.optional(),
 });
 export type TripStopInput = z.infer<typeof tripStopSchema>;
 

@@ -70,9 +70,12 @@ jest.mock("../../config/env", () => ({
   },
 }));
 
-// Mock Google Maps
+// Mock Google Maps + route optimizer
 jest.mock("../../services/directions", () => ({
   computeRoute: jest.fn(),
+}));
+jest.mock("../../services/routeOptimizer", () => ({
+  optimizeStopOrder: jest.fn((stops: any[]) => stops),
 }));
 
 /**
