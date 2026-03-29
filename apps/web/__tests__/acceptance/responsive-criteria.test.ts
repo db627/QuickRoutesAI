@@ -31,6 +31,6 @@ describe("Responsive acceptance criteria", () => {
 
     expect(layout).toContain("flex flex-1 overflow-hidden");
     expect(layout).toContain("flex-1 overflow-auto");
-    expect(tripsPage).toContain("flex flex-wrap gap-2");
+    expect(tripsPage).toContain("flex flex-wrap items-center gap-3");
   });
 });
