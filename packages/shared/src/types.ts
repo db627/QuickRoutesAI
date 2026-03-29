@@ -1,11 +1,13 @@
 // ── User ──
 export type UserRole = "driver" | "dispatcher" | "admin";
+export type UserStatus = "active" | "deactivated";
 
 export interface UserProfile {
   uid: string;
   email: string;
   name: string;
   role: UserRole;
+  status?: UserStatus; // omitted on legacy documents — treat as "active"
   createdAt: string; // ISO 8601
 }
 
@@ -25,7 +27,7 @@ export interface DriverRecord {
 }
 
 // ── Trip ──
-export type TripStatus = "draft" | "assigned" | "in_progress" | "completed";
+export type TripStatus = "draft" | "assigned" | "in_progress" | "completed" | "cancelled";
 
 export interface TripStop {
   stopId: string;
