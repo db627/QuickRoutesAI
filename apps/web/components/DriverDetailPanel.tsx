@@ -85,7 +85,7 @@ export default function DriverDetailPanel({ driverId, onClose }: Props) {
         role="dialog"
         aria-label="Driver detail panel"
         aria-modal="true"
-        className={`fixed right-0 top-0 z-50 flex h-full w-full flex-col overflow-y-auto bg-white shadow-2xl transition-transform duration-300 ease-in-out sm:w-96 ${
+        className={`fixed inset-y-0 right-0 z-50 flex w-full flex-col overflow-y-auto bg-white shadow-2xl transition-transform duration-300 ease-in-out sm:w-96 ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
