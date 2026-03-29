@@ -1,3 +1,4 @@
+import React from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Sidebar from "@/components/Sidebar";
@@ -17,7 +18,7 @@ jest.mock("next/link", () => {
     href: string;
     className?: string;
     title?: string;
-    children: unknown;
+    children: React.ReactNode;
   }) {
     return (
       <a href={href} className={className} title={title}>

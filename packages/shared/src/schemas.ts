@@ -39,7 +39,7 @@ export const updateTripStatusSchema = z.object({
 });
 export type UpdateTripStatusInput = z.infer<typeof updateTripStatusSchema>;
 
-// ── Update Trip Notes ──
+// ── Update Trip ──
 export const updateTripSchema = z.object({
   notes: z.string().max(1000).optional(),
   stops: z.array(tripStopSchema).optional(),
