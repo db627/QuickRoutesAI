@@ -193,27 +193,49 @@ router.get("/:id", async (req, res) => {
  * PATCH /trips/:id -- update trip details
  */
 
-router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
+router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
   try {
-    const { notes,stops } = req.body;
+    const { notes, stops } = req.body;
 
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
 
-  
     if (!tripDoc.exists) {
       return res.status(404).json({ error: "Not Found", message: "Trip not found" });
     }
-    
+
     const trip = tripDoc.data();
 
     if (trip?.status !== "draft") {
       return res.status(409).json({ error: "Bad Request", message: "Only draft trips can be updated" });
     }
 
-    var updateData: Partial<{ notes: string; stops: any[]; updatedAt: string }> = { updatedAt: new Date().toISOString() };
+    const updateData: Partial<{ notes: string; stops: any[]; route: null; updatedAt: string }> = { updatedAt: new Date().toISOString() };
+
     if (notes !== undefined) updateData.notes = notes;
-    if (stops !== undefined) updateData.stops = stops;
+
+    if (stops !== undefined) {
+      updateData.stops = await Promise.all(
+        stops.map(async (s: { address: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
+          let lat = s.lat;
+          let lng = s.lng;
+          if (lat == null || lng == null) {
+            const coords = await geocodeAddress(s.address);
+            lat = coords.lat;
+            lng = coords.lng;
+          }
+          return {
+            stopId: randomUUID(),
+            address: s.address,
+            lat,
+            lng,
+            sequence: s.sequence ?? i,
+            notes: s.notes || "",
+          };
+        }),
+      );
+      updateData.route = null;
+    }
 
     await tripRef.update(updateData);
 
@@ -223,7 +245,6 @@ router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchem
       payload: { tripId: req.params.id, from: { notes: trip?.notes || null, stops: trip?.stops || null }, to: updateData },
       createdAt: new Date().toISOString(),
     });
-    
 
     res.json({ ok: true, ...updateData });
 
@@ -336,59 +357,6 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
     res.json({ ok: true, status });
   } catch (err) {
     res.status(500).json({ error: "Internal Error", message: "Failed to update status" });
-  }
-});
-
-/**
- * PATCH /trips/:id — dispatcher updates stops on a draft trip
- * Clears any existing computed route since stops have changed.
- */
-router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema), async (req, res) => {
-  const { stops } = req.body;
-
-  try {
-    const tripRef = db.collection("trips").doc(req.params.id);
-    const tripDoc = await tripRef.get();
-
-    if (!tripDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
-    }
-
-    const trip = tripDoc.data();
-    if (trip?.status !== "draft") {
-      return res.status(400).json({ error: "Bad Request", message: "Only draft trips can be edited" });
-    }
-
-    const resolvedStops = await Promise.all(
-      stops.map(async (s: { address: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
-        let lat = s.lat;
-        let lng = s.lng;
-        if (lat == null || lng == null) {
-          const coords = await geocodeAddress(s.address);
-          lat = coords.lat;
-          lng = coords.lng;
-        }
-        return {
-          stopId: randomUUID(),
-          address: s.address,
-          lat,
-          lng,
-          sequence: s.sequence ?? i,
-          notes: s.notes || "",
-        };
-      }),
-    );
-
-    await tripRef.update({
-      stops: resolvedStops,
-      route: null,
-      updatedAt: new Date().toISOString(),
-    });
-
-    res.json({ ok: true, stops: resolvedStops });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to update trip";
-    res.status(500).json({ error: "Internal Error", message });
   }
 });
 

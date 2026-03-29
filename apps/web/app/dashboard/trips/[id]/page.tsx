@@ -414,6 +414,7 @@ export default function TripDetailPage() {
               {stops
                 .slice()
                 .sort((a, b) => a.sequence - b.sequence)
+                .filter((stop) => stop.lat != null && stop.lng != null)
                 .map((stop, idx) => {
                   const colors = stopPinColors(idx, stops.length);
                   return (
@@ -486,7 +487,7 @@ export default function TripDetailPage() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-gray-900">{stop.address}</p>
                   <p className="text-xs text-gray-400">
-                    {stop.lat.toFixed(5)}, {stop.lng.toFixed(5)}
+                    {stop.lat != null && stop.lng != null ? `${stop.lat.toFixed(5)}, ${stop.lng.toFixed(5)}` : "Coordinates pending"}
                   </p>
                   {stop.notes && (
                     <p className="mt-1 text-xs text-gray-500">{stop.notes}</p>
