@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+import { randomUUID } from "crypto";
 // ── Driver Location ──
 export const locationPingSchema = z.object({
   lat: z.number().min(-90).max(90),
@@ -12,6 +12,7 @@ export type LocationPingInput = z.infer<typeof locationPingSchema>;
 
 // ── Trip Stop ──
 export const tripStopSchema = z.object({
+  stopId: z.string().min(1).default(() => randomUUID()),
   address: z.string().min(1),
   lat: z.number().min(-90).max(90).optional(),
   lng: z.number().min(-180).max(180).optional(),
@@ -38,9 +39,10 @@ export const updateTripStatusSchema = z.object({
 });
 export type UpdateTripStatusInput = z.infer<typeof updateTripStatusSchema>;
 
-// ── Update Trip Stops (edit) ──
+// ── Update Trip ──
 export const updateTripSchema = z.object({
-  stops: z.array(tripStopSchema).min(1, "At least one stop is required"),
+  notes: z.string().max(1000).optional(),
+  stops: z.array(tripStopSchema).optional(),
 });
 export type UpdateTripInput = z.infer<typeof updateTripSchema>;
 
@@ -52,3 +54,25 @@ export const createUserProfileSchema = z.object({
   role: userRoleSchema.default("driver"),
 });
 export type CreateUserProfileInput = z.infer<typeof createUserProfileSchema>;
+
+// ── Auth ──
+export const signupSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  name: z.string().min(1).max(100),
+  role: userRoleSchema.default("driver"),
+});
+export type SignupInput = z.infer<typeof signupSchema>;
+
+export const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+export type LoginInput = z.infer<typeof loginSchema>;
+
+// ── Update User (admin) ──
+export const updateUserSchema = z.object({
+  role: userRoleSchema.optional(),
+  status: z.enum(["active", "deactivated"]).optional(),
+});
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;

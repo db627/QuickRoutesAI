@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from "react-native";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert, RefreshControl } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { auth, firestore } from "../config/firebase";
 import { apiFetch } from "../services/api";
 import type { Trip, TripStop } from "@quickroutesai/shared";
+import { useNetworkStatus } from "../hooks/useNetworkStatus";
+import { openNavigation } from "../services/navigation";
+import { startTracking, stopTracking } from "../services/location";
 
 // Decode Google Maps encoded polyline
 function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
@@ -42,31 +45,69 @@ function decodePolyline(encoded: string): { latitude: number; longitude: number 
 export default function TripScreen() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const uid = auth.currentUser?.uid;
+  const { isConnected } = useNetworkStatus();
+  const unsubRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
+  const fetchTrips = useCallback(() => {
     if (!uid) return;
+    unsubRef.current?.();
     const q = query(
       collection(firestore, "trips"),
       where("driverId", "==", uid),
       where("status", "in", ["assigned", "in_progress"]),
     );
-    const unsub = onSnapshot(q, (snapshot) => {
+    unsubRef.current = onSnapshot(q, (snapshot) => {
       setTrips(snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() as Omit<Trip, "id">) })));
       setLoading(false);
+      setRefreshing(false);
     });
-    return unsub;
   }, [uid]);
 
+  useEffect(() => {
+    fetchTrips();
+    return () => unsubRef.current?.();
+  }, [fetchTrips]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchTrips();
+  }, [fetchTrips]);
+
   const updateStatus = async (tripId: string, status: "in_progress" | "completed") => {
+    if (!isConnected) {
+      Alert.alert("No Connection", "Trip status cannot be updated while offline.");
+      return;
+    }
     try {
       await apiFetch(`/trips/${tripId}/status`, {
         method: "POST",
         body: JSON.stringify({ status }),
       });
+      if (status === "in_progress") {
+        startTracking().catch((err) => console.warn("GPS tracking unavailable:", err));
+      } else if (status === "completed") {
+        stopTracking().catch((err) => console.warn("GPS stop unavailable:", err));
+      }
     } catch (err) {
       console.error("Failed to update trip status:", err);
     }
+  };
+
+  const confirmCompleteTrip = (tripId: string) => {
+    Alert.alert(
+      "Complete Trip",
+      "Are you sure you want to mark this trip as complete?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Complete",
+          style: "destructive",
+          onPress: () => updateStatus(tripId, "completed"),
+        },
+      ],
+    );
   };
 
   if (loading) {
@@ -147,6 +188,14 @@ export default function TripScreen() {
         data={trip.stops.sort((a, b) => a.sequence - b.sequence)}
         keyExtractor={(item) => item.stopId}
         className="flex-1 mx-4 mt-3"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={["#3b82f6"]}
+            tintColor="#3b82f6"
+          />
+        }
         renderItem={({ item, index }) => (
           <View className="flex-row items-center border-b border-gray-100 bg-white px-4 py-3 first:rounded-t-xl last:rounded-b-xl">
             <View className={`mr-3 h-8 w-8 items-center justify-center rounded-full ${
@@ -175,12 +224,23 @@ export default function TripScreen() {
           </TouchableOpacity>
         )}
         {trip.status === "in_progress" && (
-          <TouchableOpacity
-            onPress={() => updateStatus(trip.id, "completed")}
-            className="items-center rounded-xl bg-brand-600 py-3"
-          >
-            <Text className="font-semibold text-white">Complete Trip</Text>
-          </TouchableOpacity>
+          <View className="flex-row gap-3">
+            <TouchableOpacity
+              onPress={() => openNavigation(trip.stops)}
+              disabled={!trip.route}
+              className={`flex-1 items-center rounded-xl py-3 ${
+                trip.route ? "bg-blue-500" : "bg-gray-300"
+              }`}
+            >
+              <Text className="font-semibold text-white">Navigate</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => confirmCompleteTrip(trip.id)}
+              className="flex-1 items-center rounded-xl bg-brand-600 py-3"
+            >
+              <Text className="font-semibold text-white">Complete Trip</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
     </View>

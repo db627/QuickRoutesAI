@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -22,6 +22,7 @@ import { firestore } from "@/lib/firebase";
 import { apiFetch } from "@/lib/api";
 import { decodePolyline, formatDistance, formatDuration } from "@/lib/utils";
 import TripForm from "@/components/TripForm";
+import { useToast } from "@/lib/toast-context";
 import type { Trip, DriverRecord } from "@quickroutesai/shared";
 
 const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || "";
@@ -76,6 +77,7 @@ function AssignDriverDropdown({
   currentDriverId: string | null;
   onAssigned: () => void;
 }) {
+  const { toast } = useToast();
   const [drivers, setDrivers] = useState<DriverOption[]>([]);
   const [open, setOpen] = useState(false);
   const [assigning, setAssigning] = useState(false);
@@ -106,10 +108,11 @@ function AssignDriverDropdown({
         method: "POST",
         body: JSON.stringify({ driverId }),
       });
+      toast.success("Driver assigned successfully");
       onAssigned();
       setOpen(false);
     } catch (err) {
-      console.error("Failed to assign driver", err);
+      toast.error(err instanceof Error ? err.message : "Failed to assign driver");
     } finally {
       setAssigning(false);
     }
@@ -161,24 +164,16 @@ function AssignDriverDropdown({
 export default function TripDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { toast } = useToast();
   const [trip, setTrip] = useState<Trip | null>(null);
   const [loading, setLoading] = useState(true);
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
   const [computing, setComputing] = useState(false);
-  const [error, setError] = useState("");
 
   // Edit / Cancel UI state
   const [editing, setEditing] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const showToast = useCallback((message: string) => {
-    setToast(message);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 3000);
-  }, []);
 
   // Subscribe to trip document in real-time
   useEffect(() => {
@@ -216,26 +211,25 @@ export default function TripDetailPage() {
   const computeRoute = useCallback(async () => {
     if (!id) return;
     setComputing(true);
-    setError("");
     try {
       await apiFetch(`/trips/${id}/route`, { method: "POST" });
+      toast.success("Route computed successfully");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to compute route");
+      toast.error(err instanceof Error ? err.message : "Failed to compute route");
     } finally {
       setComputing(false);
     }
-  }, [id]);
+  }, [id, toast]);
 
   const cancelTrip = async () => {
     if (!id) return;
     setCancelling(true);
-    setError("");
     try {
       await apiFetch(`/trips/${id}/cancel`, { method: "POST" });
       setShowCancelModal(false);
-      showToast("Trip cancelled");
+      toast.success("Trip cancelled");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to cancel trip");
+      toast.error(err instanceof Error ? err.message : "Failed to cancel trip");
       setShowCancelModal(false);
     } finally {
       setCancelling(false);
@@ -315,7 +309,7 @@ export default function TripDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {canEdit && !editing && (
             <button
               onClick={() => setEditing(true)}
@@ -351,12 +345,6 @@ export default function TripDetailPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600">
-          {error}
-        </div>
-      )}
-
       {/* Inline edit form */}
       {editing && (
         <div className="space-y-3">
@@ -365,7 +353,7 @@ export default function TripDetailPage() {
             initialStops={initialStops}
             onCreated={() => {
               setEditing(false);
-              showToast("Trip updated successfully");
+              toast.success("Trip updated successfully");
             }}
           />
           <button
@@ -376,6 +364,7 @@ export default function TripDetailPage() {
           </button>
         </div>
       )}
+
 
       {/* Metadata cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -409,10 +398,11 @@ export default function TripDetailPage() {
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         {MAPS_KEY ? (
           <APIProvider apiKey={MAPS_KEY}>
+            <div className="h-[280px] sm:h-[400px] lg:h-[500px]">
             <Map
               defaultCenter={mapCenter}
               defaultZoom={13}
-              style={{ width: "100%", height: "500px" }}
+              style={{ width: "100%", height: "100%" }}
               mapId="quickroutesai-trip-detail"
               gestureHandling="greedy"
               disableDefaultUI
@@ -460,9 +450,10 @@ export default function TripDetailPage() {
                 </AdvancedMarker>
               )}
             </Map>
+            </div>
           </APIProvider>
         ) : (
-          <div className="flex h-[500px] items-center justify-center text-gray-400">
+          <div className="flex h-[280px] items-center justify-center text-gray-400 sm:h-[400px] lg:h-[500px]">
             Set NEXT_PUBLIC_GOOGLE_MAPS_KEY to enable the map
           </div>
         )}
@@ -540,12 +531,7 @@ export default function TripDetailPage() {
         </div>
       )}
 
-      {/* Success toast */}
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 rounded-lg bg-gray-900 px-4 py-3 text-sm text-white shadow-lg">
-          {toast}
-        </div>
-      )}
+
     </div>
   );
 }

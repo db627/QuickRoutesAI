@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, FlatList, ActivityIndicator } from "react-native";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { View, Text, FlatList, ActivityIndicator, RefreshControl } from "react-native";
 import { collection, query, where, orderBy, onSnapshot, limit } from "firebase/firestore";
 import { auth, firestore } from "../config/firebase";
 import type { Trip } from "@quickroutesai/shared";
@@ -7,10 +7,13 @@ import type { Trip } from "@quickroutesai/shared";
 export default function HistoryScreen() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const uid = auth.currentUser?.uid;
+  const unsubRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
+  const subscribe = useCallback(() => {
     if (!uid) return;
+    unsubRef.current?.();
     const q = query(
       collection(firestore, "trips"),
       where("driverId", "==", uid),
@@ -18,12 +21,22 @@ export default function HistoryScreen() {
       orderBy("updatedAt", "desc"),
       limit(50),
     );
-    const unsub = onSnapshot(q, (snapshot) => {
+    unsubRef.current = onSnapshot(q, (snapshot) => {
       setTrips(snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() as Omit<Trip, "id">) })));
       setLoading(false);
+      setRefreshing(false);
     });
-    return unsub;
   }, [uid]);
+
+  useEffect(() => {
+    subscribe();
+    return () => unsubRef.current?.();
+  }, [subscribe]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    subscribe();
+  }, [subscribe]);
 
   if (loading) {
     return (
@@ -39,6 +52,14 @@ export default function HistoryScreen() {
         data={trips}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ padding: 16 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={["#3b82f6"]}
+            tintColor="#3b82f6"
+          />
+        }
         ListEmptyComponent={
           <View className="items-center py-16">
             <Text className="text-lg font-semibold text-gray-900">No Completed Trips</Text>
