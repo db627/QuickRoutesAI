@@ -46,7 +46,7 @@ export default function TripList() {
           >
             <div>
               <p className="text-sm font-medium text-gray-900">
-                {trip.stops.length} stop{trip.stops.length !== 1 && "s"}
+                {(trip.stops ?? []).length} stop{(trip.stops ?? []).length !== 1 && "s"}
               </p>
               <p className="text-xs text-gray-400">
                 {trip.driverId ? `Driver: ${trip.driverId.slice(0, 8)}...` : "Unassigned"}

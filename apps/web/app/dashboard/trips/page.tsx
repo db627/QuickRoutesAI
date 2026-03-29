@@ -90,7 +90,7 @@ export default function TripsPage() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-3">
                   <p className="text-sm font-medium text-gray-900">
-                    {trip.stops.length} stop{trip.stops.length !== 1 && "s"}
+                    {(trip.stops ?? []).length} stop{(trip.stops ?? []).length !== 1 && "s"}
                   </p>
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[trip.status] || ""}`}

@@ -50,6 +50,8 @@ export default function TripScreen() {
   const { isConnected } = useNetworkStatus();
   const unsubRef = useRef<(() => void) | null>(null);
 
+  const prevHadActiveTrip = useRef(false);
+
   const fetchTrips = useCallback(() => {
     if (!uid) return;
     unsubRef.current?.();
@@ -59,7 +61,16 @@ export default function TripScreen() {
       where("status", "in", ["assigned", "in_progress"]),
     );
     unsubRef.current = onSnapshot(q, (snapshot) => {
-      setTrips(snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() as Omit<Trip, "id">) })));
+      const current = snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() as Omit<Trip, "id">) }));
+      const hasActiveTrip = current.some((t) => t.status === "in_progress");
+
+      // Auto-stop tracking when no more in_progress trips (e.g. cancelled externally)
+      if (prevHadActiveTrip.current && !hasActiveTrip) {
+        stopTracking().catch((err) => console.warn("GPS stop unavailable:", err));
+      }
+      prevHadActiveTrip.current = hasActiveTrip;
+
+      setTrips(current);
       setLoading(false);
       setRefreshing(false);
     });
@@ -130,6 +141,7 @@ export default function TripScreen() {
   }
 
   const trip = trips[0]; // Show the first active trip
+  const stops = trip.stops ?? [];
   const routeCoords = trip.route?.polyline ? decodePolyline(trip.route.polyline) : [];
 
   return (
@@ -140,17 +152,17 @@ export default function TripScreen() {
           provider={PROVIDER_GOOGLE}
           style={{ flex: 1 }}
           region={
-            trip.stops.length > 0
+            stops.length > 0
               ? {
-                  latitude: trip.stops[0].lat,
-                  longitude: trip.stops[0].lng,
+                  latitude: stops[0].lat,
+                  longitude: stops[0].lng,
                   latitudeDelta: 0.05,
                   longitudeDelta: 0.05,
                 }
               : undefined
           }
         >
-          {trip.stops.map((stop, i) => (
+          {stops.map((stop, i) => (
             <Marker
               key={stop.stopId}
               coordinate={{ latitude: stop.lat, longitude: stop.lng }}
@@ -169,7 +181,7 @@ export default function TripScreen() {
       <View className="mx-4 mt-3 rounded-xl border border-gray-200 bg-white px-5 py-3">
         <View className="flex-row items-center justify-between">
           <Text className="font-semibold text-gray-900">
-            {trip.stops.length} stop{trip.stops.length !== 1 && "s"}
+            {stops.length} stop{stops.length !== 1 && "s"}
           </Text>
           <Text className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600">
             {trip.status.replace("_", " ").toUpperCase()}
@@ -185,7 +197,7 @@ export default function TripScreen() {
 
       {/* Stop list */}
       <FlatList
-        data={trip.stops.sort((a, b) => a.sequence - b.sequence)}
+        data={stops.sort((a, b) => a.sequence - b.sequence)}
         keyExtractor={(item) => item.stopId}
         className="flex-1 mx-4 mt-3"
         refreshControl={
@@ -226,7 +238,7 @@ export default function TripScreen() {
         {trip.status === "in_progress" && (
           <View className="flex-row gap-3">
             <TouchableOpacity
-              onPress={() => openNavigation(trip.stops)}
+              onPress={() => openNavigation(stops)}
               disabled={!trip.route}
               className={`flex-1 items-center rounded-xl py-3 ${
                 trip.route ? "bg-blue-500" : "bg-gray-300"

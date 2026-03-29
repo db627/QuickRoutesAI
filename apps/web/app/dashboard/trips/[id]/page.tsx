@@ -239,10 +239,12 @@ export default function TripDetailPage() {
   // Decode route polyline if available
   const polylinePath = trip.route?.polyline ? decodePolyline(trip.route.polyline) : [];
 
+  const stops = trip.stops ?? [];
+
   // Determine map center from first stop or default
   const mapCenter =
-    trip.stops.length > 0
-      ? { lat: trip.stops[0].lat, lng: trip.stops[0].lng }
+    stops.length > 0
+      ? { lat: stops[0].lat, lng: stops[0].lng }
       : DEFAULT_CENTER;
 
   // Stop marker color helper
@@ -339,11 +341,11 @@ export default function TripDetailPage() {
               {polylinePath.length > 0 && <RoutePolyline path={polylinePath} />}
 
               {/* Stop markers */}
-              {trip.stops
+              {stops
                 .slice()
                 .sort((a, b) => a.sequence - b.sequence)
                 .map((stop, idx) => {
-                  const colors = stopPinColors(idx, trip.stops.length);
+                  const colors = stopPinColors(idx, stops.length);
                   return (
                     <AdvancedMarker
                       key={stop.stopId}
@@ -391,11 +393,11 @@ export default function TripDetailPage() {
       <div className="rounded-xl border border-gray-200 bg-white">
         <div className="border-b border-gray-200 px-5 py-3">
           <h2 className="font-semibold text-gray-900">
-            Stops ({trip.stops.length})
+            Stops ({stops.length})
           </h2>
         </div>
         <div className="divide-y divide-gray-200">
-          {trip.stops
+          {stops
             .slice()
             .sort((a, b) => a.sequence - b.sequence)
             .map((stop, idx) => (
@@ -404,7 +406,7 @@ export default function TripDetailPage() {
                   className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${
                     idx === 0
                       ? "bg-green-600"
-                      : idx === trip.stops.length - 1
+                      : idx === stops.length - 1
                         ? "bg-red-600"
                         : "bg-blue-600"
                   }`}
