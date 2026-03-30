@@ -11,6 +11,12 @@ jest.mock("firebase/firestore", () => ({
   onSnapshot: jest.fn(),
 }));
 
+jest.mock("next/navigation", () => ({
+  useSearchParams: jest.fn(() => ({ get: () => null })),
+  useRouter: jest.fn(() => ({ replace: jest.fn() })),
+  usePathname: jest.fn(() => "/dashboard/trips"),
+}));
+
 jest.mock("next/link", () => {
   return function MockLink({ href, children, className }: { href: string; children: React.ReactNode; className?: string }) {
     return <a href={href} className={className}>{children}</a>;
@@ -45,7 +51,7 @@ describe("TripsPage", () => {
     const list = container.querySelector(".divide-y");
     expect(list?.children).toHaveLength(5);
 
-    expect(screen.queryByText("No trips match the current filter.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No trips found")).not.toBeInTheDocument();
   });
 
   it("shows trip rows after subscription fires", async () => {
@@ -68,7 +74,7 @@ describe("TripsPage", () => {
 
     expect(screen.getByText("2 stops")).toBeInTheDocument();
     expect(screen.getByText("1 stop")).toBeInTheDocument();
-    expect(screen.queryByText("No trips match the current filter.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No trips found")).not.toBeInTheDocument();
   });
 
   it("shows empty state when subscription fires with no trips", async () => {
@@ -80,7 +86,7 @@ describe("TripsPage", () => {
     render(<TripsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("No trips match the current filter.")).toBeInTheDocument();
+      expect(screen.getByText("No trips found")).toBeInTheDocument();
     });
   });
 });

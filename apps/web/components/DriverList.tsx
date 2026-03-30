@@ -6,7 +6,11 @@ import { firestore } from "@/lib/firebase";
 import type { DriverRecord, UserProfile } from "@quickroutesai/shared";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
-export default function DriverList() {
+interface Props {
+  onSelectDriver?: (uid: string) => void;
+}
+
+export default function DriverList({ onSelectDriver }: Props) {
   const [loading, setLoading] = useState(true);
   const [drivers, setDrivers] = useState<(DriverRecord & { uid: string })[]>([]);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
@@ -69,34 +73,38 @@ export default function DriverList() {
           <p className="px-5 py-6 text-center text-sm text-gray-400">No drivers online</p>
         ) : (
           drivers.map((d) => (
-          <div key={d.uid} className="flex items-center justify-between px-5 py-3">
-            <div>
-              <p className="text-sm font-medium text-gray-900">
-                {userNames[d.uid] || d.uid}
-              </p>
-              <p className="text-xs text-gray-400">
-                {d.lastLocation
-                  ? `${d.lastLocation.lat.toFixed(4)}, ${d.lastLocation.lng.toFixed(4)}`
-                  : "No location"}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {d.lastSpeedMps > 0 && (
-                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
-                  {(d.lastSpeedMps * 3.6).toFixed(0)} km/h
+            <button
+              key={d.uid}
+              onClick={() => onSelectDriver?.(d.uid)}
+              className="flex w-full items-center justify-between px-5 py-3 text-left hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50"
+            >
+              <div>
+                <p className="text-sm font-medium text-gray-900">
+                  {userNames[d.uid] || d.uid}
+                </p>
+                <p className="text-xs text-gray-400">
+                  {d.lastLocation
+                    ? `${d.lastLocation.lat.toFixed(4)}, ${d.lastLocation.lng.toFixed(4)}`
+                    : "No location"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {d.lastSpeedMps > 0 && (
+                  <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
+                    {(d.lastSpeedMps * 3.6).toFixed(0)} km/h
+                  </span>
+                )}
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    isStale(d.updatedAt)
+                      ? "bg-yellow-50 text-yellow-600"
+                      : "bg-green-50 text-green-600"
+                  }`}
+                >
+                  {isStale(d.updatedAt) ? "Stale" : "Live"}
                 </span>
-              )}
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                  isStale(d.updatedAt)
-                    ? "bg-yellow-50 text-yellow-600"
-                    : "bg-green-50 text-green-600"
-                }`}
-              >
-                {isStale(d.updatedAt) ? "Stale" : "Live"}
-              </span>
-            </div>
-          </div>
+              </div>
+            </button>
           ))
         )}
       </div>

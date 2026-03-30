@@ -3,6 +3,7 @@
 import { useAuth } from "@/lib/auth-context";
 import DriverMap from "@/components/DriverMap";
 import DriverList from "@/components/DriverList";
+import DriverDetailPanel from "@/components/DriverDetailPanel";
 import TripList from "@/components/TripList";
 import TripForm from "@/components/TripForm";
 import StatsCards from "@/components/StatsCards";
@@ -11,6 +12,7 @@ import { useState } from "react";
 export default function DashboardPage() {
   const { role } = useAuth();
   const [showTripForm, setShowTripForm] = useState(false);
+  const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null);
 
   if (role === "driver") {
     return (
@@ -49,14 +51,19 @@ export default function DashboardPage() {
 
       {/* Live driver map */}
       <div className="rounded-xl border border-gray-200 bg-white p-1">
-        <DriverMap />
+        <DriverMap onSelectDriver={setSelectedDriverId} />
       </div>
 
       {/* Lists */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <DriverList />
+        <DriverList onSelectDriver={setSelectedDriverId} />
         <TripList />
       </div>
+
+      <DriverDetailPanel
+        driverId={selectedDriverId}
+        onClose={() => setSelectedDriverId(null)}
+      />
     </div>
   );
 }
