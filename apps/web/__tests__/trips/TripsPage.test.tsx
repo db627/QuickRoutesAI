@@ -52,6 +52,7 @@ function makeTrip(overrides: Partial<Trip> & { id: string }): Trip {
     status: "draft",
     stops: [makeStop("123 Main St", 0)],
     route: null,
+    notes: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,

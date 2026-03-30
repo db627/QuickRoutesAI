@@ -41,11 +41,12 @@ async function openNavigation(stops: TripStop[]): Promise<void> {
 
   const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
 
-  const appleUrl = buildAppleMapsUrl(sorted);
+  // Always use the web URL format — it supports waypoints and opens
+  // in the Google Maps / Apple Maps app automatically when installed.
   const googleUrl = buildGoogleMapsUrl(sorted);
-  const fallbackUrl = googleUrl;
 
   if (Platform.OS === "ios") {
+    const appleUrl = buildAppleMapsUrl(sorted);
     const canOpenApple = await Linking.canOpenURL(appleUrl);
     if (canOpenApple) {
       await Linking.openURL(appleUrl);
@@ -53,17 +54,11 @@ async function openNavigation(stops: TripStop[]): Promise<void> {
     }
   }
 
-  const canOpenGoogle = await Linking.canOpenURL("comgooglemaps://");
-  if (canOpenGoogle) {
-    const googleAppUrl = `comgooglemaps://?saddr=${sorted[0].lat},${sorted[0].lng}&daddr=${sorted[sorted.length - 1].lat},${sorted[sorted.length - 1].lng}&directionsmode=driving`;
-    await Linking.openURL(googleAppUrl);
-    return;
-  }
-
-  // Fallback to browser
-  const canOpenBrowser = await Linking.canOpenURL(fallbackUrl);
-  if (canOpenBrowser) {
-    await Linking.openURL(fallbackUrl);
+  // Google Maps universal link — opens the app if installed, browser otherwise.
+  // This preserves all waypoints unlike the comgooglemaps:// scheme.
+  const canOpen = await Linking.canOpenURL(googleUrl);
+  if (canOpen) {
+    await Linking.openURL(googleUrl);
   } else {
     Alert.alert("Error", "Unable to open maps. Please install Google Maps or Apple Maps.");
   }

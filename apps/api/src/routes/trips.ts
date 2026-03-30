@@ -206,17 +206,16 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
 
     const trip = tripDoc.data();
 
-    if (trip?.status !== "draft") {
-      return res.status(409).json({ error: "Bad Request", message: "Only draft trips can be updated" });
+    // Allow editing draft, assigned, and in_progress trips (not completed/cancelled)
+    if (trip?.status === "completed" || trip?.status === "cancelled") {
+      return res.status(409).json({ error: "Bad Request", message: "Completed or cancelled trips cannot be updated" });
     }
 
-    const updateData: Partial<{ notes: string; stops: any[]; route: null; updatedAt: string }> = { updatedAt: new Date().toISOString() };
-
-    if (notes !== undefined) updateData.notes = notes;
-
+    // Geocode any new stops missing lat/lng
+    let resolvedStops = stops;
     if (stops !== undefined) {
-      updateData.stops = await Promise.all(
-        stops.map(async (s: { address: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
+      resolvedStops = await Promise.all(
+        stops.map(async (s: any, i: number) => {
           let lat = s.lat;
           let lng = s.lng;
           if (lat == null || lng == null) {
@@ -225,7 +224,7 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
             lng = coords.lng;
           }
           return {
-            stopId: randomUUID(),
+            stopId: s.stopId || randomUUID(),
             address: s.address,
             lat,
             lng,
@@ -234,6 +233,26 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
           };
         }),
       );
+    }
+
+    const updateData: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    if (notes !== undefined) updateData.notes = notes;
+    if (resolvedStops !== undefined) updateData.stops = resolvedStops;
+
+    // If stops changed and there are 2+, recompute the route and optimize stop order
+    let routeResult = null;
+    if (resolvedStops && resolvedStops.length >= 2) {
+      try {
+        const { route, optimizedStops } = await computeRoute(resolvedStops);
+        routeResult = route;
+        updateData.route = route;
+        updateData.stops = optimizedStops;
+      } catch (routeErr) {
+        // Route computation is best-effort; save stops even if it fails
+        console.error("Auto route recomputation failed:", routeErr);
+      }
+    } else if (resolvedStops && resolvedStops.length < 2) {
+      // Clear route if fewer than 2 stops remain
       updateData.route = null;
     }
 
@@ -246,10 +265,11 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
       createdAt: new Date().toISOString(),
     });
 
-    res.json({ ok: true, ...updateData });
+    res.json({ ok: true, ...updateData, route: routeResult });
 
   } catch (err) {
-    return res.status(500).json({ error: "Internal Error", message: "Failed to update trip" });
+    const message = err instanceof Error ? err.message : "Failed to update trip";
+    return res.status(500).json({ error: "Internal Error", message });
   }
 });
 
@@ -299,16 +319,18 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) =
       return res.status(400).json({ error: "Bad Request", message: "Need at least 2 stops to compute route" });
     }
 
-    const routeResult = await computeRoute(stops);
+    const { route: routeResult, optimizedStops } = await computeRoute(stops);
 
     await db.collection("trips").doc(req.params.id).update({
       route: routeResult,
+      stops: optimizedStops,
       updatedAt: new Date().toISOString(),
     });
 
-    res.json({ ok: true, route: routeResult });
+    res.json({ ok: true, route: routeResult, stops: optimizedStops });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to compute route";
+    console.error("Route computation failed:", message);
     res.status(500).json({ error: "Internal Error", message });
   }
 });

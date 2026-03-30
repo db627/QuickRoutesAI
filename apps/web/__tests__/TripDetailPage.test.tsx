@@ -54,6 +54,7 @@ function makeTripData(status: Trip["status"]): Omit<Trip, "id"> {
       { stopId: "s2", address: "456 Oak Ave", lat: 40.8, lng: -74.1, sequence: 1, notes: "" },
     ],
     route: null,
+    notes: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

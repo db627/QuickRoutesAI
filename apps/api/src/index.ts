@@ -11,6 +11,7 @@ import authRoutes from "./routes/auth";
 import driverRoutes from "./routes/drivers";
 import tripRoutes from "./routes/trips";
 import userRoutes from "./routes/users";
+import aiRoutes from "./routes/ai";
 const app = express();
 
 // Global middleware
@@ -28,6 +29,7 @@ app.use("/me", verifyFirebaseToken, meRoutes);
 app.use("/drivers", verifyFirebaseToken, driverRoutes);
 app.use("/trips", verifyFirebaseToken, tripRoutes);
 app.use("/users", verifyFirebaseToken, userRoutes);
+app.use("/ai", verifyFirebaseToken, aiRoutes);
 
 // Global error handler
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -35,6 +37,6 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ error: "Internal Server Error", message: err.message });
 });
 
-app.listen(env.PORT, () => {
-  console.log(`QuickRoutesAI API running on http://localhost:${env.PORT}`);
+app.listen(env.PORT, "0.0.0.0", () => {
+  console.log(`QuickRoutesAI API running on http://0.0.0.0:${env.PORT}`);
 });

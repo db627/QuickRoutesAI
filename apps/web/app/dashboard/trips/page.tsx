@@ -260,7 +260,14 @@ function TripsPageInner() {
                     </span>
                     <span>{new Date(trip.createdAt).toLocaleDateString()}</span>
                     {trip.route && (
-                      <span>{(trip.route.distanceMeters / 1000).toFixed(1)} km</span>
+                      <span>
+                        {(trip.route.distanceMeters / 1609.344).toFixed(1)} mi
+                      </span>
+                    )}
+                    {trip.route?.fuelSavingsGallons != null && trip.route.fuelSavingsGallons > 0 && (
+                      <span className="text-green-600 font-medium">
+                        {trip.route.fuelSavingsGallons.toFixed(2)} gal saved
+                      </span>
                     )}
                   </div>
                 </div>

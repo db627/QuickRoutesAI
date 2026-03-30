@@ -8,6 +8,7 @@ const envSchema = z.object({
   FIREBASE_PRIVATE_KEY: z.string().min(1),
   FIREBASE_API_KEY: z.string().min(1),
   GOOGLE_MAPS_SERVER_KEY: z.string().min(1),
+  OPENAI_API_KEY: z.string().min(1),
 });
 
 export type Env = z.infer<typeof envSchema>;

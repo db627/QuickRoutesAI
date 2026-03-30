@@ -91,7 +91,7 @@ export default function DriverList({ onSelectDriver }: Props) {
               <div className="flex items-center gap-2">
                 {d.lastSpeedMps > 0 && (
                   <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
-                    {(d.lastSpeedMps * 3.6).toFixed(0)} km/h
+                    {(d.lastSpeedMps * 2.237).toFixed(0)} mph
                   </span>
                 )}
                 <span
