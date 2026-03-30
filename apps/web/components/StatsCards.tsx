@@ -10,6 +10,7 @@ import {
   Loader,
   CheckCircle,
 } from "lucide-react";
+import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
 interface Stats {
   activeDrivers: number;
@@ -105,12 +106,13 @@ export default function StatsCards() {
     {loading ? (
 
       Array.from({ length: 4 }).map((_, i) => (
-
-        <div
-          key={i}
-          className="animate-pulse rounded-xl border border-gray-200 bg-gray-200 h-24"
-        />
-
+        <div key={i} className="rounded-xl border border-gray-200 bg-gray-50 px-5 py-4">
+          <div className="flex items-center justify-between">
+            <SkeletonBlock className="h-3 w-24" />
+            <SkeletonBlock className="h-5 w-5" />
+          </div>
+          <SkeletonBlock className="mt-3 h-8 w-16" />
+        </div>
       ))
 
     ) : (

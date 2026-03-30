@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import type { DriverRecord, UserProfile } from "@quickroutesai/shared";
+import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
 export default function DriverList() {
+  const [loading, setLoading] = useState(true);
   const [drivers, setDrivers] = useState<(DriverRecord & { uid: string })[]>([]);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
 
@@ -19,6 +21,7 @@ export default function DriverList() {
           ...(doc.data() as Omit<DriverRecord, "uid">),
         })),
       );
+      setLoading(false);
     });
     return unsub;
   }, []);
@@ -49,10 +52,23 @@ export default function DriverList() {
         <h2 className="font-semibold text-gray-900">Active Drivers</h2>
       </div>
       <div className="divide-y divide-gray-200">
-        {drivers.length === 0 && (
+        {loading ? (
+          Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="flex items-center justify-between px-5 py-3">
+              <div className="space-y-1.5">
+                <SkeletonBlock className="h-3.5 w-32" />
+                <SkeletonBlock className="h-3 w-24" />
+              </div>
+              <div className="flex items-center gap-2">
+                <SkeletonBlock className="h-5 w-12 rounded-full" />
+                <SkeletonBlock className="h-5 w-10 rounded-full" />
+              </div>
+            </div>
+          ))
+        ) : drivers.length === 0 ? (
           <p className="px-5 py-6 text-center text-sm text-gray-400">No drivers online</p>
-        )}
-        {drivers.map((d) => (
+        ) : (
+          drivers.map((d) => (
           <div key={d.uid} className="flex items-center justify-between px-5 py-3">
             <div>
               <p className="text-sm font-medium text-gray-900">
@@ -81,7 +97,8 @@ export default function DriverList() {
               </span>
             </div>
           </div>
-        ))}
+          ))
+        )}
       </div>
     </div>
   );

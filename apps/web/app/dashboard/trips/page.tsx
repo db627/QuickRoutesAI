@@ -5,6 +5,7 @@ import Link from "next/link";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import type { Trip, TripStatus } from "@quickroutesai/shared";
+import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
 const statusColors: Record<string, string> = {
   draft: "bg-gray-100 text-gray-600",
@@ -22,6 +23,7 @@ const filterTabs: { label: string; value: TripStatus | "all" }[] = [
 ];
 
 export default function TripsPage() {
+  const [loading, setLoading] = useState(true);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [activeFilter, setActiveFilter] = useState<TripStatus | "all">("all");
 
@@ -34,6 +36,7 @@ export default function TripsPage() {
           ...(doc.data() as Omit<Trip, "id">),
         })),
       );
+      setLoading(false);
     });
     return unsub;
   }, []);
@@ -76,12 +79,29 @@ export default function TripsPage() {
       {/* Trip list */}
       <div className="rounded-xl border border-gray-200 bg-white">
         <div className="divide-y divide-gray-200">
-          {filteredTrips.length === 0 && (
+          {loading ? (
+            Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center justify-between px-5 py-4">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <SkeletonBlock className="h-3.5 w-16" />
+                    <SkeletonBlock className="h-5 w-20 rounded-full" />
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <SkeletonBlock className="h-3 w-28" />
+                    <SkeletonBlock className="h-3 w-16" />
+                    <SkeletonBlock className="h-3 w-10" />
+                  </div>
+                </div>
+                <SkeletonBlock className="h-5 w-5 flex-shrink-0" />
+              </div>
+            ))
+          ) : filteredTrips.length === 0 ? (
             <p className="px-5 py-8 text-center text-sm text-gray-400">
               No trips match the current filter.
             </p>
-          )}
-          {filteredTrips.map((trip) => (
+          ) : (
+            filteredTrips.map((trip) => (
             <Link
               key={trip.id}
               href={`/dashboard/trips/${trip.id}`}
@@ -124,7 +144,8 @@ export default function TripsPage() {
                 />
               </svg>
             </Link>
-          ))}
+            ))
+          )}
         </div>
       </div>
     </div>
