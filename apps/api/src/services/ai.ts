@@ -142,21 +142,52 @@ interface TripData {
   completedAt?: string;
 }
 
-interface DailySummary {
-  overview: string;
+interface DailySummaryStats {
   totalTrips: number;
   completedTrips: number;
-  totalDistanceKm: number;
+  totalDistanceMiles: number;
   totalDurationHours: number;
-  totalFuelSavedLiters: number;
+  totalFuelSavedGallons: number;
+}
+
+interface AICommentary {
+  overview: string;
   highlights: string[];
   recommendations: string[];
 }
 
+export interface DailySummary extends DailySummaryStats {
+  overview: string;
+  highlights: string[];
+  recommendations: string[];
+}
+
+/**
+ * Compute stats from real DB data, then ask AI only for commentary.
+ */
 export async function generateDailySummary(
   trips: TripData[],
   date: string,
 ): Promise<DailySummary> {
+  // ── Compute accurate stats from DB data ──
+  const stats: DailySummaryStats = {
+    totalTrips: trips.length,
+    completedTrips: trips.filter((t) => t.status === "completed").length,
+    totalDistanceMiles: trips.reduce(
+      (sum, t) => sum + (t.distanceMeters ? t.distanceMeters / 1609.344 : 0),
+      0,
+    ),
+    totalDurationHours: trips.reduce(
+      (sum, t) => sum + (t.durationSeconds ? t.durationSeconds / 3600 : 0),
+      0,
+    ),
+    totalFuelSavedGallons: trips.reduce(
+      (sum, t) => sum + (t.fuelSavingsGallons ?? 0),
+      0,
+    ),
+  };
+
+  // ── Build context for AI commentary ──
   const tripList = trips
     .map(
       (t) =>
@@ -164,25 +195,25 @@ export async function generateDailySummary(
     )
     .join("\n");
 
-  const prompt = `You are a fleet analytics engine. Generate a daily summary report for a delivery company.
+  const prompt = `You are a fleet analytics commentator. Given the following REAL data for a delivery company, write insightful commentary. Do NOT make up any numbers — the stats are already computed.
 
 Date: ${date}
-Trips:
-${tripList}
+Computed stats: ${stats.totalTrips} total trips, ${stats.completedTrips} completed, ${stats.totalDistanceMiles.toFixed(1)} miles driven, ${stats.totalDurationHours.toFixed(1)} hours, ${stats.totalFuelSavedGallons.toFixed(2)} gallons saved.
 
-Return ONLY a JSON object with this structure:
+Individual trips:
+${tripList || "(no trips)"}
+
+Return ONLY a JSON object:
 {
-  "overview": "<2-3 sentence summary of the day>",
-  "totalTrips": <number>,
-  "completedTrips": <number>,
-  "totalDistanceKm": <number>,
-  "totalDurationHours": <number>,
-  "totalFuelSavedLiters": <number>,
-  "highlights": ["<key positive achievement>", ...],
+  "overview": "<2-3 sentence summary commenting on the day's operations — reference the real numbers above>",
+  "highlights": ["<key positive observation>", ...],
   "recommendations": ["<actionable improvement suggestion>", ...]
-}`;
+}
+Do NOT include any numeric stats fields — only overview, highlights, and recommendations.`;
 
-  return aiJson<DailySummary>(prompt, 800);
+  const commentary = await aiJson<AICommentary>(prompt, 600);
+
+  return { ...stats, ...commentary };
 }
 
 // ─── Feature: Anomaly Detection ──────────────────────────────────────

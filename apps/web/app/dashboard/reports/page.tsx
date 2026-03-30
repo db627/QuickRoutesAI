@@ -8,9 +8,9 @@ interface DailySummary {
   overview: string;
   totalTrips: number;
   completedTrips: number;
-  totalDistanceKm: number;
+  totalDistanceMiles: number;
   totalDurationHours: number;
-  totalFuelSavedLiters: number;
+  totalFuelSavedGallons: number;
   highlights: string[];
   recommendations: string[];
 }
@@ -107,7 +107,7 @@ export default function ReportsPage() {
               </div>
               <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
                 <p className="text-xs text-blue-600">Distance</p>
-                <p className="mt-0.5 text-xl font-bold text-blue-700">{(summary.totalDistanceKm * 0.621371).toFixed(1)} mi</p>
+                <p className="mt-0.5 text-xl font-bold text-blue-700">{summary.totalDistanceMiles.toFixed(1)} mi</p>
               </div>
               <div className="rounded-lg border border-purple-200 bg-purple-50 px-4 py-3">
                 <p className="text-xs text-purple-600">Duration</p>
@@ -115,7 +115,7 @@ export default function ReportsPage() {
               </div>
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
                 <p className="text-xs text-emerald-600">Fuel Saved</p>
-                <p className="mt-0.5 text-xl font-bold text-emerald-700">{(summary.totalFuelSavedLiters / 3.78541).toFixed(1)} gal</p>
+                <p className="mt-0.5 text-xl font-bold text-emerald-700">{summary.totalFuelSavedGallons.toFixed(2)} gal</p>
               </div>
             </div>
 
