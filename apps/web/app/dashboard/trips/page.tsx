@@ -6,6 +6,7 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import type { Trip, TripStatus } from "@quickroutesai/shared";
+import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
 const statusColors: Record<string, string> = {
   draft: "bg-gray-100 text-gray-600",
@@ -29,6 +30,7 @@ function TripsPageInner() {
   const router = useRouter();
   const pathname = usePathname();
 
+  const [loading, setLoading] = useState(true);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [search, setSearch] = useState(searchParams.get("search") ?? "");
   const [statusFilter, setStatusFilter] = useState<TripStatus | "all">(
@@ -44,6 +46,7 @@ function TripsPageInner() {
           ...(doc.data() as Omit<Trip, "id">),
         })),
       );
+      setLoading(false);
     });
     return unsub;
   }, []);
@@ -201,7 +204,24 @@ function TripsPageInner() {
       {/* Trip list */}
       <div className="rounded-xl border border-gray-200 bg-white">
         <div className="divide-y divide-gray-200">
-          {filteredTrips.length === 0 && (
+          {loading ? (
+            Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center justify-between px-5 py-4">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <SkeletonBlock className="h-3.5 w-16" />
+                    <SkeletonBlock className="h-5 w-20 rounded-full" />
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <SkeletonBlock className="h-3 w-28" />
+                    <SkeletonBlock className="h-3 w-16" />
+                    <SkeletonBlock className="h-3 w-10" />
+                  </div>
+                </div>
+                <SkeletonBlock className="h-5 w-5 flex-shrink-0" />
+              </div>
+            ))
+          ) : filteredTrips.length === 0 ? (
             <div className="px-5 py-12 text-center">
               <p className="text-sm font-medium text-gray-500">No trips found</p>
               {hasActiveFilters && (
@@ -216,49 +236,50 @@ function TripsPageInner() {
                 </p>
               )}
             </div>
-          )}
-          {filteredTrips.map((trip) => (
-            <Link
-              key={trip.id}
-              href={`/dashboard/trips/${trip.id}`}
-              className="flex items-center justify-between px-5 py-4 transition hover:bg-gray-50"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-3">
-                  <p className="text-sm font-medium text-gray-900">
-                    {trip.stops?.length ?? 0} stop{(trip.stops?.length ?? 0) !== 1 && "s"}
-                  </p>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[trip.status] || ""}`}
-                  >
-                    {trip.status.replace("_", " ")}
-                  </span>
-                </div>
-                <div className="mt-1 flex items-center gap-4 text-xs text-gray-400">
-                  <span>
-                    {trip.driverId ? `Driver: ${trip.driverId.slice(0, 8)}...` : "Unassigned"}
-                  </span>
-                  <span>{new Date(trip.createdAt).toLocaleDateString()}</span>
-                  {trip.route && (
-                    <span>{(trip.route.distanceMeters / 1000).toFixed(1)} km</span>
-                  )}
-                </div>
-              </div>
-              <svg
-                className="h-5 w-5 flex-shrink-0 text-gray-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={1.5}
-                stroke="currentColor"
+          ) : (
+            filteredTrips.map((trip) => (
+              <Link
+                key={trip.id}
+                href={`/dashboard/trips/${trip.id}`}
+                className="flex items-center justify-between px-5 py-4 transition hover:bg-gray-50"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M8.25 4.5l7.5 7.5-7.5 7.5"
-                />
-              </svg>
-            </Link>
-          ))}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-3">
+                    <p className="text-sm font-medium text-gray-900">
+                      {trip.stops?.length ?? 0} stop{(trip.stops?.length ?? 0) !== 1 && "s"}
+                    </p>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[trip.status] || ""}`}
+                    >
+                      {trip.status.replace("_", " ")}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-4 text-xs text-gray-400">
+                    <span>
+                      {trip.driverId ? `Driver: ${trip.driverId.slice(0, 8)}...` : "Unassigned"}
+                    </span>
+                    <span>{new Date(trip.createdAt).toLocaleDateString()}</span>
+                    {trip.route && (
+                      <span>{(trip.route.distanceMeters / 1000).toFixed(1)} km</span>
+                    )}
+                  </div>
+                </div>
+                <svg
+                  className="h-5 w-5 flex-shrink-0 text-gray-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={1.5}
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M8.25 4.5l7.5 7.5-7.5 7.5"
+                  />
+                </svg>
+              </Link>
+            ))
+          )}
         </div>
       </div>
     </div>
