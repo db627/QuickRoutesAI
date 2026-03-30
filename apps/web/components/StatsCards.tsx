@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import type { DriverRecord } from "@quickroutesai/shared";
 import { Users, Truck, Loader, CheckCircle } from "lucide-react";
+import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
 interface TripStats {
   totalTrips: number;
@@ -62,19 +63,19 @@ export default function StatsCards() {
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {loading ? (
         Array.from({ length: 4 }).map((_, i) => (
-          <div
-            key={i}
-            className="animate-pulse rounded-xl border border-gray-200 bg-gray-200 h-24"
-          />
+          <div key={i} className="rounded-xl border border-gray-200 bg-gray-50 px-5 py-4">
+            <div className="flex items-center justify-between">
+              <SkeletonBlock className="h-3 w-24" />
+              <SkeletonBlock className="h-5 w-5" />
+            </div>
+            <SkeletonBlock className="mt-3 h-8 w-16" />
+          </div>
         ))
       ) : (
         cards.map((card) => {
           const Icon = card.icon;
           return (
-            <div
-              key={card.label}
-              className="rounded-xl border border-gray-200 bg-gray-50 px-5 py-4"
-            >
+            <div key={card.label} className="rounded-xl border border-gray-200 bg-gray-50 px-5 py-4">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-gray-500">{card.label}</p>
                 <Icon className="h-5 w-5 text-gray-400" />
