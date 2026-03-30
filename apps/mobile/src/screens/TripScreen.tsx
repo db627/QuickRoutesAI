@@ -7,6 +7,7 @@ import { apiFetch } from "../services/api";
 import type { Trip, TripStop } from "@quickroutesai/shared";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import { openNavigation } from "../services/navigation";
+import { startTracking, stopTracking } from "../services/location";
 
 // Decode Google Maps encoded polyline
 function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
@@ -84,9 +85,29 @@ export default function TripScreen() {
         method: "POST",
         body: JSON.stringify({ status }),
       });
+      if (status === "in_progress") {
+        startTracking().catch((err) => console.warn("GPS tracking unavailable:", err));
+      } else if (status === "completed") {
+        stopTracking().catch((err) => console.warn("GPS stop unavailable:", err));
+      }
     } catch (err) {
       console.error("Failed to update trip status:", err);
     }
+  };
+
+  const confirmCompleteTrip = (tripId: string) => {
+    Alert.alert(
+      "Complete Trip",
+      "Are you sure you want to mark this trip as complete?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Complete",
+          style: "destructive",
+          onPress: () => updateStatus(tripId, "completed"),
+        },
+      ],
+    );
   };
 
   if (loading) {
@@ -214,7 +235,7 @@ export default function TripScreen() {
               <Text className="font-semibold text-white">Navigate</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => updateStatus(trip.id, "completed")}
+              onPress={() => confirmCompleteTrip(trip.id)}
               className="flex-1 items-center rounded-xl bg-brand-600 py-3"
             >
               <Text className="font-semibold text-white">Complete Trip</Text>

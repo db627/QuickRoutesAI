@@ -12,6 +12,7 @@ const statusColors: Record<string, string> = {
   assigned: "bg-blue-50 text-blue-600",
   in_progress: "bg-green-50 text-green-600",
   completed: "bg-purple-50 text-purple-600",
+  cancelled: "bg-red-50 text-red-600",
 };
 
 export default function TripList() {
@@ -59,7 +60,7 @@ export default function TripList() {
           >
             <div>
               <p className="text-sm font-medium text-gray-900">
-                {trip.stops.length} stop{trip.stops.length !== 1 && "s"}
+                {trip.stops?.length ?? 0} stop{(trip.stops?.length ?? 0) !== 1 && "s"}
               </p>
               <p className="text-xs text-gray-400">
                 {trip.driverId ? `Driver: ${trip.driverId.slice(0, 8)}...` : "Unassigned"}

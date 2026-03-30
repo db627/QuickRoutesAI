@@ -2,11 +2,10 @@ import { Router } from "express";
 import { auth, db } from "../config/firebase";
 import admin from "firebase-admin";
 import { requireRole } from "../middleware/auth";
+import { validate } from "../middleware/validate";
+import { updateUserSchema } from "@quickroutesai/shared";
 import { pagination } from "../middleware/pagination";
 import { paginateFirestore } from "../utils/paginateFirestore";
-import { validate } from "../middleware/validate";
-import { updateUserSchema } from "@quickroutesai/shared/src/schemas";
-import { create } from "domain";
 
 const router = Router();
 
@@ -48,62 +47,91 @@ router.get(
   },
 );
 
-router.patch("/:id", requireRole("admin"), validate(updateUserSchema), async (req, res) => {
-  try {
-    const { role, active } = req.body;
-    const updateData: Partial<{ role: string; active: boolean }> = {};
-    if (role !== undefined) updateData.role = role;
-    if (active !== undefined) updateData.active = active === "true" ? true : active === "false" ? false : undefined;
+/**
+ * PATCH /users/:id — update a user's role and/or status.
+ * Admin only. Admins cannot deactivate their own account.
+ */
+router.patch(
+  "/:id",
+  requireRole("admin"),
+  validate(updateUserSchema),
+  async (req, res) => {
+    const { id } = req.params;
+    const { role, status } = req.body;
 
-    if (Object.keys(updateData).length === 0) {
-      return res.status(400).json({ error: "Bad Request", message: "No valid fields to update" });
+    // Prevent admins from deactivating themselves
+    if (id === req.uid && status === "deactivated") {
+      return res.status(400).json({
+        error: "Bad Request",
+        message: "You cannot deactivate your own account",
+      });
     }
-    const userRef = db.collection("users").doc(req.params.id);
-    const userDoc = await userRef.get();
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "User not found" });
+
+    try {
+      const userRef = db.collection("users").doc(id);
+      const userDoc = await userRef.get();
+
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: "Not Found", message: "User not found" });
+      }
+
+      const data = userDoc.data();
+      const updates: Record<string, string> = { updatedAt: new Date().toISOString() };
+      if (role !== undefined) updates.role = role;
+      if (status !== undefined) updates.status = status;
+
+      await userRef.update(updates);
+
+      // Sync Firebase Auth disabled state when status changes
+      if (status !== undefined) {
+        await auth.updateUser(id, { disabled: status === "deactivated" });
+      }
+
+      await db.collection("events").add({
+        createdAt: new Date().toISOString(),
+        payload: { from: { status: data?.status ?? "active", role: data?.role ?? "driver" }, to: updates, userId: id },
+        type: "user_updated",
+        uid: req.uid,
+      });
+
+      res.json({ ok: true, ...updates });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update user";
+      res.status(500).json({ error: "Internal Error", message });
     }
-    const data = userDoc.data();
-    
-    await db.collection("users").doc(req.params.id).update(updateData);
+  },
+);
 
-    await db.collection("events").add({
-      createdAt: new Date().toISOString(),
-      payload: { from: { active: data?.active ?? true, role: data?.role ?? "user" }, to: updateData, userId: req.params.id },
-      type: "user_updated",
-      uid: req.uid,
-    });
-    res.json({ ok : true, message: "User updated successfully" });
-
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to update user";
-    res.status(500).json({ error: "Internal Error", message });
-  }
-});
-
+/**
+ * DELETE /users/:id — permanently delete a user.
+ * Admin only.
+ */
 router.delete("/:id", requireRole("admin"), async (req, res) => {
   try {
     const userRef = db.collection("users").doc(req.params.id);
     const userDoc = await userRef.get();
+
     if (!userDoc.exists) {
       return res.status(404).json({ error: "Not Found", message: "User not found" });
     }
+
     const data = userDoc.data();
-    const deleteProfile = await userRef.delete();
-    const deleteAuth = await auth.deleteUser(req.params.id);
-    
+
+    await userRef.delete();
+    await auth.deleteUser(req.params.id);
+
     await db.collection("events").add({
       createdAt: new Date().toISOString(),
       payload: { userId: req.params.id, ...data },
       type: "user_deleted",
       uid: req.uid,
     });
+
     res.json({ ok: true, message: "User deleted successfully" });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to delete user";
     return res.status(500).json({ error: "Internal Error", message });
   }
 });
-
 
 export default router;

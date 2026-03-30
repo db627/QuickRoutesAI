@@ -39,7 +39,7 @@ export const updateTripStatusSchema = z.object({
 });
 export type UpdateTripStatusInput = z.infer<typeof updateTripStatusSchema>;
 
-// ── Update Trip Notes ──
+// ── Update Trip ──
 export const updateTripSchema = z.object({
   notes: z.string().max(1000).optional(),
   stops: z.array(tripStopSchema).optional(),
@@ -70,7 +70,9 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
+// ── Update User (admin) ──
 export const updateUserSchema = z.object({
   role: userRoleSchema.optional(),
-  active: z.string().optional(),
+  status: z.enum(["active", "deactivated"]).optional(),
 });
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;

@@ -21,6 +21,7 @@ import {
 import { firestore } from "@/lib/firebase";
 import { apiFetch } from "@/lib/api";
 import { decodePolyline, formatDistance, formatDuration } from "@/lib/utils";
+import TripForm from "@/components/TripForm";
 import { useToast } from "@/lib/toast-context";
 import type { Trip, DriverRecord } from "@quickroutesai/shared";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -33,6 +34,7 @@ const statusColors: Record<string, string> = {
   assigned: "bg-blue-50 text-blue-600",
   in_progress: "bg-green-50 text-green-600",
   completed: "bg-purple-50 text-purple-600",
+  cancelled: "bg-red-50 text-red-600",
 };
 
 /* ------------------------------------------------------------------ */
@@ -169,6 +171,11 @@ export default function TripDetailPage() {
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
   const [computing, setComputing] = useState(false);
 
+  // Edit / Cancel UI state
+  const [editing, setEditing] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+
   // Subscribe to trip document in real-time
   useEffect(() => {
     if (!id) return;
@@ -214,6 +221,21 @@ export default function TripDetailPage() {
       setComputing(false);
     }
   }, [id, toast]);
+
+  const cancelTrip = async () => {
+    if (!id) return;
+    setCancelling(true);
+    try {
+      await apiFetch(`/trips/${id}/cancel`, { method: "POST" });
+      setShowCancelModal(false);
+      toast.success("Trip cancelled");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to cancel trip");
+      setShowCancelModal(false);
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -287,10 +309,12 @@ export default function TripDetailPage() {
   // Decode route polyline if available
   const polylinePath = trip.route?.polyline ? decodePolyline(trip.route.polyline) : [];
 
+  const stops = trip.stops ?? [];
+
   // Determine map center from first stop or default
   const mapCenter =
-    trip.stops.length > 0
-      ? { lat: trip.stops[0].lat, lng: trip.stops[0].lng }
+    stops.length > 0
+      ? { lat: stops[0].lat, lng: stops[0].lng }
       : DEFAULT_CENTER;
 
   // Stop marker color helper
@@ -299,6 +323,15 @@ export default function TripDetailPage() {
     if (index === total - 1) return { bg: "#ef4444", glyph: "#fff", border: "#dc2626" }; // red
     return { bg: "#3b82f6", glyph: "#fff", border: "#2563eb" }; // blue
   };
+
+  const canEdit = trip.status === "draft";
+  const canCancel = trip.status === "draft" || trip.status === "assigned";
+
+  // Pre-fill stop addresses sorted by sequence
+  const initialStops = stops
+    .slice()
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((s) => s.address);
 
   return (
     <div className="space-y-6">
@@ -325,7 +358,23 @@ export default function TripDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {!trip.route && (
+          {canEdit && !editing && (
+            <button
+              onClick={() => setEditing(true)}
+              className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-900 hover:border-gray-300"
+            >
+              Edit
+            </button>
+          )}
+          {canCancel && (
+            <button
+              onClick={() => setShowCancelModal(true)}
+              className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 hover:border-red-300 hover:bg-red-50"
+            >
+              Cancel Trip
+            </button>
+          )}
+          {!trip.route && !editing && trip.status !== "cancelled" && (
             <button
               onClick={computeRoute}
               disabled={computing}
@@ -334,13 +383,36 @@ export default function TripDetailPage() {
               {computing ? "Computing..." : "Compute Route"}
             </button>
           )}
-          <AssignDriverDropdown
-            tripId={trip.id}
-            currentDriverId={trip.driverId}
-            onAssigned={() => {}}
-          />
+          {!editing && trip.status !== "cancelled" && (
+            <AssignDriverDropdown
+              tripId={trip.id}
+              currentDriverId={trip.driverId}
+              onAssigned={() => {}}
+            />
+          )}
         </div>
       </div>
+
+      {/* Inline edit form */}
+      {editing && (
+        <div className="space-y-3">
+          <TripForm
+            tripId={trip.id}
+            initialStops={initialStops}
+            onCreated={() => {
+              setEditing(false);
+              toast.success("Trip updated successfully");
+            }}
+          />
+          <button
+            onClick={() => setEditing(false)}
+            className="text-sm text-gray-500 hover:text-gray-900"
+          >
+            Discard changes
+          </button>
+        </div>
+      )}
+
 
       {/* Metadata cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -387,11 +459,12 @@ export default function TripDetailPage() {
               {polylinePath.length > 0 && <RoutePolyline path={polylinePath} />}
 
               {/* Stop markers */}
-              {trip.stops
+              {stops
                 .slice()
                 .sort((a, b) => a.sequence - b.sequence)
+                .filter((stop) => stop.lat != null && stop.lng != null)
                 .map((stop, idx) => {
-                  const colors = stopPinColors(idx, trip.stops.length);
+                  const colors = stopPinColors(idx, stops.length);
                   return (
                     <AdvancedMarker
                       key={stop.stopId}
@@ -439,11 +512,11 @@ export default function TripDetailPage() {
       <div className="rounded-xl border border-gray-200 bg-white">
         <div className="border-b border-gray-200 px-5 py-3">
           <h2 className="font-semibold text-gray-900">
-            Stops ({trip.stops.length})
+            Stops ({stops.length})
           </h2>
         </div>
         <div className="divide-y divide-gray-200">
-          {trip.stops
+          {stops
             .slice()
             .sort((a, b) => a.sequence - b.sequence)
             .map((stop, idx) => (
@@ -452,7 +525,7 @@ export default function TripDetailPage() {
                   className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${
                     idx === 0
                       ? "bg-green-600"
-                      : idx === trip.stops.length - 1
+                      : idx === stops.length - 1
                         ? "bg-red-600"
                         : "bg-blue-600"
                   }`}
@@ -462,7 +535,7 @@ export default function TripDetailPage() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-gray-900">{stop.address}</p>
                   <p className="text-xs text-gray-400">
-                    {stop.lat.toFixed(5)}, {stop.lng.toFixed(5)}
+                    {stop.lat != null && stop.lng != null ? `${stop.lat.toFixed(5)}, ${stop.lng.toFixed(5)}` : "Coordinates pending"}
                   </p>
                   {stop.notes && (
                     <p className="mt-1 text-xs text-gray-500">{stop.notes}</p>
@@ -478,6 +551,36 @@ export default function TripDetailPage() {
         <span>Created: {new Date(trip.createdAt).toLocaleString()}</span>
         <span>Updated: {new Date(trip.updatedAt).toLocaleString()}</span>
       </div>
+
+      {/* Cancel confirmation modal */}
+      {showCancelModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-80 rounded-xl bg-white p-6 shadow-xl space-y-4">
+            <h3 className="text-base font-semibold text-gray-900">Cancel Trip</h3>
+            <p className="text-sm text-gray-600">
+              Are you sure you want to cancel this trip? This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowCancelModal(false)}
+                disabled={cancelling}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:border-gray-300 disabled:opacity-50"
+              >
+                Keep Trip
+              </button>
+              <button
+                onClick={cancelTrip}
+                disabled={cancelling}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {cancelling ? "Cancelling..." : "Cancel Trip"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
     </div>
   );
 }

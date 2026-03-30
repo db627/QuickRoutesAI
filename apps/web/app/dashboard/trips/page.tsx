@@ -12,6 +12,7 @@ const statusColors: Record<string, string> = {
   assigned: "bg-blue-50 text-blue-600",
   in_progress: "bg-green-50 text-green-600",
   completed: "bg-purple-50 text-purple-600",
+  cancelled: "bg-red-50 text-red-600",
 };
 
 const filterTabs: { label: string; value: TripStatus | "all" }[] = [
@@ -20,6 +21,7 @@ const filterTabs: { label: string; value: TripStatus | "all" }[] = [
   { label: "Assigned", value: "assigned" },
   { label: "In Progress", value: "in_progress" },
   { label: "Completed", value: "completed" },
+  { label: "Cancelled", value: "cancelled" },
 ];
 
 export default function TripsPage() {
@@ -110,7 +112,7 @@ export default function TripsPage() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-3">
                   <p className="text-sm font-medium text-gray-900">
-                    {trip.stops.length} stop{trip.stops.length !== 1 && "s"}
+                    {trip.stops?.length ?? 0} stop{(trip.stops?.length ?? 0) !== 1 && "s"}
                   </p>
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[trip.status] || ""}`}

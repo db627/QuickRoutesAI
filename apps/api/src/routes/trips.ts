@@ -7,7 +7,6 @@ import {
   createTripSchema,
   assignTripSchema,
   updateTripStatusSchema,
-  tripStopSchema,
   updateTripSchema,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
@@ -104,6 +103,39 @@ router.get("/", pagination, async (req, res) => {
 });
 
 /**
+ * GET /trips/stats — summary counts for the dashboard stats cards.
+ * Uses simple count() queries to avoid composite index requirements.
+ * Returns: { totalTrips, inProgressTrips, completedToday }
+ */
+router.get("/stats", requireRole("dispatcher", "admin"), async (_req, res) => {
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const [totalSnap, inProgressSnap, completedSnap] = await Promise.all([
+      db.collection("trips").count().get(),
+      db.collection("trips").where("status", "==", "in_progress").count().get(),
+      // Fetch completed trips and filter by date server-side to avoid a
+      // composite index on (status, updatedAt).
+      db.collection("trips").where("status", "==", "completed").get(),
+    ]);
+
+    const completedToday = completedSnap.docs.filter((doc) => {
+      const updatedAt = doc.data().updatedAt as string | undefined;
+      return updatedAt && updatedAt >= todayStart.toISOString();
+    }).length;
+
+    res.json({
+      totalTrips: totalSnap.data().count,
+      inProgressTrips: inProgressSnap.data().count,
+      completedToday,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Internal Error", message: "Failed to fetch trip stats" });
+  }
+});
+
+/**
  * POST /trips/:id/assign — dispatcher assigns a driver to this trip
  */
 router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTripSchema),tripTransitionGuard, async (req, res) => {
@@ -161,27 +193,49 @@ router.get("/:id", async (req, res) => {
  * PATCH /trips/:id -- update trip details
  */
 
-router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
+router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
   try {
-    const { notes,stops } = req.body;
+    const { notes, stops } = req.body;
 
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
 
-  
     if (!tripDoc.exists) {
       return res.status(404).json({ error: "Not Found", message: "Trip not found" });
     }
-    
+
     const trip = tripDoc.data();
 
     if (trip?.status !== "draft") {
       return res.status(409).json({ error: "Bad Request", message: "Only draft trips can be updated" });
     }
 
-    var updateData: Partial<{ notes: string; stops: any[]; updatedAt: string }> = { updatedAt: new Date().toISOString() };
+    const updateData: Partial<{ notes: string; stops: any[]; route: null; updatedAt: string }> = { updatedAt: new Date().toISOString() };
+
     if (notes !== undefined) updateData.notes = notes;
-    if (stops !== undefined) updateData.stops = stops;
+
+    if (stops !== undefined) {
+      updateData.stops = await Promise.all(
+        stops.map(async (s: { address: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
+          let lat = s.lat;
+          let lng = s.lng;
+          if (lat == null || lng == null) {
+            const coords = await geocodeAddress(s.address);
+            lat = coords.lat;
+            lng = coords.lng;
+          }
+          return {
+            stopId: randomUUID(),
+            address: s.address,
+            lat,
+            lng,
+            sequence: s.sequence ?? i,
+            notes: s.notes || "",
+          };
+        }),
+      );
+      updateData.route = null;
+    }
 
     await tripRef.update(updateData);
 
@@ -191,7 +245,6 @@ router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchem
       payload: { tripId: req.params.id, from: { notes: trip?.notes || null, stops: trip?.stops || null }, to: updateData },
       createdAt: new Date().toISOString(),
     });
-    
 
     res.json({ ok: true, ...updateData });
 
@@ -304,6 +357,34 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
     res.json({ ok: true, status });
   } catch (err) {
     res.status(500).json({ error: "Internal Error", message: "Failed to update status" });
+  }
+});
+
+/**
+ * POST /trips/:id/cancel — dispatcher cancels a draft or assigned trip
+ */
+router.post("/:id/cancel", requireRole("dispatcher", "admin"), async (req, res) => {
+  try {
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
+
+    if (!tripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+
+    const trip = tripDoc.data();
+    if (!["draft", "assigned"].includes(trip?.status)) {
+      return res.status(400).json({ error: "Bad Request", message: "Only draft or assigned trips can be cancelled" });
+    }
+
+    await tripRef.update({
+      status: "cancelled",
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.json({ ok: true, status: "cancelled" });
+  } catch (err) {
+    res.status(500).json({ error: "Internal Error", message: "Failed to cancel trip" });
   }
 });
 
