@@ -56,7 +56,8 @@ describe("StatsCards", () => {
     render(<StatsCards />);
 
     const skeletons = document.querySelectorAll(".animate-pulse");
-    expect(skeletons).toHaveLength(4);
+    // Each of the 4 skeleton cards contains 3 animate-pulse blocks (label, icon, number)
+    expect(skeletons).toHaveLength(12);
 
     // No card labels should be visible yet
     expect(screen.queryByText("Active Drivers")).not.toBeInTheDocument();
