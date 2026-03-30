@@ -59,6 +59,7 @@ export interface Trip {
   status: TripStatus;
   stops: TripStop[];
   route: TripRoute | null;
+  notes: string | null;
   createdAt: string;
   updatedAt: string;
 }
