@@ -213,7 +213,13 @@ Do NOT include any numeric stats fields — only overview, highlights, and recom
 
   const commentary = await aiJson<AICommentary>(prompt, 600);
 
-  return { ...stats, ...commentary };
+  // Destructure only the fields we expect from AI — never let AI overwrite real stats
+  return {
+    ...stats,
+    overview: commentary.overview ?? "",
+    highlights: Array.isArray(commentary.highlights) ? commentary.highlights : [],
+    recommendations: Array.isArray(commentary.recommendations) ? commentary.recommendations : [],
+  };
 }
 
 // ─── Feature: Anomaly Detection ──────────────────────────────────────

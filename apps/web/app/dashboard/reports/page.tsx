@@ -99,23 +99,23 @@ export default function ReportsPage() {
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
                 <p className="text-xs text-gray-500">Total Trips</p>
-                <p className="mt-0.5 text-xl font-bold text-gray-900">{summary.totalTrips}</p>
+                <p className="mt-0.5 text-xl font-bold text-gray-900">{summary.totalTrips ?? 0}</p>
               </div>
               <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3">
                 <p className="text-xs text-green-600">Completed</p>
-                <p className="mt-0.5 text-xl font-bold text-green-700">{summary.completedTrips}</p>
+                <p className="mt-0.5 text-xl font-bold text-green-700">{summary.completedTrips ?? 0}</p>
               </div>
               <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
                 <p className="text-xs text-blue-600">Distance</p>
-                <p className="mt-0.5 text-xl font-bold text-blue-700">{summary.totalDistanceMiles.toFixed(1)} mi</p>
+                <p className="mt-0.5 text-xl font-bold text-blue-700">{(summary.totalDistanceMiles ?? 0).toFixed(1)} mi</p>
               </div>
               <div className="rounded-lg border border-purple-200 bg-purple-50 px-4 py-3">
                 <p className="text-xs text-purple-600">Duration</p>
-                <p className="mt-0.5 text-xl font-bold text-purple-700">{summary.totalDurationHours.toFixed(1)} hrs</p>
+                <p className="mt-0.5 text-xl font-bold text-purple-700">{(summary.totalDurationHours ?? 0).toFixed(1)} hrs</p>
               </div>
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
                 <p className="text-xs text-emerald-600">Fuel Saved</p>
-                <p className="mt-0.5 text-xl font-bold text-emerald-700">{summary.totalFuelSavedGallons.toFixed(2)} gal</p>
+                <p className="mt-0.5 text-xl font-bold text-emerald-700">{(summary.totalFuelSavedGallons ?? 0).toFixed(2)} gal</p>
               </div>
             </div>
 
