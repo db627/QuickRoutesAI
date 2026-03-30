@@ -11,6 +11,7 @@ const statusColors: Record<string, string> = {
   assigned: "bg-blue-50 text-blue-600",
   in_progress: "bg-green-50 text-green-600",
   completed: "bg-purple-50 text-purple-600",
+  cancelled: "bg-red-50 text-red-600",
 };
 
 export default function TripList() {

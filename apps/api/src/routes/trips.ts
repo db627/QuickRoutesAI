@@ -7,7 +7,6 @@ import {
   createTripSchema,
   assignTripSchema,
   updateTripStatusSchema,
-  tripStopSchema,
   updateTripSchema,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
@@ -194,7 +193,7 @@ router.get("/:id", async (req, res) => {
  * PATCH /trips/:id -- update trip details
  */
 
-router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
+router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
   try {
     const { notes, stops } = req.body;
 
@@ -380,6 +379,34 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
     res.json({ ok: true, status });
   } catch (err) {
     res.status(500).json({ error: "Internal Error", message: "Failed to update status" });
+  }
+});
+
+/**
+ * POST /trips/:id/cancel — dispatcher cancels a draft or assigned trip
+ */
+router.post("/:id/cancel", requireRole("dispatcher", "admin"), async (req, res) => {
+  try {
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
+
+    if (!tripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+
+    const trip = tripDoc.data();
+    if (!["draft", "assigned"].includes(trip?.status)) {
+      return res.status(400).json({ error: "Bad Request", message: "Only draft or assigned trips can be cancelled" });
+    }
+
+    await tripRef.update({
+      status: "cancelled",
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.json({ ok: true, status: "cancelled" });
+  } catch (err) {
+    res.status(500).json({ error: "Internal Error", message: "Failed to cancel trip" });
   }
 });
 

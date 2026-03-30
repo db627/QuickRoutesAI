@@ -11,7 +11,11 @@ const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || "";
 // Default center (NYC)
 const DEFAULT_CENTER = { lat: 40.7128, lng: -74.006 };
 
-export default function DriverMap() {
+interface Props {
+  onSelectDriver?: (uid: string) => void;
+}
+
+export default function DriverMap({ onSelectDriver }: Props) {
   const [drivers, setDrivers] = useState<(DriverRecord & { uid: string })[]>([]);
 
   useEffect(() => {
@@ -56,6 +60,7 @@ export default function DriverMap() {
               key={driver.uid}
               position={{ lat: driver.lastLocation.lat, lng: driver.lastLocation.lng }}
               title={driver.uid}
+              onClick={() => onSelectDriver?.(driver.uid)}
             >
               <Pin background="#2563eb" glyphColor="#fff" borderColor="#1d4ed8" />
             </AdvancedMarker>
