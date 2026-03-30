@@ -1,33 +1,17 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import StatsCards from "@/components/StatsCards";
-import { onSnapshot } from "firebase/firestore";
+import { apiFetch } from "@/lib/api";
 
-jest.mock("@/lib/firebase", () => ({ firestore: {} }));
-
-jest.mock("firebase/firestore", () => ({
-  collection: jest.fn(() => ({})),
-  query: jest.fn(() => ({})),
-  where: jest.fn(() => ({})),
-  onSnapshot: jest.fn(),
+jest.mock("@/lib/api", () => ({
+  apiFetch: jest.fn(),
 }));
 
-const mockOnSnapshot = onSnapshot as jest.MockedFunction<typeof onSnapshot>;
-
-// Helper: build a minimal Firestore-like snapshot
-function makeTripsSnapshot(statuses: string[]) {
-  const today = new Date().toISOString();
-  return {
-    size: statuses.length,
-    docs: statuses.map((status) => ({
-      data: () => ({ status, updatedAt: today }),
-    })),
-  };
-}
+const mockApiFetch = apiFetch as jest.MockedFunction<typeof apiFetch>;
 
 describe("StatsCards", () => {
-  it("shows 4 skeleton cards while subscriptions have not fired", () => {
-    // onSnapshot never calls back → stays loading
-    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
+  it("shows 4 skeleton cards while the fetch has not resolved", () => {
+    // Never-resolving promise keeps the component in loading state
+    mockApiFetch.mockReturnValue(new Promise(() => {}));
 
     const { container } = render(<StatsCards />);
 
@@ -43,17 +27,11 @@ describe("StatsCards", () => {
     expect(grid?.children).toHaveLength(4);
   });
 
-  it("shows real stat cards after the trips subscription fires", async () => {
-    // StatsCards has 2 subscriptions; loading=false fires in the trips callback (2nd call)
-    let callCount = 0;
-    mockOnSnapshot.mockImplementation((_: any, cb: any) => {
-      callCount++;
-      if (callCount === 2) {
-        // trips subscription — fires with 2 in-progress trips
-        cb(makeTripsSnapshot(["in_progress", "completed"]));
-      }
-      return jest.fn() as any;
-    });
+  it("shows real stat cards after the fetch resolves", async () => {
+    // First call: /drivers/active, second call: /trips/stats
+    mockApiFetch
+      .mockResolvedValueOnce([{ uid: "d1" }, { uid: "d2" }] as any) // 2 active drivers
+      .mockResolvedValueOnce({ totalTrips: 5, inProgressTrips: 1, completedToday: 3 } as any);
 
     render(<StatsCards />);
 
@@ -65,8 +43,24 @@ describe("StatsCards", () => {
     expect(screen.getByText("In-Progress Trips")).toBeInTheDocument();
     expect(screen.getByText("Completed Today")).toBeInTheDocument();
 
-    // No skeletons once loaded
-    const { container } = render(<StatsCards />);
-    // Re-render check skipped — just confirm labels visible
+    // All four values are unique — safe to assert individually
+    expect(screen.getByText("2")).toBeInTheDocument(); // activeDrivers
+    expect(screen.getByText("5")).toBeInTheDocument(); // totalTrips
+    expect(screen.getByText("1")).toBeInTheDocument(); // inProgressTrips
+    expect(screen.getByText("3")).toBeInTheDocument(); // completedToday
+  });
+
+  it("shows zeros and hides skeletons when the fetch fails", async () => {
+    mockApiFetch.mockRejectedValue(new Error("Network error"));
+
+    render(<StatsCards />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Drivers")).toBeInTheDocument();
+    });
+
+    // All values should be 0 (graceful degradation)
+    const zeros = screen.getAllByText("0");
+    expect(zeros.length).toBe(4);
   });
 });

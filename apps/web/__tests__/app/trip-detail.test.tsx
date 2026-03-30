@@ -33,7 +33,7 @@ jest.mock("@/lib/utils", () => ({
 
 jest.mock("@vis.gl/react-google-maps", () => ({
   APIProvider: ({ children }: { children: React.ReactNode }) => <div data-testid="maps-provider">{children}</div>,
-  Map: ({ children }: { children: React.ReactNode }) => <div data-testid="maps-map">{children}</div>,
+  Map: () => <div data-testid="maps-map" />,
   AdvancedMarker: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   Pin: () => null,
   useMap: jest.fn(() => null),
