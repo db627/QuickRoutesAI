@@ -190,6 +190,62 @@ router.get("/:id", async (req, res) => {
 });
 
 /**
+ * POST /trips/:id/duplicate — duplicate a completed trip into a new draft trip
+ */
+router.post("/:id/duplicate", requireRole("dispatcher", "admin"), async (req, res) => {
+  try {
+    const sourceTripDoc = await db.collection("trips").doc(req.params.id).get();
+
+    if (!sourceTripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+
+    const sourceTrip = sourceTripDoc.data();
+    if (sourceTrip?.status !== "completed") {
+      return res.status(409).json({ error: "Bad Request", message: "Only completed trips can be duplicated" });
+    }
+
+    const now = new Date().toISOString();
+    const duplicatedStops = Array.isArray(sourceTrip?.stops)
+      ? sourceTrip.stops.map((stop: any, index: number) => ({
+          ...stop,
+          stopId: randomUUID(),
+          sequence: typeof stop?.sequence === "number" ? stop.sequence : index,
+        }))
+      : [];
+
+    const duplicatedTrip = {
+      driverId: null,
+      createdBy: req.uid,
+      status: "draft" as const,
+      stops: duplicatedStops,
+      route: null,
+      notes: sourceTrip?.notes ?? null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const newTripRef = await db.collection("trips").add(duplicatedTrip);
+
+    await db.collection("events").add({
+      type: "trip_duplicate",
+      driverId: req.uid,
+      payload: { sourceTripId: req.params.id, duplicatedTripId: newTripRef.id },
+      createdAt: now,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      id: newTripRef.id,
+      duplicatedFrom: req.params.id,
+      ...duplicatedTrip,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: "Internal Error", message: "Failed to duplicate trip" });
+  }
+});
+
+/**
  * PATCH /trips/:id -- update trip details
  */
 
@@ -341,7 +397,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) =
  * Dispatchers can set any status.
  */
 router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard, async (req, res) => {
-  const { status } = req.body;
+  const { status, currentLocation } = req.body;
 
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
@@ -363,10 +419,24 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
       }
     }
 
-    await tripRef.update({
+    const updateData: Record<string, unknown> = {
       status,
       updatedAt: new Date().toISOString(),
-    });
+    };
+
+    // When a driver starts a trip, optionally recompute route from their live location.
+    if (status === "in_progress" && currentLocation && Array.isArray(trip?.stops) && trip.stops.length > 0) {
+      try {
+        const { route: reroutedRoute, optimizedStops } = await computeRoute(trip.stops, currentLocation);
+        updateData.route = reroutedRoute;
+        updateData.stops = optimizedStops;
+      } catch (rerouteErr) {
+        const rerouteMessage = rerouteErr instanceof Error ? rerouteErr.message : "Unknown reroute error";
+        console.error("Failed to reroute trip from driver location:", rerouteMessage);
+      }
+    }
+
+    await tripRef.update(updateData);
 
     // Log status change event
     await db.collection("events").add({

@@ -3,7 +3,7 @@ import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 import TripScreen from '../screens/TripScreen';
 import { apiFetch } from '../services/api';
-import { startTracking, stopTracking } from '../services/location';
+import { getCurrentPosition, startTracking, stopTracking } from '../services/location';
 import { onSnapshot } from 'firebase/firestore';
 
 let mockIsConnected = true;
@@ -27,6 +27,7 @@ jest.mock('../services/api', () => ({
 jest.mock('../services/location', () => ({
   startTracking: jest.fn().mockResolvedValue(true),
   stopTracking: jest.fn().mockResolvedValue(undefined),
+  getCurrentPosition: jest.fn().mockResolvedValue(null),
 }));
 
 jest.mock('../services/navigation', () => ({
@@ -74,6 +75,7 @@ describe('TripScreen', () => {
     (apiFetch as jest.Mock).mockResolvedValue({});
     (startTracking as jest.Mock).mockResolvedValue(true);
     (stopTracking as jest.Mock).mockResolvedValue(undefined);
+    (getCurrentPosition as jest.Mock).mockResolvedValue(null);
   });
 
   it('shows empty state when no trips', () => {
@@ -101,6 +103,28 @@ describe('TripScreen', () => {
         expect.objectContaining({ body: JSON.stringify({ status: 'in_progress' }) }),
       );
       expect(startTracking).toHaveBeenCalled();
+    });
+  });
+
+  it('sends currentLocation when starting a trip and location is available', async () => {
+    (getCurrentPosition as jest.Mock).mockResolvedValue({
+      coords: { latitude: 40.7357, longitude: -74.1724 },
+    });
+    mockSnapshot(assignedTrip);
+    const { getByText } = render(<TripScreen />);
+
+    fireEvent.press(getByText('Start Trip'));
+
+    await waitFor(() => {
+      expect(apiFetch).toHaveBeenCalledWith(
+        '/trips/trip1/status',
+        expect.objectContaining({
+          body: JSON.stringify({
+            status: 'in_progress',
+            currentLocation: { lat: 40.7357, lng: -74.1724 },
+          }),
+        }),
+      );
     });
   });
 

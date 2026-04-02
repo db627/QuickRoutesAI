@@ -32,12 +32,21 @@ export async function verifyFirebaseToken(req: Request, res: Response, next: Nex
 
     // Fetch role from Firestore users collection
     const userDoc = await db.collection("users").doc(decoded.uid).get();
-    if (!userDoc.exists) {
-      return res.status(403).json({ error: "Forbidden", message: "User profile not found" });
+    if (userDoc.exists) {
+      req.userRole = userDoc.data()?.role || "driver";
+      next();
+      return;
     }
 
-    req.userRole = userDoc.data()?.role || "driver";
-    next();
+    // Backward compatibility: allow legacy driver accounts with only a drivers/{uid} doc.
+    const driverDoc = await db.collection("drivers").doc(decoded.uid).get();
+    if (driverDoc.exists) {
+      req.userRole = "driver";
+      next();
+      return;
+    }
+
+    return res.status(403).json({ error: "Forbidden", message: "User profile not found" });
   } catch (err) {
     return res.status(401).json({ error: "Unauthorized", message: "Invalid or expired token" });
   }
