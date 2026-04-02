@@ -7,7 +7,7 @@ import { apiFetch } from "../services/api";
 import type { Trip, TripStop } from "@quickroutesai/shared";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import { openNavigation } from "../services/navigation";
-import { startTracking, stopTracking } from "../services/location";
+import { getCurrentPosition, startTracking, stopTracking } from "../services/location";
 
 // Decode Google Maps encoded polyline
 function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
@@ -46,6 +46,7 @@ export default function TripScreen() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [statusUpdateInFlight, setStatusUpdateInFlight] = useState(false);
   const uid = auth.currentUser?.uid;
   const { isConnected } = useNetworkStatus();
   const unsubRef = useRef<(() => void) | null>(null);
@@ -87,24 +88,66 @@ export default function TripScreen() {
   }, [fetchTrips]);
 
   const updateStatus = async (tripId: string, status: "in_progress" | "completed") => {
+    if (statusUpdateInFlight) {
+      console.log("[TripScreen] updateStatus ignored: request already in flight", { tripId, status });
+      return;
+    }
+
+    console.log("[TripScreen] updateStatus called", { tripId, status, isConnected });
     if (!isConnected) {
+      console.log("[TripScreen] updateStatus blocked: offline", { tripId, status });
       Alert.alert("No Connection", "Trip status cannot be updated while offline.");
       return;
     }
+
+    setStatusUpdateInFlight(true);
     try {
+      let currentLocation: { lat: number; lng: number } | undefined;
+      if (status === "in_progress") {
+        try {
+          const pos = await getCurrentPosition();
+          if (pos) {
+            currentLocation = {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+            };
+            console.log("[TripScreen] got current location for reroute", { tripId, currentLocation });
+          } else {
+            console.log("[TripScreen] current location unavailable for reroute", { tripId });
+          }
+        } catch (locErr) {
+          const msg = locErr instanceof Error ? locErr.message : "Unknown location error";
+          console.warn("[TripScreen] failed to get current location for reroute", { tripId, message: msg });
+        }
+      }
+
+      console.log("[TripScreen] updateStatus sending API request", { tripId, status });
+      const body: { status: "in_progress" | "completed"; currentLocation?: { lat: number; lng: number } } = {
+        status,
+      };
+      if (currentLocation) {
+        body.currentLocation = currentLocation;
+      }
+
       await apiFetch(`/trips/${tripId}/status`, {
         method: "POST",
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(body),
       });
+      console.log("[TripScreen] updateStatus API request succeeded", { tripId, status });
       if (status === "in_progress") {
+        console.log("[TripScreen] starting GPS tracking", { tripId });
         startTracking().catch((err) => console.warn("GPS tracking unavailable:", err));
       } else if (status === "completed") {
+        console.log("[TripScreen] stopping GPS tracking", { tripId });
         stopTracking().catch((err) => console.warn("GPS stop unavailable:", err));
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[TripScreen] updateStatus failed", { tripId, status, message: msg, raw: err });
       console.error("Failed to update trip status:", msg);
       Alert.alert("Error", `Failed to update trip status: ${msg}`);
+    } finally {
+      setStatusUpdateInFlight(false);
     }
   };
 
@@ -231,10 +274,22 @@ export default function TripScreen() {
       <View className="border-t border-gray-200 bg-white px-5 py-4">
         {trip.status === "assigned" && (
           <TouchableOpacity
-            onPress={() => updateStatus(trip.id, "in_progress")}
-            className="items-center rounded-xl bg-green-500 py-3"
+            onPress={() => {
+              console.log("[TripScreen] Start Trip button pressed", {
+                tripId: trip.id,
+                tripStatus: trip.status,
+                stopCount: stops.length,
+              });
+              updateStatus(trip.id, "in_progress");
+            }}
+            disabled={statusUpdateInFlight}
+            className={`items-center rounded-xl py-3 ${
+              statusUpdateInFlight ? "bg-green-300" : "bg-green-500"
+            }`}
           >
-            <Text className="font-semibold text-white">Start Trip</Text>
+            <Text className="font-semibold text-white">
+              {statusUpdateInFlight ? "Starting..." : "Start Trip"}
+            </Text>
           </TouchableOpacity>
         )}
         {trip.status === "in_progress" && (

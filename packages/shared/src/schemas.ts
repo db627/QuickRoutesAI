@@ -43,6 +43,12 @@ export type AssignTripInput = z.infer<typeof assignTripSchema>;
 // ── Update Trip Status ──
 export const updateTripStatusSchema = z.object({
   status: z.enum(["in_progress", "completed"]),
+  currentLocation: z
+    .object({
+      lat: z.number().min(-90).max(90),
+      lng: z.number().min(-180).max(180),
+    })
+    .optional(),
 });
 export type UpdateTripStatusInput = z.infer<typeof updateTripStatusSchema>;
 

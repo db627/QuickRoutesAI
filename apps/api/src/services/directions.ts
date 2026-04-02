@@ -74,13 +74,18 @@ export interface ComputeRouteResult {
   optimizedStops: TripStop[];
 }
 
+interface RouteOrigin {
+  lat: number;
+  lng: number;
+}
+
 /**
  * Compute an optimized route through stops.
  * 1. OpenAI reorders stops for the best driving order (origin stays first).
  * 2. Google Directions computes the actual route along the optimized order.
  * Returns both the route and the reordered stops with updated sequence numbers.
  */
-export async function computeRoute(stops: TripStop[]): Promise<ComputeRouteResult> {
+export async function computeRoute(stops: TripStop[], originOverride?: RouteOrigin): Promise<ComputeRouteResult> {
   const apiKey = getApiKey();
 
   const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
@@ -93,12 +98,30 @@ export async function computeRoute(stops: TripStop[]): Promise<ComputeRouteResul
   }
 
   // Compute naive distance BEFORE optimization for fuel savings comparison
-  const naiveDistanceMeters = Math.round(naiveTotalDistance(sorted));
+  const naivePath = originOverride ? [{ lat: originOverride.lat, lng: originOverride.lng }, ...sorted] : sorted;
+  const naiveDistanceMeters = Math.round(naiveTotalDistance(naivePath));
 
   // Step 1: Use OpenAI to find the optimal stop order
   let optimizedStops: TripStop[];
   try {
-    optimizedStops = await optimizeStopOrder(sorted);
+    if (originOverride) {
+      const syntheticOrigin: TripStop = {
+        stopId: "__driver_origin__",
+        address: "Driver Current Location",
+        lat: originOverride.lat,
+        lng: originOverride.lng,
+        sequence: -1,
+        notes: "",
+      };
+
+      const withOrigin = sorted.map((s, idx) => ({ ...s, sequence: idx + 1 }));
+      const optimizedWithOrigin = await optimizeStopOrder([syntheticOrigin, ...withOrigin]);
+      optimizedStops = optimizedWithOrigin
+        .slice(1)
+        .map((s, idx) => ({ ...s, sequence: idx }));
+    } else {
+      optimizedStops = await optimizeStopOrder(sorted);
+    }
     console.log("OpenAI optimized stop order:", optimizedStops.map((s) => `${s.sequence}: ${s.address}`));
   } catch (err) {
     console.error("OpenAI optimization failed, using original order:", err);
@@ -106,9 +129,11 @@ export async function computeRoute(stops: TripStop[]): Promise<ComputeRouteResul
   }
 
   // Step 2: Compute the actual route via Google Directions using optimized order
-  const origin = optimizedStops[0];
+  const origin = originOverride ?? optimizedStops[0];
   const destination = optimizedStops[optimizedStops.length - 1];
-  const waypoints = optimizedStops.slice(1, -1);
+  const waypoints = originOverride
+    ? optimizedStops.slice(0, -1)
+    : optimizedStops.slice(1, -1);
 
   try {
     const waypointParams = waypoints.length > 0

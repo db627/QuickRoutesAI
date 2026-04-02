@@ -21,9 +21,11 @@ jest.mock("@/lib/api", () => ({
   apiFetch: (...args: unknown[]) => mockApiFetch(...args),
 }));
 
+const mockRouterPush = jest.fn();
+
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "test-trip-id" }),
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push: mockRouterPush }),
 }));
 
 jest.mock("next/link", () => ({
@@ -76,7 +78,42 @@ function setupOnSnapshot(status: Trip["status"]) {
 beforeEach(() => {
   jest.clearAllMocks();
   // AssignDriverDropdown calls apiFetch("/drivers") — return empty list by default
-  mockApiFetch.mockResolvedValue([]);
+  mockApiFetch.mockResolvedValue({ data: [] });
+});
+
+describe("Duplicate Trip button", () => {
+  it("shows Duplicate Trip button for completed trips", async () => {
+    setupOnSnapshot("completed");
+    render(<TripDetailPage />);
+    expect(await screen.findByRole("button", { name: "Duplicate Trip" })).toBeInTheDocument();
+  });
+
+  it.each(["draft", "assigned", "in_progress", "cancelled"] as Trip["status"][])(
+    "hides Duplicate Trip button for %s trips",
+    async (status) => {
+      setupOnSnapshot(status);
+      render(<TripDetailPage />);
+      await screen.findByText("Trip Detail");
+      expect(screen.queryByRole("button", { name: "Duplicate Trip" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("calls duplicate endpoint and routes to duplicated trip", async () => {
+    setupOnSnapshot("completed");
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === "/drivers") return Promise.resolve({ data: [] });
+      if (path === "/trips/test-trip-id/duplicate") return Promise.resolve({ id: "duplicated-999" });
+      return Promise.resolve({});
+    });
+
+    render(<TripDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Duplicate Trip" }));
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith("/trips/test-trip-id/duplicate", { method: "POST" });
+      expect(mockRouterPush).toHaveBeenCalledWith("/dashboard/trips/duplicated-999");
+    });
+  });
 });
 
 describe("Edit button visibility", () => {
