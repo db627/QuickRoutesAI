@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port 3000",
-    "build": "pnpm install --filter web... --frozen-lockfile --config.node-linker=isolated && next build",
+    "build": "next build",
+    "build:isolated": "pnpm install --filter web... --frozen-lockfile --config.node-linker=isolated && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "jest",
