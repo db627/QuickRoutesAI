@@ -9,7 +9,6 @@ import {
   onSnapshot,
   collection,
   query,
-  where,
 } from "firebase/firestore";
 import {
   APIProvider,

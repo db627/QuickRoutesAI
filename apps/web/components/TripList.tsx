@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { collection, doc, getDoc, onSnapshot, orderBy, query, limit } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
@@ -19,6 +19,7 @@ export default function TripList() {
   const [loading, setLoading] = useState(true);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [driverNames, setDriverNames] = useState<Record<string, string>>({});
+  const requestedDriverIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     const q = query(collection(firestore, "trips"), orderBy("createdAt", "desc"), limit(20));
@@ -33,17 +34,17 @@ export default function TripList() {
       // Resolve driver names
       const ids = [...new Set(list.map((t) => t.driverId).filter(Boolean))] as string[];
       ids.forEach((uid) => {
-        if (!driverNames[uid]) {
-          getDoc(doc(firestore, "users", uid)).then((snap) => {
-            if (snap.exists()) {
-              setDriverNames((prev) => ({ ...prev, [uid]: snap.data().name || uid.slice(0, 8) }));
-            }
-          });
-        }
+        if (requestedDriverIdsRef.current.has(uid)) return;
+        requestedDriverIdsRef.current.add(uid);
+
+        getDoc(doc(firestore, "users", uid)).then((snap) => {
+          if (snap.exists()) {
+            setDriverNames((prev) => ({ ...prev, [uid]: snap.data().name || uid.slice(0, 8) }));
+          }
+        });
       });
     });
     return unsub;
-  // eslint-disable-next-line
   }, []);
 
   return (
