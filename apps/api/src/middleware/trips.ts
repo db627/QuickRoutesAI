@@ -60,3 +60,9 @@ export async function tripTransitionGuard(req: Request, res: Response, next: Nex
         return res.status(500).json({ error: "Internal Error", message: "Failed to verify trip status" });
     }
 }
+
+export async function tripStopsValidationGuard(req: Request, res: Response, next: NextFunction) {
+    let trip_id = req.params.id;
+
+    
+}
