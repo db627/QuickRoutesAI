@@ -7,7 +7,6 @@ import {
   createTripSchema,
   assignTripSchema,
   updateTripStatusSchema,
-  tripStopSchema,
   updateTripSchema,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
@@ -104,6 +103,39 @@ router.get("/", pagination, async (req, res) => {
 });
 
 /**
+ * GET /trips/stats — summary counts for the dashboard stats cards.
+ * Uses simple count() queries to avoid composite index requirements.
+ * Returns: { totalTrips, inProgressTrips, completedToday }
+ */
+router.get("/stats", requireRole("dispatcher", "admin"), async (_req, res) => {
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const [totalSnap, inProgressSnap, completedSnap] = await Promise.all([
+      db.collection("trips").count().get(),
+      db.collection("trips").where("status", "==", "in_progress").count().get(),
+      // Fetch completed trips and filter by date server-side to avoid a
+      // composite index on (status, updatedAt).
+      db.collection("trips").where("status", "==", "completed").get(),
+    ]);
+
+    const completedToday = completedSnap.docs.filter((doc) => {
+      const updatedAt = doc.data().updatedAt as string | undefined;
+      return updatedAt && updatedAt >= todayStart.toISOString();
+    }).length;
+
+    res.json({
+      totalTrips: totalSnap.data().count,
+      inProgressTrips: inProgressSnap.data().count,
+      completedToday,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Internal Error", message: "Failed to fetch trip stats" });
+  }
+});
+
+/**
  * POST /trips/:id/assign — dispatcher assigns a driver to this trip
  */
 router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTripSchema),tripTransitionGuard, async (req, res) => {
@@ -158,28 +190,108 @@ router.get("/:id", async (req, res) => {
 });
 
 /**
+ * POST /trips/:id/duplicate — duplicate a completed trip into a new draft trip
+ */
+router.post("/:id/duplicate", requireRole("dispatcher", "admin"), async (req, res) => {
+  try {
+    const sourceTripDoc = await db.collection("trips").doc(req.params.id).get();
+
+    if (!sourceTripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+
+    const sourceTrip = sourceTripDoc.data();
+    if (sourceTrip?.status !== "completed") {
+      return res.status(409).json({ error: "Bad Request", message: "Only completed trips can be duplicated" });
+    }
+
+    const now = new Date().toISOString();
+    const duplicatedStops = Array.isArray(sourceTrip?.stops)
+      ? sourceTrip.stops.map((stop: any, index: number) => ({
+          ...stop,
+          stopId: randomUUID(),
+          sequence: typeof stop?.sequence === "number" ? stop.sequence : index,
+        }))
+      : [];
+
+    const duplicatedTrip = {
+      driverId: null,
+      createdBy: req.uid,
+      status: "draft" as const,
+      stops: duplicatedStops,
+      route: null,
+      notes: sourceTrip?.notes ?? null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const newTripRef = await db.collection("trips").add(duplicatedTrip);
+
+    await db.collection("events").add({
+      type: "trip_duplicate",
+      driverId: req.uid,
+      payload: { sourceTripId: req.params.id, duplicatedTripId: newTripRef.id },
+      createdAt: now,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      id: newTripRef.id,
+      duplicatedFrom: req.params.id,
+      ...duplicatedTrip,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: "Internal Error", message: "Failed to duplicate trip" });
+  }
+});
+
+/**
  * PATCH /trips/:id -- update trip details
  */
 
-router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
+router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
   try {
-    const { notes,stops } = req.body;
+    const { notes, stops } = req.body;
 
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
 
-  
     if (!tripDoc.exists) {
       return res.status(404).json({ error: "Not Found", message: "Trip not found" });
     }
-    
+
     const trip = tripDoc.data();
 
-    if (trip?.status !== "draft") {
-      return res.status(409).json({ error: "Bad Request", message: "Only draft trips can be updated" });
+    // Allow editing draft, assigned, and in_progress trips (not completed/cancelled)
+    if (trip?.status === "completed" || trip?.status === "cancelled") {
+      return res.status(409).json({ error: "Bad Request", message: "Completed or cancelled trips cannot be updated" });
     }
 
-    var updateData: Partial<{ notes: string; stops: any[]; updatedAt: string }> = { updatedAt: new Date().toISOString() };
+    // Geocode any new stops missing lat/lng
+    let resolvedStops = stops;
+    if (stops !== undefined) {
+      resolvedStops = await Promise.all(
+        stops.map(async (s: any, i: number) => {
+          let lat = s.lat;
+          let lng = s.lng;
+          if (lat == null || lng == null) {
+            const coords = await geocodeAddress(s.address);
+            lat = coords.lat;
+            lng = coords.lng;
+          }
+          return {
+            stopId: s.stopId || randomUUID(),
+            address: s.address,
+            lat,
+            lng,
+            sequence: s.sequence ?? i,
+            notes: s.notes || "",
+          };
+        }),
+      );
+    }
+
+    const updateData: Record<string, unknown> = { updatedAt: new Date().toISOString() };
     if (notes !== undefined) updateData.notes = notes;
     if (stops !== undefined){
         const resolvedStops = await Promise.all(
@@ -203,6 +315,24 @@ router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchem
       );
       updateData.stops = resolvedStops;
     } 
+    if (resolvedStops !== undefined) updateData.stops = resolvedStops;
+
+    // If stops changed and there are 2+, recompute the route and optimize stop order
+    let routeResult = null;
+    if (resolvedStops && resolvedStops.length >= 2) {
+      try {
+        const { route, optimizedStops } = await computeRoute(resolvedStops);
+        routeResult = route;
+        updateData.route = route;
+        updateData.stops = optimizedStops;
+      } catch (routeErr) {
+        // Route computation is best-effort; save stops even if it fails
+        console.error("Auto route recomputation failed:", routeErr);
+      }
+    } else if (resolvedStops && resolvedStops.length < 2) {
+      // Clear route if fewer than 2 stops remain
+      updateData.route = null;
+    }
 
     await tripRef.update(updateData);
 
@@ -212,12 +342,12 @@ router.patch("/:id",requireRole("dispatcher", "admin"), validate(updateTripSchem
       payload: { tripId: req.params.id, from: { notes: trip?.notes || null, stops: trip?.stops || null }, to: updateData },
       createdAt: new Date().toISOString(),
     });
-    
 
-    res.json({ ok: true, ...updateData });
+    res.json({ ok: true, ...updateData, route: routeResult });
 
   } catch (err) {
-    return res.status(500).json({ error: "Internal Error", message: "Failed to update trip" });
+    const message = err instanceof Error ? err.message : "Failed to update trip";
+    return res.status(500).json({ error: "Internal Error", message });
   }
 });
 
@@ -267,19 +397,22 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) =
       return res.status(400).json({ error: "Bad Request", message: "Need at least 2 stops to compute route" });
     }
 
-    const routeResult = await computeRoute(stops);
+    const { route: routeResult, optimizedStops } = await computeRoute(stops);
 
     let routes = trip?.route || [];
     routes.push(routeResult);
 
+  
     await db.collection("trips").doc(req.params.id).update({
       route: routes,
+      stops: optimizedStops,
       updatedAt: new Date().toISOString(),
     });
 
-    res.json({ ok: true, route: routeResult });
+    res.json({ ok: true, route: routeResult, stops: optimizedStops });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to compute route";
+    console.error("Route computation failed:", message);
     res.status(500).json({ error: "Internal Error", message });
   }
 });
@@ -290,7 +423,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) =
  * Dispatchers can set any status.
  */
 router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard, async (req, res) => {
-  const { status } = req.body;
+  const { status, currentLocation } = req.body;
 
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
@@ -312,10 +445,24 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
       }
     }
 
-    await tripRef.update({
+    const updateData: Record<string, unknown> = {
       status,
       updatedAt: new Date().toISOString(),
-    });
+    };
+
+    // When a driver starts a trip, optionally recompute route from their live location.
+    if (status === "in_progress" && currentLocation && Array.isArray(trip?.stops) && trip.stops.length > 0) {
+      try {
+        const { route: reroutedRoute, optimizedStops } = await computeRoute(trip.stops, currentLocation);
+        updateData.route = reroutedRoute;
+        updateData.stops = optimizedStops;
+      } catch (rerouteErr) {
+        const rerouteMessage = rerouteErr instanceof Error ? rerouteErr.message : "Unknown reroute error";
+        console.error("Failed to reroute trip from driver location:", rerouteMessage);
+      }
+    }
+
+    await tripRef.update(updateData);
 
     // Log status change event
     await db.collection("events").add({
@@ -328,6 +475,34 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
     res.json({ ok: true, status });
   } catch (err) {
     res.status(500).json({ error: "Internal Error", message: "Failed to update status" });
+  }
+});
+
+/**
+ * POST /trips/:id/cancel — dispatcher cancels a draft or assigned trip
+ */
+router.post("/:id/cancel", requireRole("dispatcher", "admin"), async (req, res) => {
+  try {
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
+
+    if (!tripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+
+    const trip = tripDoc.data();
+    if (!["draft", "assigned"].includes(trip?.status)) {
+      return res.status(400).json({ error: "Bad Request", message: "Only draft or assigned trips can be cancelled" });
+    }
+
+    await tripRef.update({
+      status: "cancelled",
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.json({ ok: true, status: "cancelled" });
+  } catch (err) {
+    res.status(500).json({ error: "Internal Error", message: "Failed to cancel trip" });
   }
 });
 

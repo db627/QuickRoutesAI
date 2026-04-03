@@ -54,23 +54,22 @@ describe('openNavigation', () => {
     );
   });
 
-  it('opens Google Maps app when Apple Maps not available', async () => {
+  it('opens Google Maps URL on Android with all waypoints', async () => {
     (Platform as any).OS = 'android';
     (Linking.canOpenURL as jest.Mock).mockResolvedValue(true);
 
     await openNavigation(mockStops);
 
     expect(Linking.openURL).toHaveBeenCalledWith(
-      expect.stringContaining('comgooglemaps://')
+      expect.stringContaining('google.com/maps/dir/')
     );
   });
 
-  it('falls back to browser when no maps app available', async () => {
+  it('falls back to Google Maps URL when Apple Maps not available', async () => {
     (Platform as any).OS = 'ios';
     (Linking.canOpenURL as jest.Mock)
-      .mockResolvedValueOnce(false) // Apple Maps not available
-      .mockResolvedValueOnce(false) // Google Maps not available
-      .mockResolvedValueOnce(true); // Browser available
+      .mockResolvedValueOnce(false)  // Apple Maps not available
+      .mockResolvedValueOnce(true);  // Google Maps URL available
 
     await openNavigation(mockStops);
 

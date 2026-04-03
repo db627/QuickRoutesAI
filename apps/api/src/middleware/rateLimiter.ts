@@ -41,3 +41,16 @@ export const signupLimiter = rateLimit({
   skip: () => isTest,
   message: { error: "Too Many Requests", message: "Too many signup attempts, try again in a minute" },
 });
+
+/**
+ * Limiter for quote submissions.
+ * 3 requests per 5 minutes per IP.
+ */
+export const quoteLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => isTest,
+  message: { error: "Too Many Requests", message: "Too many quote requests, please try again later" },
+});

@@ -7,6 +7,7 @@ import { apiFetch } from "../services/api";
 import type { Trip, TripStop } from "@quickroutesai/shared";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import { openNavigation } from "../services/navigation";
+import { getCurrentPosition, startTracking, stopTracking } from "../services/location";
 
 // Decode Google Maps encoded polyline
 function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
@@ -45,9 +46,12 @@ export default function TripScreen() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [statusUpdateInFlight, setStatusUpdateInFlight] = useState(false);
   const uid = auth.currentUser?.uid;
   const { isConnected } = useNetworkStatus();
   const unsubRef = useRef<(() => void) | null>(null);
+
+  const prevHadActiveTrip = useRef(false);
 
   const fetchTrips = useCallback(() => {
     if (!uid) return;
@@ -58,7 +62,16 @@ export default function TripScreen() {
       where("status", "in", ["assigned", "in_progress"]),
     );
     unsubRef.current = onSnapshot(q, (snapshot) => {
-      setTrips(snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() as Omit<Trip, "id">) })));
+      const current = snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() as Omit<Trip, "id">) }));
+      const hasActiveTrip = current.some((t) => t.status === "in_progress");
+
+      // Auto-stop tracking when no more in_progress trips (e.g. cancelled externally)
+      if (prevHadActiveTrip.current && !hasActiveTrip) {
+        stopTracking().catch((err) => console.warn("GPS stop unavailable:", err));
+      }
+      prevHadActiveTrip.current = hasActiveTrip;
+
+      setTrips(current);
       setLoading(false);
       setRefreshing(false);
     });
@@ -75,18 +88,82 @@ export default function TripScreen() {
   }, [fetchTrips]);
 
   const updateStatus = async (tripId: string, status: "in_progress" | "completed") => {
+    if (statusUpdateInFlight) {
+      console.log("[TripScreen] updateStatus ignored: request already in flight", { tripId, status });
+      return;
+    }
+
+    console.log("[TripScreen] updateStatus called", { tripId, status, isConnected });
     if (!isConnected) {
+      console.log("[TripScreen] updateStatus blocked: offline", { tripId, status });
       Alert.alert("No Connection", "Trip status cannot be updated while offline.");
       return;
     }
+
+    setStatusUpdateInFlight(true);
     try {
+      let currentLocation: { lat: number; lng: number } | undefined;
+      if (status === "in_progress") {
+        try {
+          const pos = await getCurrentPosition();
+          if (pos) {
+            currentLocation = {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+            };
+            console.log("[TripScreen] got current location for reroute", { tripId, currentLocation });
+          } else {
+            console.log("[TripScreen] current location unavailable for reroute", { tripId });
+          }
+        } catch (locErr) {
+          const msg = locErr instanceof Error ? locErr.message : "Unknown location error";
+          console.warn("[TripScreen] failed to get current location for reroute", { tripId, message: msg });
+        }
+      }
+
+      console.log("[TripScreen] updateStatus sending API request", { tripId, status });
+      const body: { status: "in_progress" | "completed"; currentLocation?: { lat: number; lng: number } } = {
+        status,
+      };
+      if (currentLocation) {
+        body.currentLocation = currentLocation;
+      }
+
       await apiFetch(`/trips/${tripId}/status`, {
         method: "POST",
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(body),
       });
+      console.log("[TripScreen] updateStatus API request succeeded", { tripId, status });
+      if (status === "in_progress") {
+        console.log("[TripScreen] starting GPS tracking", { tripId });
+        startTracking().catch((err) => console.warn("GPS tracking unavailable:", err));
+      } else if (status === "completed") {
+        console.log("[TripScreen] stopping GPS tracking", { tripId });
+        stopTracking().catch((err) => console.warn("GPS stop unavailable:", err));
+      }
     } catch (err) {
-      console.error("Failed to update trip status:", err);
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[TripScreen] updateStatus failed", { tripId, status, message: msg, raw: err });
+      console.error("Failed to update trip status:", msg);
+      Alert.alert("Error", `Failed to update trip status: ${msg}`);
+    } finally {
+      setStatusUpdateInFlight(false);
     }
+  };
+
+  const confirmCompleteTrip = (tripId: string) => {
+    Alert.alert(
+      "Complete Trip",
+      "Are you sure you want to mark this trip as complete?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Complete",
+          style: "destructive",
+          onPress: () => updateStatus(tripId, "completed"),
+        },
+      ],
+    );
   };
 
   if (loading) {
@@ -109,6 +186,7 @@ export default function TripScreen() {
   }
 
   const trip = trips[0]; // Show the first active trip
+  const stops = trip.stops ?? [];
   const routeCoords = trip.route?.polyline ? decodePolyline(trip.route.polyline) : [];
 
   return (
@@ -119,17 +197,17 @@ export default function TripScreen() {
           provider={PROVIDER_GOOGLE}
           style={{ flex: 1 }}
           region={
-            trip.stops.length > 0
+            stops.length > 0
               ? {
-                  latitude: trip.stops[0].lat,
-                  longitude: trip.stops[0].lng,
+                  latitude: stops[0].lat,
+                  longitude: stops[0].lng,
                   latitudeDelta: 0.05,
                   longitudeDelta: 0.05,
                 }
               : undefined
           }
         >
-          {trip.stops.map((stop, i) => (
+          {stops.map((stop, i) => (
             <Marker
               key={stop.stopId}
               coordinate={{ latitude: stop.lat, longitude: stop.lng }}
@@ -148,7 +226,7 @@ export default function TripScreen() {
       <View className="mx-4 mt-3 rounded-xl border border-gray-200 bg-white px-5 py-3">
         <View className="flex-row items-center justify-between">
           <Text className="font-semibold text-gray-900">
-            {trip.stops.length} stop{trip.stops.length !== 1 && "s"}
+            {stops.length} stop{stops.length !== 1 && "s"}
           </Text>
           <Text className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600">
             {trip.status.replace("_", " ").toUpperCase()}
@@ -156,7 +234,7 @@ export default function TripScreen() {
         </View>
         {trip.route && (
           <Text className="mt-1 text-xs text-gray-500">
-            {(trip.route.distanceMeters / 1000).toFixed(1)} km &middot;{" "}
+            {(trip.route.distanceMeters / 1609.344).toFixed(1)} mi &middot;{" "}
             {Math.round(trip.route.durationSeconds / 60)} min
           </Text>
         )}
@@ -164,7 +242,7 @@ export default function TripScreen() {
 
       {/* Stop list */}
       <FlatList
-        data={trip.stops.sort((a, b) => a.sequence - b.sequence)}
+        data={stops.sort((a, b) => a.sequence - b.sequence)}
         keyExtractor={(item) => item.stopId}
         className="flex-1 mx-4 mt-3"
         refreshControl={
@@ -196,16 +274,28 @@ export default function TripScreen() {
       <View className="border-t border-gray-200 bg-white px-5 py-4">
         {trip.status === "assigned" && (
           <TouchableOpacity
-            onPress={() => updateStatus(trip.id, "in_progress")}
-            className="items-center rounded-xl bg-green-500 py-3"
+            onPress={() => {
+              console.log("[TripScreen] Start Trip button pressed", {
+                tripId: trip.id,
+                tripStatus: trip.status,
+                stopCount: stops.length,
+              });
+              updateStatus(trip.id, "in_progress");
+            }}
+            disabled={statusUpdateInFlight}
+            className={`items-center rounded-xl py-3 ${
+              statusUpdateInFlight ? "bg-green-300" : "bg-green-500"
+            }`}
           >
-            <Text className="font-semibold text-white">Start Trip</Text>
+            <Text className="font-semibold text-white">
+              {statusUpdateInFlight ? "Starting..." : "Start Trip"}
+            </Text>
           </TouchableOpacity>
         )}
         {trip.status === "in_progress" && (
           <View className="flex-row gap-3">
             <TouchableOpacity
-              onPress={() => openNavigation(trip.stops)}
+              onPress={() => openNavigation(stops)}
               disabled={!trip.route}
               className={`flex-1 items-center rounded-xl py-3 ${
                 trip.route ? "bg-blue-500" : "bg-gray-300"
@@ -214,7 +304,7 @@ export default function TripScreen() {
               <Text className="font-semibold text-white">Navigate</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => updateStatus(trip.id, "completed")}
+              onPress={() => confirmCompleteTrip(trip.id)}
               className="flex-1 items-center rounded-xl bg-brand-600 py-3"
             >
               <Text className="font-semibold text-white">Complete Trip</Text>
