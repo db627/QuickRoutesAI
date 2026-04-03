@@ -128,9 +128,9 @@ describe("PATCH /trips/:id", () => {
         expect(updateMock).not.toHaveBeenCalled();
       });
 
-      it("returns 409 if trip is not in draft status", async () => {
+      it("returns 409 if trip is completed or cancelled", async () => {
         setupMockUser(uid, "dispatcher", "Test Dispatcher");
-        const mockTrip = mockTripData({ status: "assigned" });
+        const mockTrip = mockTripData({ status: "completed" });
 
         const updateMock = jest.fn().mockResolvedValue(undefined);
         const addEventMock = jest.fn().mockResolvedValue(undefined);
@@ -169,7 +169,7 @@ describe("PATCH /trips/:id", () => {
         .set("Authorization", "Bearer valid-token");
 
         expect(res.status).toBe(409)
-        expect(res.body).toEqual({ error: "Bad Request", message: "Only draft trips can be updated" })
+        expect(res.body).toEqual({ error: "Bad Request", message: "Completed or cancelled trips cannot be updated" })
         expect(addEventMock).not.toHaveBeenCalled();
         expect(updateMock).not.toHaveBeenCalled();
       });

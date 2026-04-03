@@ -33,7 +33,7 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --filter web... --frozen-lockfile
 
       - name: Typecheck shared
         run: pnpm --filter @quickroutesai/shared typecheck

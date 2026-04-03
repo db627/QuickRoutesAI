@@ -10,6 +10,12 @@ export const locationPingSchema = z.object({
 });
 export type LocationPingInput = z.infer<typeof locationPingSchema>;
 
+// ── Time Window ──
+export const timeWindowSchema = z.object({
+  start: z.string().regex(/^\d{2}:\d{2}$/, "Must be HH:mm format"),
+  end: z.string().regex(/^\d{2}:\d{2}$/, "Must be HH:mm format"),
+});
+
 // ── Trip Stop ──
 export const tripStopSchema = z.object({
   stopId: z.string().min(1).default(() => randomUUID()),
@@ -18,6 +24,7 @@ export const tripStopSchema = z.object({
   lng: z.number().min(-180).max(180).optional(),
   sequence: z.number().int().min(0),
   notes: z.string().default(""),
+  timeWindow: timeWindowSchema.optional(),
 });
 export type TripStopInput = z.infer<typeof tripStopSchema>;
 
@@ -36,10 +43,16 @@ export type AssignTripInput = z.infer<typeof assignTripSchema>;
 // ── Update Trip Status ──
 export const updateTripStatusSchema = z.object({
   status: z.enum(["in_progress", "completed"]),
+  currentLocation: z
+    .object({
+      lat: z.number().min(-90).max(90),
+      lng: z.number().min(-180).max(180),
+    })
+    .optional(),
 });
 export type UpdateTripStatusInput = z.infer<typeof updateTripStatusSchema>;
 
-// ── Update Trip Notes ──
+// ── Update Trip ──
 export const updateTripSchema = z.object({
   notes: z.string().max(1000).optional(),
   stops: z.array(tripStopSchema).optional(),
@@ -70,7 +83,9 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
+// ── Update User (admin) ──
 export const updateUserSchema = z.object({
   role: userRoleSchema.optional(),
-  active: z.string().optional(),
+  status: z.enum(["active", "deactivated"]).optional(),
 });
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;

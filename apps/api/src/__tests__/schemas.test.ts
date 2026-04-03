@@ -98,6 +98,24 @@ describe("updateTripStatusSchema", () => {
   it("rejects arbitrary strings", () => {
     expect(updateTripStatusSchema.safeParse({ status: "cancelled" }).success).toBe(false);
   });
+
+  it("accepts optional currentLocation", () => {
+    expect(
+      updateTripStatusSchema.safeParse({
+        status: "in_progress",
+        currentLocation: { lat: 40.7357, lng: -74.1724 },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects invalid currentLocation coordinates", () => {
+    expect(
+      updateTripStatusSchema.safeParse({
+        status: "in_progress",
+        currentLocation: { lat: 140.7357, lng: -74.1724 },
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("createUserProfileSchema", () => {

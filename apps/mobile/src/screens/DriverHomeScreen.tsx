@@ -88,7 +88,17 @@ export default function DriverHomeScreen() {
     if (!uid) return;
 
     const newStatus = !isOnline;
-    const data = { isOnline: newStatus, updatedAt: new Date().toISOString() };
+    const data: Record<string, unknown> = { isOnline: newStatus, updatedAt: new Date().toISOString() };
+
+    // When going online, include current GPS position so the web dashboard shows the driver immediately
+    if (newStatus) {
+      const pos = await getCurrentPosition();
+      if (pos) {
+        const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        data.lastLocation = loc;
+        setLocation(loc);
+      }
+    }
 
     try {
       if (!isConnected) {

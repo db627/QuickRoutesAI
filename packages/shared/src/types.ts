@@ -1,11 +1,13 @@
 // ── User ──
 export type UserRole = "driver" | "dispatcher" | "admin";
+export type UserStatus = "active" | "deactivated";
 
 export interface UserProfile {
   uid: string;
   email: string;
   name: string;
   role: UserRole;
+  status?: UserStatus; // omitted on legacy documents — treat as "active"
   createdAt: string; // ISO 8601
 }
 
@@ -27,6 +29,11 @@ export interface DriverRecord {
 // ── Trip ──
 export type TripStatus = "draft" | "assigned" | "in_progress" | "completed" | "cancelled";
 
+export interface TimeWindow {
+  start: string; // HH:mm format, e.g. "09:00"
+  end: string;   // HH:mm format, e.g. "11:00"
+}
+
 export interface TripStop {
   stopId: string;
   address: string;
@@ -34,12 +41,15 @@ export interface TripStop {
   lng: number;
   sequence: number;
   notes: string;
+  timeWindow?: TimeWindow;
 }
 
 export interface TripRoute {
   polyline: string; // encoded polyline from Directions API
   distanceMeters: number;
   durationSeconds: number;
+  naiveDistanceMeters?: number; // straight-line sum without route optimization
+  fuelSavingsGallons?: number; // estimated fuel saved vs naive routing (US gallons)
 }
 
 export interface Trip {
@@ -49,6 +59,7 @@ export interface Trip {
   status: TripStatus;
   stops: TripStop[];
   route: TripRoute | null;
+  notes: string | null;
   createdAt: string;
   updatedAt: string;
 }
