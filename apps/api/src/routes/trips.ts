@@ -270,8 +270,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) =
     const routeResult = await computeRoute(stops);
 
     let routes = trip?.route || [];
-
-    routes.push(routes)
+    routes.push(routeResult);
 
     await db.collection("trips").doc(req.params.id).update({
       route: routes,

@@ -41,6 +41,7 @@ export interface TripRoute {
   distanceMeters: number;
   durationSeconds: number;
   createdAt: string;
+  input?: TripStop[];
 }
 
 export interface Trip {

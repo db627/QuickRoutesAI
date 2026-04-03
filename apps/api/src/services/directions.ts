@@ -89,6 +89,7 @@ export async function computeRoute(stops: TripStop[]): Promise<TripRoute> {
       distanceMeters,
       durationSeconds,
       createdAt: new Date().toISOString(),
+      input: sorted
     };
   } catch (err) {
     console.log(err)
