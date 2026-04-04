@@ -10,7 +10,7 @@ COPY tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/web/package.json apps/web/
 
-RUN pnpm install --frozen-lockfile || pnpm install
+RUN pnpm install --filter web... --frozen-lockfile || pnpm install --filter web...
 
 # ── Build ──
 FROM base AS build

@@ -20,6 +20,7 @@ export default function TripScreen({ navigation }: Props) {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [statusUpdateInFlight, setStatusUpdateInFlight] = useState(false);
   const uid = auth.currentUser?.uid;
   const unsubRef = useRef<(() => void) | null>(null);
   const prevHadActiveTrip = useRef(false);

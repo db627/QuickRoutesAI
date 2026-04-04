@@ -9,7 +9,6 @@ import {
   onSnapshot,
   collection,
   query,
-  where,
 } from "firebase/firestore";
 import {
   APIProvider,
@@ -528,6 +527,7 @@ export default function TripDetailPage() {
   const [editing, setEditing] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
 
   // Subscribe to trip document in real-time
   useEffect(() => {
@@ -606,6 +606,20 @@ export default function TripDetailPage() {
       setShowCancelModal(false);
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const duplicateTrip = async () => {
+    if (!id) return;
+    setDuplicating(true);
+    try {
+      const duplicated = await apiFetch<{ id: string }>(`/trips/${id}/duplicate`, { method: "POST" });
+      toast.success("Trip duplicated");
+      router.push(`/dashboard/trips/${duplicated.id}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to duplicate trip");
+    } finally {
+      setDuplicating(false);
     }
   };
 
@@ -698,6 +712,7 @@ export default function TripDetailPage() {
 
   const canEdit = trip.status === "draft";
   const canCancel = trip.status === "draft" || trip.status === "assigned";
+  const canDuplicate = trip.status === "completed";
 
   // Pre-fill stop addresses sorted by sequence
   const initialStops = stops
@@ -730,6 +745,15 @@ export default function TripDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {canDuplicate && (
+            <button
+              onClick={duplicateTrip}
+              disabled={duplicating}
+              className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-900 hover:border-gray-300 disabled:opacity-50"
+            >
+              {duplicating ? "Duplicating..." : "Duplicate Trip"}
+            </button>
+          )}
           {canEdit && !editing && (
             <button
               onClick={() => setEditing(true)}
@@ -861,7 +885,7 @@ export default function TripDetailPage() {
                         background={colors.bg}
                         glyphColor={colors.glyph}
                         borderColor={colors.border}
-                        glyphText={String(idx + 1)}
+                        glyph={String(idx + 1)}
                       />
                     </AdvancedMarker>
                   );

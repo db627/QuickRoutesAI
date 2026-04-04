@@ -1,22 +1,32 @@
 "use client";
 
-import { useAuth } from "@/lib/auth-context";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useState } from "react";
+import Navbar from "@/components/landing/Navbar";
+import Hero from "@/components/landing/Hero";
+import StatsBar from "@/components/landing/StatsBar";
+import Features from "@/components/landing/Features";
+import Pricing from "@/components/landing/Pricing";
+import CTA from "@/components/landing/CTA";
+import Footer from "@/components/landing/Footer";
+import QuoteModal from "@/components/landing/QuoteModal";
 
-export default function Home() {
-  const { user, loading } = useAuth();
-  const router = useRouter();
+export default function LandingPage() {
+  const [quoteOpen, setQuoteOpen] = useState(false);
 
-  useEffect(() => {
-    if (!loading) {
-      router.replace(user ? "/dashboard" : "/login");
-    }
-  }, [user, loading, router]);
+  const openQuote = () => setQuoteOpen(true);
 
   return (
-    <div className="flex h-screen items-center justify-center">
-      <div className="animate-pulse text-xl text-gray-400">Loading...</div>
-    </div>
+    <>
+      <Navbar onQuoteClick={openQuote} />
+      <main>
+        <Hero onQuoteClick={openQuote} />
+        <StatsBar />
+        <Features />
+        <Pricing onQuoteClick={openQuote} />
+        <CTA onQuoteClick={openQuote} />
+      </main>
+      <Footer />
+      <QuoteModal open={quoteOpen} onClose={() => setQuoteOpen(false)} />
+    </>
   );
 }

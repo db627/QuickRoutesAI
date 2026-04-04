@@ -3,7 +3,7 @@ import { env } from "./config/env";
 import express from "express";
 import cors from "cors";
 import { requestLogger } from "./middleware/logger";
-import { globalLimiter } from "./middleware/rateLimiter";
+import { globalLimiter, quoteLimiter } from "./middleware/rateLimiter";
 import { verifyFirebaseToken } from "./middleware/auth";
 import healthRoutes from "./routes/health";
 import meRoutes from "./routes/me";
@@ -12,6 +12,7 @@ import driverRoutes from "./routes/drivers";
 import tripRoutes from "./routes/trips";
 import userRoutes from "./routes/users";
 import aiRoutes from "./routes/ai";
+import quoteRoutes from "./routes/quote";
 const app = express();
 
 // Global middleware
@@ -23,6 +24,7 @@ app.use(globalLimiter);
 // Public routes
 app.use("/health", healthRoutes);
 app.use("/auth", authRoutes); // login & signup are public; setup applies its own middleware
+app.use("/quote", quoteLimiter, quoteRoutes);
 
 // Protected routes (require Firebase auth)
 app.use("/me", verifyFirebaseToken, meRoutes);

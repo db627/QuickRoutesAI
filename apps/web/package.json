@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",
+    "build:isolated": "pnpm install --filter web... --frozen-lockfile --config.node-linker=isolated && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "jest",
@@ -15,6 +16,7 @@
     "@quickroutesai/shared": "workspace:*",
     "@vis.gl/react-google-maps": "^1.1.0",
     "firebase": "^10.12.5",
+    "framer-motion": "^12.38.0",
     "lucide-react": "^0.575.0",
     "next": "^14.2.5",
     "react": "^18.3.1",
