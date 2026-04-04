@@ -43,6 +43,15 @@ export interface TripStop {
   notes: string;
   timeWindow?: TimeWindow;
 }
+export interface RouteLeg {
+  fromStopId?: string;
+  toStopId?: string;
+  fromIndex: number;
+  toIndex: number;
+  distanceMeters: number;
+  durationSeconds: number;         // traffic-aware
+  staticDurationSeconds?: number;  // traffic-unaware
+};
 
 export interface TripRoute {
   polyline: string; // encoded polyline from Directions API
@@ -50,6 +59,8 @@ export interface TripRoute {
   durationSeconds: number;
   naiveDistanceMeters?: number; // straight-line sum without route optimization
   fuelSavingsGallons?: number; // estimated fuel saved vs naive routing (US gallons)
+  legs: RouteLeg[];
+
 }
 
 export interface Trip {
