@@ -18,7 +18,7 @@ export const timeWindowSchema = z.object({
 
 // ── Trip Stop ──
 export const tripStopSchema = z.object({
-  stopId: z.string().min(1).default(() => randomUUID()),
+  stopId: z.string().min(1).optional(),
   address: z.string().min(1),
   lat: z.number().min(-90).max(90).optional(),
   lng: z.number().min(-180).max(180).optional(),

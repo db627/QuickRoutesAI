@@ -1,6 +1,14 @@
 import { Request, Response, NextFunction } from "express";
 import { auth, db } from "../config/firebase";
-import type { TripStatus } from "@quickroutesai/shared";
+import type { TripStatus, TripStop } from "@quickroutesai/shared";
+
+declare global {
+  namespace Express {
+    interface Request {
+      stops?: TripStop[];
+    }
+  }
+}
 
 export async function tripTransitionGuard(req: Request, res: Response, next: NextFunction) {
     try{
@@ -62,7 +70,18 @@ export async function tripTransitionGuard(req: Request, res: Response, next: Nex
 }
 
 export async function tripStopsValidationGuard(req: Request, res: Response, next: NextFunction) {
-    let trip_id = req.params.id;
+    try{
+        let trip_id = req.params.id;
 
+        const stops = await db.collection("trips").doc(trip_id).collection("stops").get();
+        if(stops.empty){
+            return res.status(400).json({ error: "Bad Request", message: "Trip must have at least one stop" });
+        }
+        req.stops = stops.docs.map((doc) => doc.data() as TripStop);
+        console.log("Validated trip stops:", req.stops);
+        next();
+    }catch (err) {
+        return res.status(500).json({ error: "Internal Error", message: "Failed to validate trip stops" });
+    }
     
 }
