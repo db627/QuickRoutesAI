@@ -11,6 +11,7 @@ import LoginScreen from "./src/screens/LoginScreen";
 import DriverHomeScreen from "./src/screens/DriverHomeScreen";
 import TripScreen from "./src/screens/TripScreen";
 import TripDetailScreen from "./src/screens/TripDetailScreen";
+import TripCompletionScreen from "./src/screens/TripCompletionScreen";
 import HistoryScreen from "./src/screens/HistoryScreen";
 import ProfileScreen from "./src/screens/ProfileScreen";
 import { View, ActivityIndicator } from "react-native";
@@ -35,6 +36,11 @@ function TripNavigator() {
         name="TripDetail"
         component={TripDetailScreen}
         options={{ title: "Trip Detail" }}
+      />
+      <TripStack.Screen
+        name="TripCompletion"
+        component={TripCompletionScreen}
+        options={{ title: "Summary", headerBackVisible: false }}
       />
     </TripStack.Navigator>
   );

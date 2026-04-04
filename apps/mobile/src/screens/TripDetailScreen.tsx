@@ -43,9 +43,10 @@ function decodePolyline(encoded: string): { latitude: number; longitude: number 
 
 type Props = {
   route: { params: { tripId: string } };
+  navigation: { navigate: (screen: string, params: { tripId: string }) => void };
 };
 
-export default function TripDetailScreen({ route }: Props) {
+export default function TripDetailScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
   const [trip, setTrip] = useState<Trip | null>(null);
   const [loading, setLoading] = useState(true);
@@ -81,13 +82,14 @@ export default function TripDetailScreen({ route }: Props) {
           startTracking().catch((err) => console.warn("GPS tracking unavailable:", err));
         } else if (status === "completed") {
           stopTracking().catch((err) => console.warn("GPS stop unavailable:", err));
+          navigation.navigate("TripCompletion", { tripId });
         }
       } catch (err) {
         console.error("Failed to update trip status:", err);
         Alert.alert("Error", "Failed to update trip status. Please try again.");
       }
     },
-    [tripId, isConnected],
+    [tripId, isConnected, navigation],
   );
 
   const confirmCompleteTrip = useCallback(() => {
