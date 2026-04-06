@@ -157,6 +157,7 @@ describe("PATCH /users/:id", () => {
 
         const updateMock = jest.fn().mockResolvedValue(undefined);
         const addEventMock = jest.fn().mockResolvedValue(undefined);
+        auth.updateUser = jest.fn().mockResolvedValue(undefined);
 
         db.collection.mockImplementation((col: string) => {
             if (col === "users") {
