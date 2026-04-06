@@ -92,6 +92,22 @@ export default function TripDetailScreen({ route, navigation }: Props) {
     [tripId, isConnected, navigation],
   );
 
+  const markStopComplete = useCallback(
+    async (stopId: string) => {
+      if (!isConnected) {
+        Alert.alert("No Connection", "Stop cannot be marked complete while offline.");
+        return;
+      }
+      try {
+        await apiFetch(`/trips/${tripId}/stops/${stopId}/complete`, { method: "POST" });
+      } catch (err) {
+        console.error("Failed to complete stop:", err);
+        Alert.alert("Error", "Failed to mark stop as complete. Please try again.");
+      }
+    },
+    [tripId, isConnected],
+  );
+
   const confirmCompleteTrip = useCallback(() => {
     Alert.alert(
       "Complete Trip",
@@ -183,21 +199,43 @@ export default function TripDetailScreen({ route, navigation }: Props) {
         data={sortedStops}
         keyExtractor={(item) => item.stopId}
         className="mx-4 mt-3 flex-1"
-        renderItem={({ item, index }) => (
-          <View className="flex-row items-center border-b border-gray-100 bg-white px-4 py-3">
-            <View
-              className={`mr-3 h-8 w-8 items-center justify-center rounded-full ${
-                index === 0 ? "bg-green-500" : "bg-brand-600"
-              }`}
-            >
-              <Text className="text-sm font-bold text-white">{index + 1}</Text>
+        renderItem={({ item, index }) => {
+          const isCompleted = item.status === "completed";
+          const isNext =
+            trip.status === "in_progress" &&
+            !isCompleted &&
+            sortedStops.slice(0, index).every((s) => s.status === "completed");
+          return (
+            <View className="flex-row items-center border-b border-gray-100 bg-white px-4 py-3">
+              <View
+                className={`mr-3 h-8 w-8 items-center justify-center rounded-full ${
+                  isCompleted ? "bg-gray-400" : index === 0 ? "bg-green-500" : "bg-brand-600"
+                }`}
+              >
+                <Text className="text-sm font-bold text-white">{index + 1}</Text>
+              </View>
+              <View className="flex-1">
+                <Text className={`text-sm ${isCompleted ? "text-gray-400 line-through" : "text-gray-900"}`}>
+                  {item.address}
+                </Text>
+                {item.notes ? <Text className="text-xs text-gray-400">{item.notes}</Text> : null}
+                {isCompleted && item.completedAt ? (
+                  <Text className="text-xs text-green-600">
+                    Done {new Date(item.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </Text>
+                ) : null}
+              </View>
+              {isNext && (
+                <TouchableOpacity
+                  onPress={() => markStopComplete(item.stopId)}
+                  className="ml-2 rounded-lg bg-green-500 px-3 py-1.5"
+                >
+                  <Text className="text-xs font-semibold text-white">Mark Complete</Text>
+                </TouchableOpacity>
+              )}
             </View>
-            <View className="flex-1">
-              <Text className="text-sm text-gray-900">{item.address}</Text>
-              {item.notes ? <Text className="text-xs text-gray-400">{item.notes}</Text> : null}
-            </View>
-          </View>
-        )}
+          );
+        }}
       />
 
       {/* Actions */}

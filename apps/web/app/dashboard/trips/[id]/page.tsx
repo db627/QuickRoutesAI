@@ -320,17 +320,26 @@ function StopEditor({
           <div key={stop.stopId} className="flex items-start gap-4 px-5 py-4">
             <div
               className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${
-                idx === 0
-                  ? "bg-green-600"
-                  : idx === sorted.length - 1
-                    ? "bg-red-600"
-                    : "bg-blue-600"
+                stop.status === "completed"
+                  ? "bg-gray-400"
+                  : idx === 0
+                    ? "bg-green-600"
+                    : idx === sorted.length - 1
+                      ? "bg-red-600"
+                      : "bg-blue-600"
               }`}
             >
-              {idx + 1}
+              {stop.status === "completed" ? "✓" : idx + 1}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-gray-900">{stop.address}</p>
+              <p className={`text-sm font-medium ${stop.status === "completed" ? "text-gray-400 line-through" : "text-gray-900"}`}>
+                {stop.address}
+              </p>
+              {stop.completedAt && (
+                <p className="text-xs text-green-600">
+                  Completed {new Date(stop.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </p>
+              )}
               {stop.lat !== 0 && stop.lng !== 0 && (
                 <p className="text-xs text-gray-400">
                   {stop.lat.toFixed(5)}, {stop.lng.toFixed(5)}
