@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -15,6 +15,7 @@ import {
   Map,
   AdvancedMarker,
   Pin,
+  InfoWindow,
   useMap,
   useMapsLibrary,
 } from "@vis.gl/react-google-maps";
@@ -57,6 +58,36 @@ function RoutePolyline({ path }: { path: { lat: number; lng: number }[] }) {
       polyline.setMap(null);
     };
   }, [map, mapsLib, path]);
+
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Auto-fits map bounds to show all stops and the route polyline     */
+/* ------------------------------------------------------------------ */
+function MapBoundsFitter({
+  stops,
+  polylinePath,
+}: {
+  stops: TripStop[];
+  polylinePath: { lat: number; lng: number }[];
+}) {
+  const map = useMap();
+  const coreLib = useMapsLibrary("core");
+
+  useEffect(() => {
+    if (!map || !coreLib) return;
+    const points = [
+      ...stops
+        .filter((s) => s.lat !== 0 || s.lng !== 0)
+        .map((s) => ({ lat: s.lat, lng: s.lng })),
+      ...polylinePath,
+    ];
+    if (points.length === 0) return;
+    const bounds = new coreLib.LatLngBounds();
+    points.forEach((p) => bounds.extend(p));
+    map.fitBounds(bounds, 60);
+  }, [map, coreLib, stops, polylinePath]);
 
   return null;
 }
@@ -523,6 +554,8 @@ export default function TripDetailPage() {
   const [computing, setComputing] = useState(false);
   const [driverName, setDriverName] = useState<string | null>(null);
 
+  const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
+
   // Edit / Cancel UI state
   const [editing, setEditing] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -865,6 +898,9 @@ export default function TripDetailPage() {
               gestureHandling="greedy"
               disableDefaultUI
             >
+              {/* Auto-fit bounds to all stops + polyline */}
+              <MapBoundsFitter stops={stops} polylinePath={polylinePath} />
+
               {/* Route polyline */}
               {polylinePath.length > 0 && <RoutePolyline path={polylinePath} />}
 
@@ -876,18 +912,48 @@ export default function TripDetailPage() {
                 .map((stop, idx) => {
                   const colors = stopPinColors(idx, stops.length);
                   return (
-                    <AdvancedMarker
-                      key={stop.stopId}
-                      position={{ lat: stop.lat, lng: stop.lng }}
-                      title={`Stop ${idx + 1}: ${stop.address}`}
-                    >
-                      <Pin
-                        background={colors.bg}
-                        glyphColor={colors.glyph}
-                        borderColor={colors.border}
-                        glyph={String(idx + 1)}
-                      />
-                    </AdvancedMarker>
+                    <React.Fragment key={stop.stopId}>
+                      <AdvancedMarker
+                        key={stop.stopId}
+                        position={{ lat: stop.lat, lng: stop.lng }}
+                        title={`Stop ${idx + 1}: ${stop.address}`}
+                        onClick={() =>
+                          setSelectedStopId((prev) =>
+                            prev === stop.stopId ? null : stop.stopId
+                          )
+                        }
+                      >
+                        <Pin
+                          background={colors.bg}
+                          glyphColor={colors.glyph}
+                          borderColor={colors.border}
+                          glyph={String(idx + 1)}
+                        />
+                      </AdvancedMarker>
+                      {selectedStopId === stop.stopId && (
+                        <InfoWindow
+                          key={`iw-${stop.stopId}`}
+                          position={{ lat: stop.lat, lng: stop.lng }}
+                          onClose={() => setSelectedStopId(null)}
+                          pixelOffset={[0, -40]}
+                        >
+                          <div className="min-w-[160px] space-y-1 text-sm">
+                            <p className="font-semibold text-gray-900">
+                              Stop {idx + 1}
+                            </p>
+                            <p className="text-gray-600">{stop.address}</p>
+                            {stop.notes && (
+                              <p className="text-xs text-gray-500">{stop.notes}</p>
+                            )}
+                            {stop.timeWindow && (
+                              <p className="text-xs text-amber-600">
+                                Window: {stop.timeWindow.start}–{stop.timeWindow.end}
+                              </p>
+                            )}
+                          </div>
+                        </InfoWindow>
+                      )}
+                    </React.Fragment>
                   );
                 })}
 
