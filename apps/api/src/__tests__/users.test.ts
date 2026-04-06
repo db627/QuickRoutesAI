@@ -204,12 +204,12 @@ describe("PATCH /users/:id", () => {
 
         const res = await request(app)
         .patch(`/users/${userId}`)
-        .send({ role: "admin", active: "false" })
+        .send({ role: "admin", status: "deactivated" })
         .set("Authorization", "Bearer valid-token");
 
         expect(res.status).toBe(200);
         expect(res.body.ok).toBe(true);
-        expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ role: "admin", active: false }));
+        expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ role: "admin", status: "deactivated" }));
         expect(addEventMock).toHaveBeenCalledWith(expect.objectContaining({ type: "user_updated" }));
     });
 
