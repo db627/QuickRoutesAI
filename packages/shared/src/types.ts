@@ -76,9 +76,12 @@ export interface DriverEvent {
 }
 
 // ── API Responses ──
+import type { ErrorCode } from "./errors";
+
 export interface ApiError {
-  error: string;
+  error: ErrorCode;
   message: string;
+  details?: { path: string; message: string }[];
 }
 
 export interface HealthResponse {

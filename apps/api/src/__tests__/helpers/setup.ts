@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { verifyFirebaseToken } from "../../middleware/auth";
+import { errorHandler } from "../../middleware/errorHandler";
 import healthRoutes from "../../routes/health";
 import authRoutes from "../../routes/auth";
 import meRoutes from "../../routes/me";
@@ -91,6 +92,7 @@ export function createTestApp() {
   app.use("/drivers", verifyFirebaseToken, driverRoutes);
   app.use("/trips", verifyFirebaseToken, tripRoutes);
   app.use("/users", verifyFirebaseToken, userRoutes);
+  app.use(errorHandler);
   return app;
 }
 

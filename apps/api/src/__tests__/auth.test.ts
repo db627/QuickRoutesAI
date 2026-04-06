@@ -82,7 +82,7 @@ describe("POST /auth/signup", () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation Error");
+    expect(res.body.error).toBe("VALIDATION_ERROR");
   });
 
   it("returns 400 for short password", async () => {
@@ -93,7 +93,7 @@ describe("POST /auth/signup", () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation Error");
+    expect(res.body.error).toBe("VALIDATION_ERROR");
   });
 
   it("returns 400 for missing name", async () => {
@@ -103,7 +103,7 @@ describe("POST /auth/signup", () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation Error");
+    expect(res.body.error).toBe("VALIDATION_ERROR");
   });
 
   it("defaults role to driver when not specified", async () => {
@@ -205,7 +205,7 @@ describe("POST /auth/login", () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation Error");
+    expect(res.body.error).toBe("VALIDATION_ERROR");
   });
 
   it("returns 400 for missing password", async () => {
@@ -214,7 +214,7 @@ describe("POST /auth/login", () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation Error");
+    expect(res.body.error).toBe("VALIDATION_ERROR");
   });
 });
 
