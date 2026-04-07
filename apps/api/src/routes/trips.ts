@@ -27,7 +27,7 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
   try {
     // Geocode any stops missing lat/lng
     const resolvedStops = await Promise.all(
-      stops.map(async (s: { address: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
+      stops.map(async (s: { address: string; contactName?: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
         let lat = s.lat;
         let lng = s.lng;
         if (lat == null || lng == null) {
@@ -38,6 +38,7 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
         return {
           stopId: randomUUID(),
           address: s.address,
+          contactName: s.contactName || "",
           lat,
           lng,
           sequence: s.sequence ?? i,
@@ -282,6 +283,7 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
           return {
             stopId: s.stopId || randomUUID(),
             address: s.address,
+            contactName: s.contactName || "",
             lat,
             lng,
             sequence: s.sequence ?? i,
