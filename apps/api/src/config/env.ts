@@ -17,6 +17,8 @@ const envSchema = z.object({
   QUOTE_RECIPIENT_EMAIL: z.string().email().default("db627@njit.edu"),
   // Google reCAPTCHA v3 (optional — skipped if missing)
   RECAPTCHA_SECRET_KEY: z.string().min(1).optional(),
+  // OpenWeatherMap API key (optional — weather features disabled if missing)
+  WEATHER_API_KEY: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
