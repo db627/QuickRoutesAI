@@ -163,9 +163,7 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
       const withOrigin = sorted.map((s, idx) => ({ ...s, sequence: idx + 1 }));
       const optimizedWithOrigin = await optimizeStopOrder([syntheticOrigin, ...withOrigin]);
 
-      optimizedStops = optimizedWithOrigin
-        .slice(1)
-        .map((s, idx) => ({ ...s, sequence: idx }));
+      optimizedStops = optimizedWithOrigin.slice(1).map((s, idx) => ({ ...s, sequence: idx }));
       optimizationReasoning = optimizedWithOrigin.reasoning;
     } else {
       const result = await optimizeStopOrder(sorted);
@@ -288,6 +286,8 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
       naiveDistanceMeters,
       fuelSavingsGallons,
       legs,
+      reasoning: optimizationReasoning,
+      createdAt: new Date().toISOString(),
     },
     optimizedStops,
   };
