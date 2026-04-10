@@ -3,9 +3,10 @@ import { auth, db } from "../config/firebase";
 import admin from "firebase-admin";
 import { requireRole } from "../middleware/auth";
 import { validate } from "../middleware/validate";
-import { updateUserSchema } from "@quickroutesai/shared";
+import { updateUserSchema, ErrorCode } from "@quickroutesai/shared";
 import { pagination } from "../middleware/pagination";
 import { paginateFirestore } from "../utils/paginateFirestore";
+import { AppError } from "../utils/AppError";
 
 const router = Router();
 
@@ -55,7 +56,7 @@ router.patch(
   "/:id",
   requireRole("admin"),
   validate(updateUserSchema),
-  async (req, res) => {
+  async (req, res, next) => {
     const { id } = req.params;
     const { role, status } = req.body;
 
@@ -72,7 +73,7 @@ router.patch(
       const userDoc = await userRef.get();
 
       if (!userDoc.exists) {
-        return res.status(404).json({ error: "Not Found", message: "User not found" });
+        return next(new AppError(ErrorCode.USER_NOT_FOUND, 404));
       }
 
       const data = userDoc.data();
@@ -106,13 +107,13 @@ router.patch(
  * DELETE /users/:id — permanently delete a user.
  * Admin only.
  */
-router.delete("/:id", requireRole("admin"), async (req, res) => {
+router.delete("/:id", requireRole("admin"), async (req, res, next) => {
   try {
     const userRef = db.collection("users").doc(req.params.id);
     const userDoc = await userRef.get();
 
     if (!userDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "User not found" });
+      return next(new AppError(ErrorCode.USER_NOT_FOUND, 404));
     }
 
     const data = userDoc.data();

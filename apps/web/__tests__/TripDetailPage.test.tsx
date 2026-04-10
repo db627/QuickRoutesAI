@@ -52,8 +52,8 @@ function makeTripData(status: Trip["status"]): Omit<Trip, "id"> {
     createdBy: "dispatcher-uid",
     status,
     stops: [
-      { stopId: "s1", address: "123 Main St", lat: 40.7, lng: -74.0, sequence: 0, notes: "" },
-      { stopId: "s2", address: "456 Oak Ave", lat: 40.8, lng: -74.1, sequence: 1, notes: "" },
+      { stopId: "s1", address: "123 Main St", contactName: "", lat: 40.7, lng: -74.0, sequence: 0, notes: "" },
+      { stopId: "s2", address: "456 Oak Ave", contactName: "", lat: 40.8, lng: -74.1, sequence: 1, notes: "" },
     ],
     route: null,
     notes: null,

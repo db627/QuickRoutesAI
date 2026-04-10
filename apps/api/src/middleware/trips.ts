@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from "express";
-import { auth, db } from "../config/firebase";
+import { db } from "../config/firebase";
 import type { TripStatus, TripStop } from "@quickroutesai/shared";
+import { ErrorCode } from "@quickroutesai/shared";
+import { AppError } from "../utils/AppError";
 
 declare global {
   namespace Express {
@@ -10,78 +12,83 @@ declare global {
   }
 }
 
-export async function tripTransitionGuard(req: Request, res: Response, next: NextFunction) {
-    try{
+export async function tripTransitionGuard(req: Request, _res: Response, next: NextFunction) {
+  try {
+    let status = req.body.status || null;
+    let curr_status: TripStatus | null = null;
 
-        let status = req.body.status || null;
-        let curr_status = null;
-        if(req.route.path == "/test"){
-            status = req.body.status_test || null;
-            curr_status = req.body.current_status_test || null;
-        }else{
-            const tripId = req.params.id;
-            const tripDoc = await db.collection("trips").doc(tripId).get();
+    if (req.route.path === "/test") {
+      status = req.body.status_test || null;
+      curr_status = req.body.current_status_test || null;
+    } else {
+      const tripId = req.params.id;
+      const tripDoc = await db.collection("trips").doc(tripId).get();
 
-            if (!tripDoc.exists) {
-                return res.status(404).json({ error: "Not Found", message: "Trip not found" });
-            }
-            const trip = tripDoc.data();
-            curr_status = trip?.status;
-        }
+      if (!tripDoc.exists) {
+        return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
+      }
 
-        
-        const tripStatuses: TripStatus[] = ["draft", "assigned", "completed", "cancelled", "in_progress"];
-
-        
-
-        const allowedTransitions: Record<TripStatus, TripStatus[]> = {
-            draft: ["assigned", "cancelled"],
-            assigned: ["in_progress", "cancelled"],
-            in_progress: ["completed"],
-            completed: [],
-            cancelled: [],
-        };
-
-        if (!tripStatuses.includes(curr_status as TripStatus)) {
-            return res.status(400).json({ error: "Bad Request", message: "Invalid current trip status" });
-        }
-        
-        // Special handling for integration tests to allow setting status directly
-
-        if(req.route.path == "/:id/assign"){
-            status = "assigned";
-        }
-        
-        if (!tripStatuses.includes(status as TripStatus)) {
-            return res.status(400).json({ error: "Bad Request", message: "Unknown transition occurring" });
-        }
-
-
-        if (!allowedTransitions[curr_status as TripStatus].includes(status as TripStatus)) {
-            return res.status(409).json({
-                error: "Bad Request",
-                message: `${curr_status} trips cannot transition to ${status}`,
-            });
-        }
-        next();
-    }catch (err) {
-        return res.status(500).json({ error: "Internal Error", message: "Failed to verify trip status" });
+      const trip = tripDoc.data();
+      curr_status = (trip?.status as TripStatus) ?? null;
     }
+
+    const tripStatuses: TripStatus[] = ["draft", "assigned", "completed", "cancelled", "in_progress"];
+
+    const allowedTransitions: Record<TripStatus, TripStatus[]> = {
+      draft: ["assigned", "cancelled"],
+      assigned: ["in_progress", "cancelled"],
+      in_progress: ["completed"],
+      completed: [],
+      cancelled: [],
+    };
+
+    if (!tripStatuses.includes(curr_status as TripStatus)) {
+      return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Invalid current trip status"));
+    }
+
+    if (req.route.path === "/:id/assign") {
+      status = "assigned";
+    }
+
+    if (!tripStatuses.includes(status as TripStatus)) {
+      return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Unknown transition occurring"));
+    }
+
+    if (!allowedTransitions[curr_status as TripStatus].includes(status as TripStatus)) {
+      return next(
+        new AppError(
+          ErrorCode.INVALID_STATUS_TRANSITION,
+          409,
+          `${curr_status} trips cannot transition to ${status}`,
+        ),
+      );
+    }
+
+    return next();
+  } catch {
+    return next(new AppError(ErrorCode.INTERNAL_ERROR, 500, "Failed to verify trip status"));
+  }
 }
 
-export async function tripStopsValidationGuard(req: Request, res: Response, next: NextFunction) {
-    try{
-        let trip_id = req.params.id;
+export async function tripStopsValidationGuard(req: Request, _res: Response, next: NextFunction) {
+  try {
+    const tripId = req.params.id;
+    const tripDoc = await db.collection("trips").doc(tripId).get();
 
-        const stops = await db.collection("trips").doc(trip_id).collection("stops").get();
-        if(stops.empty){
-            return res.status(400).json({ error: "Bad Request", message: "Trip must have at least one stop" });
-        }
-        req.stops = stops.docs.map((doc) => doc.data() as TripStop);
-        console.log("Validated trip stops:", req.stops);
-        next();
-    }catch (err) {
-        return res.status(500).json({ error: "Internal Error", message: "Failed to validate trip stops" });
+    if (!tripDoc.exists) {
+      return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
-    
+
+    const stopsSnapshot = await db.collection("trips").doc(tripId).collection("stops").get();
+
+    if (stopsSnapshot.empty) {
+      return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Trip must have at least one stop"));
+    }
+
+    req.stops = stopsSnapshot.docs.map((doc) => doc.data() as TripStop);
+
+    return next();
+  } catch {
+    return next(new AppError(ErrorCode.INTERNAL_ERROR, 500, "Failed to validate trip stops"));
+  }
 }
