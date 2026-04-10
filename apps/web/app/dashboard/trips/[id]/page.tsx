@@ -231,6 +231,7 @@ function StopEditor({
       {
         stopId: crypto.randomUUID(),
         address: addr,
+        contactName: "",
         lat: 0,
         lng: 0,
         sequence: prev.length,
@@ -714,11 +715,8 @@ export default function TripDetailPage() {
   const canCancel = trip.status === "draft" || trip.status === "assigned";
   const canDuplicate = trip.status === "completed";
 
-  // Pre-fill stop addresses sorted by sequence
-  const initialStops = stops
-    .slice()
-    .sort((a, b) => a.sequence - b.sequence)
-    .map((s) => s.address);
+  // Pre-fill stops sorted by sequence
+  const initialStops = stops.slice().sort((a, b) => a.sequence - b.sequence);
 
   return (
     <div className="space-y-6">

@@ -37,6 +37,7 @@ export interface TimeWindow {
 export interface TripStop {
   stopId: string;
   address: string;
+  contactName: string;
   lat: number;
   lng: number;
   sequence: number;
