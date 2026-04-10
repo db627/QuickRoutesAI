@@ -139,7 +139,7 @@ describe("POST /trips/:id/duplicate", () => {
       .set("Authorization", "Bearer valid-token");
 
     expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: "Bad Request", message: "Only completed trips can be duplicated" });
+    expect(res.body).toEqual({ error: "CONFLICT", message: "Only completed trips can be duplicated" });
     expect(addTripMock).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ const app = createTestApp();
 
 // Get mocked modules
 const { auth, db } = require("../config/firebase");
+const { computeRoute } = require("../services/directions");
 
 // Mock global fetch for Firebase REST API calls
 const mockFetch = jest.fn();
@@ -123,7 +124,7 @@ describe("PATCH /trips/:id", () => {
         .set("Authorization", "Bearer valid-token");
 
         expect(res.status).toBe(404)
-        expect(res.body).toEqual({ error: "Not Found", message: "Trip not found" })
+        expect(res.body).toEqual({ error: "TRIP_NOT_FOUND", message: "Trip not found" })
         expect(addEventMock).not.toHaveBeenCalled();
         expect(updateMock).not.toHaveBeenCalled();
       });
@@ -169,7 +170,7 @@ describe("PATCH /trips/:id", () => {
         .set("Authorization", "Bearer valid-token");
 
         expect(res.status).toBe(409)
-        expect(res.body).toEqual({ error: "Bad Request", message: "Completed or cancelled trips cannot be updated" })
+        expect(res.body).toEqual({ error: "CONFLICT", message: "Completed or cancelled trips cannot be updated" })
         expect(addEventMock).not.toHaveBeenCalled();
         expect(updateMock).not.toHaveBeenCalled();
       });
@@ -210,11 +211,128 @@ describe("PATCH /trips/:id", () => {
         .set("Authorization", "Bearer valid-token");
 
         expect(res.status).toBe(403)
-        expect(res.body).toEqual({ error: "Forbidden", message: "Requires one of: dispatcher, admin" })
+        expect(res.body).toEqual({ error: "FORBIDDEN", message: "Requires one of: dispatcher, admin" })
         expect(addEventMock).not.toHaveBeenCalled();
         expect(updateMock).not.toHaveBeenCalled();
         });
 
+});
+
+describe("POST /trips/:id/route", () => {
+  const tripId = "trip-123";
+  const uid = "dispatcher-123";
+
+  const mockStops = [
+    { stopId: "stop-1", address: "123 Main St", lat: 40, lng: -74, sequence: 0, notes: "" },
+    { stopId: "stop-2", address: "456 Oak Ave", lat: 41, lng: -75, sequence: 1, notes: "" },
+    { stopId: "stop-3", address: "789 Pine Rd", lat: 42, lng: -76, sequence: 2, notes: "" },
+  ];
+
+  const mockRoute = {
+    polyline: "abc123",
+    distanceMeters: 50000,
+    durationSeconds: 3600,
+    naiveDistanceMeters: 60000,
+    fuelSavingsGallons: 0.12,
+    reasoning: "Visiting stop 2 before stop 1 minimizes backtracking.",
+  };
+
+  it("computes and saves route with reasoning for a dispatcher", async () => {
+    setupMockUser(uid, "dispatcher", "Test Dispatcher");
+    computeRoute.mockResolvedValue({ route: mockRoute, optimizedStops: mockStops });
+
+    const updateMock = jest.fn().mockResolvedValue(undefined);
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "trips") {
+        return {
+          doc: () => ({
+            get: jest.fn().mockResolvedValue({ exists: true, data: () => mockTripData({ stops: mockStops }) }),
+            update: updateMock,
+          }),
+        };
+      }
+      return {
+        doc: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+        set: jest.fn().mockResolvedValue(undefined),
+      };
+    });
+
+    const res = await request(app)
+      .post(`/trips/${tripId}/route`)
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.route).toMatchObject({ reasoning: "Visiting stop 2 before stop 1 minimizes backtracking." });
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ route: mockRoute, stops: mockStops }));
+  });
+
+  it("returns 404 if trip does not exist", async () => {
+    setupMockUser(uid, "dispatcher", "Test Dispatcher");
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "trips") {
+        return {
+          doc: () => ({
+            get: jest.fn().mockResolvedValue({ exists: false }),
+          }),
+        };
+      }
+      return {
+        doc: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+        set: jest.fn().mockResolvedValue(undefined),
+      };
+    });
+
+    const res = await request(app)
+      .post(`/trips/${tripId}/route`)
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Not Found", message: "Trip not found" });
+  });
+
+  it("returns 400 if trip has fewer than 2 stops", async () => {
+    setupMockUser(uid, "dispatcher", "Test Dispatcher");
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "trips") {
+        return {
+          doc: () => ({
+            get: jest.fn().mockResolvedValue({
+              exists: true,
+              data: () => mockTripData({ stops: [mockStops[0]] }),
+            }),
+          }),
+        };
+      }
+      return {
+        doc: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+        set: jest.fn().mockResolvedValue(undefined),
+      };
+    });
+
+    const res = await request(app)
+      .post(`/trips/${tripId}/route`)
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "Bad Request", message: "Need at least 2 stops to compute route" });
+  });
+
+  it("returns 403 if user is a driver", async () => {
+    setupMockUser(uid, "driver", "Test Driver");
+
+    const res = await request(app)
+      .post(`/trips/${tripId}/route`)
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(403);
+  });
 });
 
 describe("DELETE /trips/:id", () => {
@@ -298,7 +416,7 @@ describe("DELETE /trips/:id", () => {
     .set("Authorization", "Bearer valid-token");
 
     expect(res.status).toBe(404)
-    expect(res.body).toEqual({ error: "Not Found", message: "Trip not found" })
+    expect(res.body).toEqual({ error: "TRIP_NOT_FOUND", message: "Trip not found" })
     expect(addEventMock).not.toHaveBeenCalled();
     expect(deleteMock).not.toHaveBeenCalled();
   });
@@ -340,7 +458,7 @@ describe("DELETE /trips/:id", () => {
     .set("Authorization", "Bearer valid-token");
 
     expect(res.status).toBe(409)
-    expect(res.body).toEqual({ error: "Bad Request", message: "Only draft trips can be deleted" })
+    expect(res.body).toEqual({ error: "CONFLICT", message: "Only draft trips can be deleted" })
     expect(addEventMock).not.toHaveBeenCalled();
     expect(deleteMock).not.toHaveBeenCalled();
   });

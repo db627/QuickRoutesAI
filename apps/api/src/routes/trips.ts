@@ -8,26 +8,28 @@ import {
   assignTripSchema,
   updateTripStatusSchema,
   updateTripSchema,
+  ErrorCode,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
 import { randomUUID } from "crypto";
 import { pagination } from "../middleware/pagination";
 import { paginateFirestore } from "../utils/paginateFirestore";
 import { tripTransitionGuard } from "../middleware/trips";
+import { AppError } from "../utils/AppError";
 
 const router = Router();
 
 /**
  * POST /trips — dispatcher creates a new trip with stops
  */
-router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema), async (req, res) => {
+router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema), async (req, res, next) => {
   const { stops } = req.body;
   const now = new Date().toISOString();
 
   try {
     // Geocode any stops missing lat/lng
     const resolvedStops = await Promise.all(
-      stops.map(async (s: { address: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
+      stops.map(async (s: { address: string; contactName?: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
         let lat = s.lat;
         let lng = s.lng;
         if (lat == null || lng == null) {
@@ -38,6 +40,7 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
         return {
           stopId: randomUUID(),
           address: s.address,
+          contactName: s.contactName || "",
           lat,
           lng,
           sequence: s.sequence ?? i,
@@ -60,8 +63,7 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
     const ref = await db.collection("trips").add(tripData);
     res.status(201).json({ id: ref.id, ...tripData });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to create trip";
-    res.status(500).json({ error: "Internal Error", message });
+    next(err);
   }
 });
 
@@ -72,7 +74,7 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
  *   page pagination: ?page=1&limit=20
  *   cursor pagination: ?cursor=...&limit=20
  */
-router.get("/", pagination, async (req, res) => {
+router.get("/", pagination, async (req, res, next) => {
   try {
     let ref: admin.firestore.Query = db.collection("trips");
 
@@ -98,7 +100,7 @@ router.get("/", pagination, async (req, res) => {
     // Response envelope: { data, total, page, hasMore, nextCursor? }
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: "Internal Error", message: "Failed to fetch trips" });
+    next(err);
   }
 });
 
@@ -107,7 +109,7 @@ router.get("/", pagination, async (req, res) => {
  * Uses simple count() queries to avoid composite index requirements.
  * Returns: { totalTrips, inProgressTrips, completedToday }
  */
-router.get("/stats", requireRole("dispatcher", "admin"), async (_req, res) => {
+router.get("/stats", requireRole("dispatcher", "admin"), async (_req, res, next) => {
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -131,26 +133,26 @@ router.get("/stats", requireRole("dispatcher", "admin"), async (_req, res) => {
       completedToday,
     });
   } catch (err) {
-    res.status(500).json({ error: "Internal Error", message: "Failed to fetch trip stats" });
+    next(err);
   }
 });
 
 /**
  * POST /trips/:id/assign — dispatcher assigns a driver to this trip
  */
-router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTripSchema),tripTransitionGuard, async (req, res) => {
+router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTripSchema), tripTransitionGuard, async (req, res, next) => {
   const { driverId } = req.body;
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
 
     if (!tripDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+      return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
 
     const trip = tripDoc.data();
     if (trip?.status !== "draft") {
-      return res.status(400).json({ error: "Bad Request", message: "Trip can only be assigned from draft status" });
+      return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Trip can only be assigned from draft status"));
     }
 
     await tripRef.update({
@@ -161,48 +163,48 @@ router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTr
 
     res.json({ ok: true, status: "assigned", driverId });
   } catch (err) {
-    res.status(500).json({ error: "Internal Error", message: "Failed to assign trip" });
+    next(err);
   }
 });
 
 /**
  * GET /trips/:id — get trip details
  */
-router.get("/:id", async (req, res) => {
+router.get("/:id", async (req, res, next) => {
   try {
     const tripDoc = await db.collection("trips").doc(req.params.id).get();
 
     if (!tripDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+      return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
 
     const trip = tripDoc.data();
 
     // Drivers can only see trips assigned to them
     if (req.userRole === "driver" && trip?.driverId !== req.uid) {
-      return res.status(403).json({ error: "Forbidden", message: "Not your trip" });
+      return next(new AppError(ErrorCode.FORBIDDEN, 403, "Not your trip"));
     }
 
     res.json({ id: tripDoc.id, ...trip });
   } catch (err) {
-    res.status(500).json({ error: "Internal Error", message: "Failed to fetch trip" });
+    next(err);
   }
 });
 
 /**
  * POST /trips/:id/duplicate — duplicate a completed trip into a new draft trip
  */
-router.post("/:id/duplicate", requireRole("dispatcher", "admin"), async (req, res) => {
+router.post("/:id/duplicate", requireRole("dispatcher", "admin"), async (req, res, next) => {
   try {
     const sourceTripDoc = await db.collection("trips").doc(req.params.id).get();
 
     if (!sourceTripDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+      return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
 
     const sourceTrip = sourceTripDoc.data();
     if (sourceTrip?.status !== "completed") {
-      return res.status(409).json({ error: "Bad Request", message: "Only completed trips can be duplicated" });
+      return next(new AppError(ErrorCode.CONFLICT, 409, "Only completed trips can be duplicated"));
     }
 
     const now = new Date().toISOString();
@@ -241,15 +243,14 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), async (req, re
       ...duplicatedTrip,
     });
   } catch (err) {
-    return res.status(500).json({ error: "Internal Error", message: "Failed to duplicate trip" });
+    next(err);
   }
 });
 
 /**
  * PATCH /trips/:id -- update trip details
  */
-
-router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res) => {
+router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res, next) => {
   try {
     const { notes, stops } = req.body;
 
@@ -257,14 +258,14 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
     const tripDoc = await tripRef.get();
 
     if (!tripDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+      return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
 
     const trip = tripDoc.data();
 
     // Allow editing draft, assigned, and in_progress trips (not completed/cancelled)
     if (trip?.status === "completed" || trip?.status === "cancelled") {
-      return res.status(409).json({ error: "Bad Request", message: "Completed or cancelled trips cannot be updated" });
+      return next(new AppError(ErrorCode.CONFLICT, 409, "Completed or cancelled trips cannot be updated"));
     }
 
     // Geocode any new stops missing lat/lng
@@ -282,6 +283,7 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
           return {
             stopId: s.stopId || randomUUID(),
             address: s.address,
+            contactName: s.contactName || "",
             lat,
             lng,
             sequence: s.sequence ?? i,
@@ -344,26 +346,24 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
     });
 
     res.json({ ok: true, ...updateData, route: routeResult });
-
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to update trip";
-    return res.status(500).json({ error: "Internal Error", message });
+    next(err);
   }
 });
 
 /**
  * DELETE /trips/:id — delete a trip (only if draft)
  */
-router.delete("/:id", requireRole("dispatcher", "admin"), async (req, res) => {
+router.delete("/:id", requireRole("dispatcher", "admin"), async (req, res, next) => {
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
     if (!tripDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+      return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
     const trip = tripDoc.data();
     if (trip?.status !== "draft") {
-      return res.status(409).json({ error: "Bad Request", message: "Only draft trips can be deleted" });
+      return next(new AppError(ErrorCode.CONFLICT, 409, "Only draft trips can be deleted"));
     }
 
     await tripRef.delete();
@@ -374,27 +374,27 @@ router.delete("/:id", requireRole("dispatcher", "admin"), async (req, res) => {
       createdAt: new Date().toISOString(),
     });
     res.json({ ok: true, message: "Trip deleted" });
-    
-  }catch (err) {
-    return res.status(500).json({ error: "Internal Error", message: "Failed to delete trip" });
+  } catch (err) {
+    next(err);
   }
 });
+
 /**
  * POST /trips/:id/route — compute route using Google Directions API
  */
-router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) => {
+router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res, next) => {
   try {
     const tripDoc = await db.collection("trips").doc(req.params.id).get();
 
     if (!tripDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+      return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
 
     const trip = tripDoc.data();
     const stops = trip?.stops || [];
 
     if (stops.length < 2) {
-      return res.status(400).json({ error: "Bad Request", message: "Need at least 2 stops to compute route" });
+      return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Need at least 2 stops to compute route"));
     }
 
     const { route: routeResult, optimizedStops } = await computeRoute(stops);
@@ -411,9 +411,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) =
 
     res.json({ ok: true, route: routeResult, stops: optimizedStops });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to compute route";
-    console.error("Route computation failed:", message);
-    res.status(500).json({ error: "Internal Error", message });
+    next(err);
   }
 });
 
@@ -422,7 +420,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res) =
  * Drivers can move to in_progress or completed (if assigned to them).
  * Dispatchers can set any status.
  */
-router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard, async (req, res) => {
+router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard, async (req, res, next) => {
   const { status, currentLocation } = req.body;
 
   try {
@@ -430,7 +428,7 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
     const tripDoc = await tripRef.get();
 
     if (!tripDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+      return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
 
     const trip = tripDoc.data();
@@ -438,10 +436,10 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
     // Drivers can only update their own assigned trips
     if (req.userRole === "driver") {
       if (trip?.driverId !== req.uid) {
-        return res.status(403).json({ error: "Forbidden", message: "Not your trip" });
+        return next(new AppError(ErrorCode.FORBIDDEN, 403, "Not your trip"));
       }
       if (trip?.status === "draft") {
-        return res.status(400).json({ error: "Bad Request", message: "Trip must be assigned first" });
+        return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Trip must be assigned first"));
       }
     }
 
@@ -474,25 +472,25 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
 
     res.json({ ok: true, status });
   } catch (err) {
-    res.status(500).json({ error: "Internal Error", message: "Failed to update status" });
+    next(err);
   }
 });
 
 /**
  * POST /trips/:id/cancel — dispatcher cancels a draft or assigned trip
  */
-router.post("/:id/cancel", requireRole("dispatcher", "admin"), async (req, res) => {
+router.post("/:id/cancel", requireRole("dispatcher", "admin"), async (req, res, next) => {
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
 
     if (!tripDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+      return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
 
     const trip = tripDoc.data();
     if (!["draft", "assigned"].includes(trip?.status)) {
-      return res.status(400).json({ error: "Bad Request", message: "Only draft or assigned trips can be cancelled" });
+      return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Only draft or assigned trips can be cancelled"));
     }
 
     await tripRef.update({
@@ -502,7 +500,7 @@ router.post("/:id/cancel", requireRole("dispatcher", "admin"), async (req, res) 
 
     res.json({ ok: true, status: "cancelled" });
   } catch (err) {
-    res.status(500).json({ error: "Internal Error", message: "Failed to cancel trip" });
+    next(err);
   }
 });
 

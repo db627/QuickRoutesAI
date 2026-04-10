@@ -37,6 +37,7 @@ export interface TimeWindow {
 export interface TripStop {
   stopId: string;
   address: string;
+  contactName: string;
   lat: number;
   lng: number;
   sequence: number;
@@ -52,6 +53,7 @@ export interface TripRoute {
   input?: TripStop[];
   naiveDistanceMeters?: number; // straight-line sum without route optimization
   fuelSavingsGallons?: number; // estimated fuel saved vs naive routing (US gallons)
+  reasoning?: string; // AI explanation of stop ordering decision
 }
 
 export interface Trip {
@@ -78,9 +80,12 @@ export interface DriverEvent {
 }
 
 // ── API Responses ──
+import type { ErrorCode } from "./errors";
+
 export interface ApiError {
-  error: string;
+  error: ErrorCode;
   message: string;
+  details?: { path: string; message: string }[];
 }
 
 export interface HealthResponse {
