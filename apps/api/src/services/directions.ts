@@ -182,12 +182,9 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
         durationSeconds,
         naiveDistanceMeters,
         fuelSavingsGallons,
-<<<<<<< QRA-43-Route-computation-history
         createdAt: new Date().toISOString(),
-        input: sorted
-=======
+        input: sorted,
         ...(optimizationReasoning && { reasoning: optimizationReasoning }),
->>>>>>> main
       },
       optimizedStops,
     };

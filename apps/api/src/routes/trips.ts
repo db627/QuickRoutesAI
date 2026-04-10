@@ -183,7 +183,7 @@ router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTr
 /**
  * GET /trips/:id — get trip details
  */
-router.get("/:id",tripStopsValidationGuard, async (req, res) => {
+router.get("/:id",tripStopsValidationGuard, async (req, res, next) => {
   try {
     const tripDoc = await db.collection("trips").doc(req.params.id).get();
 
@@ -207,7 +207,7 @@ router.get("/:id",tripStopsValidationGuard, async (req, res) => {
 /**
  * POST /trips/:id/duplicate — duplicate a completed trip into a new draft trip
  */
-router.post("/:id/duplicate", requireRole("dispatcher", "admin"), tripStopsValidationGuard,  async (req, res) => {
+router.post("/:id/duplicate", requireRole("dispatcher", "admin"), tripStopsValidationGuard,  async (req, res, next) => {
   try {
     const sourceTripDoc = await db.collection("trips").doc(req.params.id).get();
 
@@ -269,7 +269,7 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), tripStopsValid
  * PATCH /trips/:id -- update trip details
  */
 
-router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), tripStopsValidationGuard, async (req, res) => {
+router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), tripStopsValidationGuard, async (req, res, next) => {
   try {
     const { notes, stops } = req.body;
 
@@ -373,7 +373,7 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
       createdAt: new Date().toISOString(),
     });
 
-    res.json({ ok: true, ...updateData, route: routeResult, stops: resolvedStops || req.stops! });
+    res.json({ ok: true, ...updateData, stops: resolvedStops || req.stops! });
 
   } catch (err) {
     next(err);
@@ -411,7 +411,7 @@ router.delete("/:id", requireRole("dispatcher", "admin"), async (req, res, next)
 /**
  * POST /trips/:id/route — compute route using Google Directions API
  */
-router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidationGuard, async (req, res) => {
+router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidationGuard, async (req, res, next) => {
   try {
     const tripDoc = await db.collection("trips").doc(req.params.id).get();
 
@@ -462,7 +462,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidatio
  * Drivers can move to in_progress or completed (if assigned to them).
  * Dispatchers can set any status.
  */
-router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard, tripStopsValidationGuard, async (req, res) => {
+router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard, tripStopsValidationGuard, async (req, res, next) => {
   const { status, currentLocation } = req.body;
 
   try {
