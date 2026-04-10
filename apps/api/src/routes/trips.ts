@@ -370,7 +370,7 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
       createdAt: new Date().toISOString(),
     });
 
-    res.json({ ok: true, ...updateData, route: resolvedStops || req.stops! });
+    res.json({ ok: true, ...updateData, stops: resolvedStops || req.stops! });
 
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to update trip";
