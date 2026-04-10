@@ -140,7 +140,10 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
     : optimizedStops.slice(1, -1);
 
   try {
-    
+    const waypointParams = waypoints.length > 0
+      ? waypoints.map((wp) => ({ lat: wp.lat, lng: wp.lng }))
+      : undefined;
+
     const response = await client.directions({
       params: {
         origin: { lat: origin.lat, lng: origin.lng },

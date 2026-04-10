@@ -339,7 +339,13 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
     if (resolvedStops && resolvedStops.length >= 2) {
       try {
         const { route, optimizedStops } = await computeRoute(resolvedStops);
-        updateData.route = route;
+        let routes = trip?.route || [];
+
+        if(!Array.isArray(routes)) {
+          routes = [];
+        }
+        routes.push(route);
+        updateData.route = routes;
         resolvedStops = optimizedStops;
       } catch (routeErr) {
         // Route computation is best-effort; save stops even if it fails
@@ -429,6 +435,10 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidatio
     const { route: routeResult, optimizedStops } = await computeRoute(stops);
 
     let routes = trip?.route || [];
+
+    if(!Array.isArray(routes)) {
+      routes = [];
+    }
     routes.push(routeResult);
 
   
