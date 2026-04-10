@@ -107,10 +107,10 @@ describe('TripDetailScreen', () => {
     expect(getByText('Start Trip')).toBeTruthy();
   });
 
-  it('shows Navigate and Complete Trip buttons for in_progress trip', () => {
+  it('shows per-stop Navigate buttons and Complete Trip button for in_progress trip', () => {
     mockDocSnapshot(inProgressTrip);
-    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
-    expect(getByText('Navigate')).toBeTruthy();
+    const { getAllByText, getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
+    expect(getAllByText('Navigate').length).toBeGreaterThan(0);
     expect(getByText('Complete Trip')).toBeTruthy();
   });
 
