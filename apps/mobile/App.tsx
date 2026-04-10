@@ -10,6 +10,8 @@ import { auth } from "./src/config/firebase";
 import LoginScreen from "./src/screens/LoginScreen";
 import DriverHomeScreen from "./src/screens/DriverHomeScreen";
 import TripScreen from "./src/screens/TripScreen";
+import TripDetailScreen from "./src/screens/TripDetailScreen";
+import TripCompletionScreen from "./src/screens/TripCompletionScreen";
 import HistoryScreen from "./src/screens/HistoryScreen";
 import ProfileScreen from "./src/screens/ProfileScreen";
 import { View, ActivityIndicator } from "react-native";
@@ -17,7 +19,32 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import StatusBanner from "./src/components/StatusBanner";
 
 const Stack = createNativeStackNavigator();
+const TripStack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
+
+function TripNavigator() {
+  return (
+    <TripStack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: "#ffffff" },
+        headerTintColor: "#111827",
+        headerShadowVisible: false,
+      }}
+    >
+      <TripStack.Screen name="TripList" component={TripScreen} options={{ title: "My Trips" }} />
+      <TripStack.Screen
+        name="TripDetail"
+        component={TripDetailScreen}
+        options={{ title: "Trip Detail" }}
+      />
+      <TripStack.Screen
+        name="TripCompletion"
+        component={TripCompletionScreen}
+        options={{ title: "Summary", headerBackVisible: false }}
+      />
+    </TripStack.Navigator>
+  );
+}
 
 const tabIcons: Record<string, { focused: keyof typeof Ionicons.glyphMap; outline: keyof typeof Ionicons.glyphMap }> = {
   Home: { focused: "home", outline: "home-outline" },
@@ -47,7 +74,7 @@ function DriverTabs() {
       })}
     >
       <Tab.Screen name="Home" component={DriverHomeScreen} />
-      <Tab.Screen name="Trip" component={TripScreen} />
+      <Tab.Screen name="Trip" component={TripNavigator} options={{ headerShown: false }} />
       <Tab.Screen name="History" component={HistoryScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
