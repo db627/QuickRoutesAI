@@ -1,7 +1,13 @@
 import rateLimit from "express-rate-limit";
 import { env } from "../config/env";
+import { ErrorCode, ERROR_MESSAGES } from "@quickroutesai/shared";
 
 const isTest = env.NODE_ENV === "test";
+
+const rateLimitedMessage = (detail: string) => ({
+  error: ErrorCode.RATE_LIMITED,
+  message: detail,
+});
 
 /**
  * Global rate limiter — applies to all routes.
@@ -13,7 +19,7 @@ export const globalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTest,
-  message: { error: "Too Many Requests", message: "Rate limit exceeded, try again in a minute" },
+  message: rateLimitedMessage("Rate limit exceeded, try again in a minute"),
 });
 
 /**
@@ -26,7 +32,7 @@ export const loginLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTest,
-  message: { error: "Too Many Requests", message: "Too many login attempts, try again in a minute" },
+  message: rateLimitedMessage("Too many login attempts, try again in a minute"),
 });
 
 /**
@@ -39,7 +45,7 @@ export const signupLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTest,
-  message: { error: "Too Many Requests", message: "Too many signup attempts, try again in a minute" },
+  message: rateLimitedMessage("Too many signup attempts, try again in a minute"),
 });
 
 /**
@@ -52,5 +58,5 @@ export const quoteLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTest,
-  message: { error: "Too Many Requests", message: "Too many quote requests, please try again later" },
+  message: rateLimitedMessage("Too many quote requests, please try again later"),
 });

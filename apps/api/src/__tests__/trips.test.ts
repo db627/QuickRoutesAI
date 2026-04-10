@@ -123,7 +123,7 @@ describe("PATCH /trips/:id", () => {
         .set("Authorization", "Bearer valid-token");
 
         expect(res.status).toBe(404)
-        expect(res.body).toEqual({ error: "Not Found", message: "Trip not found" })
+        expect(res.body).toEqual({ error: "TRIP_NOT_FOUND", message: "Trip not found" })
         expect(addEventMock).not.toHaveBeenCalled();
         expect(updateMock).not.toHaveBeenCalled();
       });
@@ -169,7 +169,7 @@ describe("PATCH /trips/:id", () => {
         .set("Authorization", "Bearer valid-token");
 
         expect(res.status).toBe(409)
-        expect(res.body).toEqual({ error: "Bad Request", message: "Completed or cancelled trips cannot be updated" })
+        expect(res.body).toEqual({ error: "CONFLICT", message: "Completed or cancelled trips cannot be updated" })
         expect(addEventMock).not.toHaveBeenCalled();
         expect(updateMock).not.toHaveBeenCalled();
       });
@@ -210,7 +210,7 @@ describe("PATCH /trips/:id", () => {
         .set("Authorization", "Bearer valid-token");
 
         expect(res.status).toBe(403)
-        expect(res.body).toEqual({ error: "Forbidden", message: "Requires one of: dispatcher, admin" })
+        expect(res.body).toEqual({ error: "FORBIDDEN", message: "Requires one of: dispatcher, admin" })
         expect(addEventMock).not.toHaveBeenCalled();
         expect(updateMock).not.toHaveBeenCalled();
         });
@@ -298,7 +298,7 @@ describe("DELETE /trips/:id", () => {
     .set("Authorization", "Bearer valid-token");
 
     expect(res.status).toBe(404)
-    expect(res.body).toEqual({ error: "Not Found", message: "Trip not found" })
+    expect(res.body).toEqual({ error: "TRIP_NOT_FOUND", message: "Trip not found" })
     expect(addEventMock).not.toHaveBeenCalled();
     expect(deleteMock).not.toHaveBeenCalled();
   });
@@ -340,7 +340,7 @@ describe("DELETE /trips/:id", () => {
     .set("Authorization", "Bearer valid-token");
 
     expect(res.status).toBe(409)
-    expect(res.body).toEqual({ error: "Bad Request", message: "Only draft trips can be deleted" })
+    expect(res.body).toEqual({ error: "CONFLICT", message: "Only draft trips can be deleted" })
     expect(addEventMock).not.toHaveBeenCalled();
     expect(deleteMock).not.toHaveBeenCalled();
   });
