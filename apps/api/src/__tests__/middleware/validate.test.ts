@@ -1,6 +1,7 @@
 import request from "supertest";
 import express from "express";
 import { validate } from "../../middleware/validate";
+import { errorHandler } from "../../middleware/errorHandler";
 import { locationPingSchema } from "@quickroutesai/shared";
 
 function createValidationApp() {
@@ -9,6 +10,7 @@ function createValidationApp() {
   app.post("/test", validate(locationPingSchema), (_req, res) => {
     res.json({ ok: true, body: _req.body });
   });
+  app.use(errorHandler);
   return app;
 }
 
@@ -41,7 +43,7 @@ describe("validate middleware", () => {
       .send({ lat: 200, lng: -74.006 });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation Error");
+    expect(res.body.error).toBe("VALIDATION_ERROR");
     expect(res.body.details).toBeDefined();
     expect(res.body.details.length).toBeGreaterThan(0);
   });
@@ -52,7 +54,7 @@ describe("validate middleware", () => {
       .send({ lat: 40, lng: -200 });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation Error");
+    expect(res.body.error).toBe("VALIDATION_ERROR");
   });
 
   it("rejects missing required fields", async () => {

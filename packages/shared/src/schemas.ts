@@ -20,9 +20,10 @@ export const timeWindowSchema = z.object({
 export const tripStopSchema = z.object({
   stopId: z.string().min(1).optional(),
   address: z.string().min(1),
+  contactName: z.string().default(""),
   lat: z.number().min(-90).max(90).optional(),
   lng: z.number().min(-180).max(180).optional(),
-  sequence: z.number().int().min(0),
+  sequence: z.number().int().min(0).optional(),
   notes: z.string().default(""),
   timeWindow: timeWindowSchema.optional(),
 });

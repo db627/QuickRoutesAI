@@ -8,8 +8,8 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
  * total driving distance/time while respecting delivery time windows.
  * The first stop (origin) stays fixed; all other stops are reordered.
  */
-export async function optimizeStopOrder(stops: TripStop[]): Promise<TripStop[]> {
-  if (stops.length <= 2) return stops;
+export async function optimizeStopOrder(stops: TripStop[]): Promise<{ stops: TripStop[]; reasoning: string }> {
+  if (stops.length <= 2) return { stops, reasoning: "" };
 
   const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
   const origin = sorted[0];
@@ -35,8 +35,12 @@ ${hasTimeWindows ? "IMPORTANT: Some stops have delivery time windows. You MUST r
 Stops to reorder:
 ${stopList}
 
-Return ONLY a JSON array of the stop indices in optimal visiting order. Example: [2, 0, 4, 1, 3]
-No explanation, no other text — just the JSON array.`;
+Return ONLY a JSON object with two keys:
+- "order": array of the stop indices in optimal visiting order (e.g. [2, 0, 4, 1, 3])
+- "reasoning": one or two sentences explaining why this order minimizes travel time/distance
+
+Example: {"order": [2, 0, 4, 1, 3], "reasoning": "Stops 2 and 0 cluster in the north end, reducing backtracking before heading south."}
+No other text — just the JSON object.`;
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
@@ -50,12 +54,14 @@ No explanation, no other text — just the JSON array.`;
     throw new Error("Empty response from OpenAI");
   }
 
-  let indices: number[];
+  let parsed: { order: number[]; reasoning: string };
   try {
-    indices = JSON.parse(content);
+    parsed = JSON.parse(content);
   } catch {
     throw new Error(`Failed to parse OpenAI response: ${content}`);
   }
+
+  const { order: indices, reasoning } = parsed;
 
   if (!Array.isArray(indices) || indices.length !== rest.length) {
     throw new Error(`Invalid indices from OpenAI: expected ${rest.length} items, got ${JSON.stringify(indices)}`);
@@ -73,5 +79,5 @@ No explanation, no other text — just the JSON array.`;
     optimized.push({ ...rest[idx], sequence: seq + 1 });
   });
 
-  return optimized;
+  return { stops: optimized, reasoning: reasoning ?? "" };
 }
