@@ -140,10 +140,7 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
     : optimizedStops.slice(1, -1);
 
   try {
-    const waypointParams = waypoints.length > 0
-      ? waypoints.map((wp) => ({ lat: wp.lat, lng: wp.lng }))
-      : undefined;
-
+    
     const response = await client.directions({
       params: {
         origin: { lat: origin.lat, lng: origin.lng },
@@ -153,7 +150,7 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
         key: apiKey,
       },
     });
-
+    
     if (response.data.status !== Status.OK) {
       throw new Error(
         `Directions API error: ${response.data.status}` +
@@ -185,11 +182,17 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
         durationSeconds,
         naiveDistanceMeters,
         fuelSavingsGallons,
+<<<<<<< QRA-43-Route-computation-history
+        createdAt: new Date().toISOString(),
+        input: sorted
+=======
         ...(optimizationReasoning && { reasoning: optimizationReasoning }),
+>>>>>>> main
       },
       optimizedStops,
     };
   } catch (err) {
+    console.log(err)
     if (err instanceof Error && err.message.startsWith("Directions API error")) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Directions request failed: ${msg}`);

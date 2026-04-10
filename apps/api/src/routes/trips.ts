@@ -295,6 +295,28 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
 
     const updateData: Record<string, unknown> = { updatedAt: new Date().toISOString() };
     if (notes !== undefined) updateData.notes = notes;
+    if (stops !== undefined){
+        const resolvedStops = await Promise.all(
+        stops.map(async (s: { address: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
+          let lat = s.lat;
+          let lng = s.lng;
+          if (lat == null || lng == null) {
+            const coords = await geocodeAddress(s.address);
+            lat = coords.lat;
+            lng = coords.lng;
+          }
+          return {
+            stopId: randomUUID(),
+            address: s.address,
+            lat,
+            lng,
+            sequence: s.sequence ?? i,
+            notes: s.notes || "",
+          };
+        }),
+      );
+      updateData.stops = resolvedStops;
+    } 
     if (resolvedStops !== undefined) updateData.stops = resolvedStops;
 
     // If stops changed and there are 2+, recompute the route and optimize stop order
@@ -377,8 +399,12 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res, n
 
     const { route: routeResult, optimizedStops } = await computeRoute(stops);
 
+    let routes = trip?.route || [];
+    routes.push(routeResult);
+
+  
     await db.collection("trips").doc(req.params.id).update({
-      route: routeResult,
+      route: routes,
       stops: optimizedStops,
       updatedAt: new Date().toISOString(),
     });
