@@ -157,6 +157,7 @@ describe("PATCH /users/:id", () => {
 
         const updateMock = jest.fn().mockResolvedValue(undefined);
         const addEventMock = jest.fn().mockResolvedValue(undefined);
+        auth.updateUser = jest.fn().mockResolvedValue(undefined);
 
         db.collection.mockImplementation((col: string) => {
             if (col === "users") {
@@ -204,7 +205,7 @@ describe("PATCH /users/:id", () => {
 
         const res = await request(app)
         .patch(`/users/${userId}`)
-        .send({ role: "admin", active: "false" })
+        .send({ role: "admin", status: "deactivated" })
         .set("Authorization", "Bearer valid-token");
 
         expect(res.status).toBe(200);

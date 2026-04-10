@@ -34,6 +34,8 @@ export interface TimeWindow {
   end: string;   // HH:mm format, e.g. "11:00"
 }
 
+export type StopStatus = "pending" | "completed";
+
 export interface TripStop {
   stopId: string;
   address: string;
@@ -43,6 +45,8 @@ export interface TripStop {
   sequence: number;
   notes: string;
   timeWindow?: TimeWindow;
+  status?: StopStatus;
+  completedAt?: string; // ISO 8601
 }
 
 export interface TripRoute {

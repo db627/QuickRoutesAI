@@ -541,6 +541,72 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
 });
 
 /**
+ * POST /trips/:id/stops/:stopId/complete — driver marks a stop as completed
+ * Sequential enforcement: all prior stops must be completed first.
+ */
+router.post("/:id/stops/:stopId/complete", async (req, res) => {
+  try {
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
+
+    if (!tripDoc.exists) {
+      return res.status(404).json({ error: "Not Found", message: "Trip not found" });
+    }
+
+    const trip = tripDoc.data();
+
+    if (trip?.status !== "in_progress") {
+      return res.status(400).json({ error: "Bad Request", message: "Trip must be in progress to complete stops" });
+    }
+
+    if (req.userRole === "driver" && trip?.driverId !== req.uid) {
+      return res.status(403).json({ error: "Forbidden", message: "Not your trip" });
+    }
+
+    const stops: any[] = trip?.stops || [];
+    const stopIndex = stops.findIndex((s) => s.stopId === req.params.stopId);
+
+    if (stopIndex === -1) {
+      return res.status(404).json({ error: "Not Found", message: "Stop not found" });
+    }
+
+    const stop = stops[stopIndex];
+    if (stop.status === "completed") {
+      return res.status(409).json({ error: "Conflict", message: "Stop already completed" });
+    }
+
+    // Sequential enforcement: all stops with lower sequence must be completed
+    const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
+    const stopSequence = stop.sequence;
+    const blockedBy = sorted.find(
+      (s) => s.sequence < stopSequence && s.status !== "completed",
+    );
+    if (blockedBy) {
+      return res.status(400).json({
+        error: "Bad Request",
+        message: "Previous stops must be completed first",
+      });
+    }
+
+    const completedAt = new Date().toISOString();
+    stops[stopIndex] = { ...stop, status: "completed", completedAt };
+
+    await tripRef.update({ stops, updatedAt: completedAt });
+
+    await db.collection("events").add({
+      type: "stop_completed",
+      driverId: trip?.driverId || req.uid,
+      payload: { tripId: req.params.id, stopId: req.params.stopId, completedAt },
+      createdAt: completedAt,
+    });
+
+    res.json({ ok: true, stopId: req.params.stopId, completedAt });
+  } catch (err) {
+    res.status(500).json({ error: "Internal Error", message: "Failed to complete stop" });
+  }
+});
+
+/**
  * POST /trips/:id/cancel — dispatcher cancels a draft or assigned trip
  */
 router.post("/:id/cancel", requireRole("dispatcher", "admin"), async (req, res, next) => {
