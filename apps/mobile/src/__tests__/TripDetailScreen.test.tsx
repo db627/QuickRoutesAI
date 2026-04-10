@@ -4,6 +4,7 @@ import { Alert } from 'react-native';
 import TripDetailScreen from '../screens/TripDetailScreen';
 import { apiFetch } from '../services/api';
 import { startTracking, stopTracking } from '../services/location';
+import { openNavigation } from '../services/navigation';
 import { onSnapshot } from 'firebase/firestore';
 
 let mockIsConnected = true;
@@ -110,8 +111,21 @@ describe('TripDetailScreen', () => {
   it('shows per-stop Navigate buttons and Complete Trip button for in_progress trip', () => {
     mockDocSnapshot(inProgressTrip);
     const { getAllByText, getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
-    expect(getAllByText('Navigate').length).toBeGreaterThan(0);
+    // per-stop buttons + footer button = at least 2
+    expect(getAllByText('Navigate').length).toBeGreaterThanOrEqual(2);
     expect(getByText('Complete Trip')).toBeTruthy();
+  });
+
+  it('calls openNavigation with all stops when footer Navigate is tapped', async () => {
+    const tripWithRoute = { ...inProgressTrip, route: { polyline: '', distanceMeters: 5000, durationSeconds: 600 } };
+    mockDocSnapshot(tripWithRoute);
+    const { getAllByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
+    const navigateButtons = getAllByText('Navigate');
+    // Last Navigate button is the footer one
+    fireEvent.press(navigateButtons[navigateButtons.length - 1]);
+    await waitFor(() => {
+      expect(openNavigation).toHaveBeenCalledWith(tripWithRoute.stops);
+    });
   });
 
   it('calls apiFetch and startTracking when Start Trip is tapped', async () => {
