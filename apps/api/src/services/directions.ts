@@ -103,6 +103,7 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
 
   // Step 1: Use OpenAI to find the optimal stop order
   let optimizedStops: TripStop[];
+  let optimizationReasoning = "";
   try {
     if (originOverride) {
       const syntheticOrigin: TripStop = {
@@ -116,11 +117,14 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
 
       const withOrigin = sorted.map((s, idx) => ({ ...s, sequence: idx + 1 }));
       const optimizedWithOrigin = await optimizeStopOrder([syntheticOrigin, ...withOrigin]);
-      optimizedStops = optimizedWithOrigin
+      optimizedStops = optimizedWithOrigin.stops
         .slice(1)
         .map((s, idx) => ({ ...s, sequence: idx }));
+      optimizationReasoning = optimizedWithOrigin.reasoning;
     } else {
-      optimizedStops = await optimizeStopOrder(sorted);
+      const result = await optimizeStopOrder(sorted);
+      optimizedStops = result.stops;
+      optimizationReasoning = result.reasoning;
     }
     console.log("OpenAI optimized stop order:", optimizedStops.map((s) => `${s.sequence}: ${s.address}`));
   } catch (err) {
@@ -149,7 +153,7 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
         key: apiKey,
       },
     });
-
+    
     if (response.data.status !== Status.OK) {
       throw new Error(
         `Directions API error: ${response.data.status}` +
@@ -181,10 +185,14 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
         durationSeconds,
         naiveDistanceMeters,
         fuelSavingsGallons,
+        createdAt: new Date().toISOString(),
+        input: sorted,
+        ...(optimizationReasoning && { reasoning: optimizationReasoning }),
       },
       optimizedStops,
     };
   } catch (err) {
+    console.log(err)
     if (err instanceof Error && err.message.startsWith("Directions API error")) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Directions request failed: ${msg}`);

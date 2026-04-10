@@ -127,4 +127,77 @@ describe("TripDetailPage", () => {
     expect(screen.getByText("123 Main St")).toBeInTheDocument();
     expect(screen.getByText("456 Oak Ave")).toBeInTheDocument();
   });
+
+  it("shows the Compute Route button when route is null", async () => {
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeTripDoc({ route: null, status: "draft" }));
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
+
+    render(<TripDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Compute Route" })).toBeInTheDocument();
+    });
+  });
+
+  it("hides the Compute Route button when route already exists", async () => {
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeTripDoc({
+        route: { polyline: "abc", distanceMeters: 1000, durationSeconds: 120 },
+      }));
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
+
+    render(<TripDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Trip Detail")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: "Compute Route" })).not.toBeInTheDocument();
+  });
+
+  it("renders the AI reasoning panel when route.reasoning is set", async () => {
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeTripDoc({
+        route: {
+          polyline: "abc",
+          distanceMeters: 1000,
+          durationSeconds: 120,
+          reasoning: "Visiting the north cluster first reduces total drive time.",
+        },
+      }));
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
+
+    render(<TripDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("AI Route Reasoning")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Visiting the north cluster first reduces total drive time.")).toBeInTheDocument();
+  });
+
+  it("does not render the reasoning panel when route has no reasoning", async () => {
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeTripDoc({
+        route: { polyline: "abc", distanceMeters: 1000, durationSeconds: 120 },
+      }));
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
+
+    render(<TripDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Trip Detail")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("AI Route Reasoning")).not.toBeInTheDocument();
+  });
 });

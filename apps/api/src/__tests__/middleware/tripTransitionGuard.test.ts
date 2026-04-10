@@ -25,7 +25,7 @@ jest.mock("../../config/firebase", () => ({
     doc: jest.fn().mockReturnThis(),
     get: jest.fn().mockResolvedValue({
       exists: true,
-      data: () => mockTripData(), 
+      data: () => mockTripData(),
     }),
   },
   auth: {},
@@ -34,7 +34,7 @@ jest.mock("../../config/firebase", () => ({
 
 
 import { tripTransitionGuard } from "../../middleware/trips";
-import { randomUUID } from "crypto";
+import { errorHandler } from "../../middleware/errorHandler";
 
 function createValidationApp() {
   const app = express();
@@ -42,6 +42,7 @@ function createValidationApp() {
   app.post("/test", tripTransitionGuard, (_req, res) => {
     res.json({ ok: true, body: _req.body });
   });
+  app.use(errorHandler);
   return app;
 }
 
@@ -59,7 +60,7 @@ beforeEach(() => {
 describe("tripTransitionGuard middleware", () => {
   const app = createValidationApp();
 
-  /* 
+  /*
   Test valid/invalid draft transitions
   */
   it("passes from draft to assigned", async () => {
@@ -77,9 +78,9 @@ describe("tripTransitionGuard middleware", () => {
   it("passes from draft to cancelled", async () => {
     const response = await request(app)
       .post("/test")
-      .send({ 
-        current_status_test: "draft", 
-        status_test: "cancelled" 
+      .send({
+        current_status_test: "draft",
+        status_test: "cancelled"
         });
     expect(response.status).toBe(200);
     expect(response.body.ok).toBe(true);
@@ -94,11 +95,11 @@ describe("tripTransitionGuard middleware", () => {
         status_test: "completed",
       });
     expect(response.status).toBe(409);
-    expect(response.body.error).toBe("Bad Request");
+    expect(response.body.error).toBe("INVALID_STATUS_TRANSITION");
     expect(response.body.message).toBe("draft trips cannot transition to completed");
   });
 
-  /* 
+  /*
   Test valid/invalid assigned transitions
   */
   it("passes from assigned to in_progress", async () => {
@@ -133,11 +134,11 @@ describe("tripTransitionGuard middleware", () => {
         status_test: "completed",
       });
     expect(response.status).toBe(409);
-    expect(response.body.error).toBe("Bad Request");
+    expect(response.body.error).toBe("INVALID_STATUS_TRANSITION");
     expect(response.body.message).toBe("assigned trips cannot transition to completed");
   });
 
-  /* 
+  /*
   Test valid/invalid in_progress transitions
   */
 
@@ -161,11 +162,11 @@ describe("tripTransitionGuard middleware", () => {
         status_test: "cancelled",
       });
     expect(response.status).toBe(409);
-    expect(response.body.error).toBe("Bad Request");
+    expect(response.body.error).toBe("INVALID_STATUS_TRANSITION");
     expect(response.body.message).toBe("in_progress trips cannot transition to cancelled");
   });
 
-    /* 
+    /*
     Test valid/invalid completed transitions
     */
     for(const nextStatus of ["draft", "assigned", "in_progress", "cancelled"]){
@@ -177,12 +178,12 @@ describe("tripTransitionGuard middleware", () => {
                 status_test: nextStatus,
             });
             expect(response.status).toBe(409);
-            expect(response.body.error).toBe("Bad Request");
+            expect(response.body.error).toBe("INVALID_STATUS_TRANSITION");
             expect(response.body.message).toBe(`completed trips cannot transition to ${nextStatus}`);
         });
     }
-    
-    /* 
+
+    /*
     Test invalid cancelled transitions
     */
     for(const nextStatus of ["draft", "assigned", "in_progress", "cancelled"]){
@@ -194,7 +195,7 @@ describe("tripTransitionGuard middleware", () => {
                 status_test: nextStatus,
             });
             expect(response.status).toBe(409);
-            expect(response.body.error).toBe("Bad Request");
+            expect(response.body.error).toBe("INVALID_STATUS_TRANSITION");
             expect(response.body.message).toBe(`cancelled trips cannot transition to ${nextStatus}`);
         });
     }
@@ -210,7 +211,7 @@ describe("tripTransitionGuard middleware", () => {
                 status_test: "cancelled",
             });
             expect(response.status).toBe(400);
-            expect(response.body.error).toBe("Bad Request");
+            expect(response.body.error).toBe("BAD_REQUEST");
             expect(response.body.message).toBe("Invalid current trip status");
     });
 
@@ -222,9 +223,9 @@ describe("tripTransitionGuard middleware", () => {
                 status_test: "dropped_off",
             });
             expect(response.status).toBe(400);
-            expect(response.body.error).toBe("Bad Request");
+            expect(response.body.error).toBe("BAD_REQUEST");
             expect(response.body.message).toBe("Unknown transition occurring");
     });
 
-  
+
 });

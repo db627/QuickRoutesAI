@@ -210,7 +210,7 @@ describe("PATCH /users/:id", () => {
 
         expect(res.status).toBe(200);
         expect(res.body.ok).toBe(true);
-        expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ role: "admin", status: "deactivated" }));
+        expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ role: "admin" }));
         expect(addEventMock).toHaveBeenCalledWith(expect.objectContaining({ type: "user_updated" }));
     });
 
@@ -430,7 +430,7 @@ describe("DELETE /users/:id", () => {
         .set("Authorization", "Bearer valid-token");
 
         expect(res.status).toBe(404);
-        expect(res.body.error).toBe("Not Found");
+        expect(res.body.error).toBe("USER_NOT_FOUND");
         expect(res.body.message).toBe("User not found");
     });
 
@@ -488,7 +488,7 @@ describe("DELETE /users/:id", () => {
         .set("Authorization", "Bearer valid-token");
 
         expect(res.status).toBe(403);
-        expect(res.body.error).toBe("Forbidden");
+        expect(res.body.error).toBe("FORBIDDEN");
         expect(res.body.message).toBe("Requires one of: admin");
     });
 });

@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { verifyFirebaseToken } from "../middleware/auth";
+import { AppError } from "../utils/AppError";
 
 jest.mock("../config/firebase", () => ({
   auth: {
@@ -116,12 +117,12 @@ describe("verifyFirebaseToken", () => {
 
     await verifyFirebaseToken(req, res, next);
 
-    expect(next).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(res.json).toHaveBeenCalledWith({
-      error: "Forbidden",
-      message: "User profile not found",
-    });
+    expect(next).toHaveBeenCalledWith(expect.any(AppError));
+    const err = next.mock.calls[0][0] as AppError;
+    expect(err.code).toBe("FORBIDDEN");
+    expect(err.statusCode).toBe(403);
+    expect(err.message).toBe("User profile not found");
+    expect(res.status).not.toHaveBeenCalled();
   });
 });
 

@@ -42,7 +42,7 @@ jest.mock("next/link", () => ({
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function makeStop(address: string, sequence = 0): TripStop {
-  return { stopId: `s-${sequence}`, address, lat: 40.7, lng: -74.0, sequence, notes: "" };
+  return { stopId: `s-${sequence}`, address, contactName: "", lat: 40.7, lng: -74.0, sequence, notes: "" };
 }
 
 function makeTrip(overrides: Partial<Trip> & { id: string }): Trip {
