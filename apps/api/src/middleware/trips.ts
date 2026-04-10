@@ -1,14 +1,23 @@
 import { Request, Response, NextFunction } from "express";
 import { db } from "../config/firebase";
-import type { TripStatus } from "@quickroutesai/shared";
+import type { TripStatus, TripStop } from "@quickroutesai/shared";
 import { ErrorCode } from "@quickroutesai/shared";
 import { AppError } from "../utils/AppError";
+
+declare global {
+  namespace Express {
+    interface Request {
+      stops?: TripStop[];
+    }
+  }
+}
 
 export async function tripTransitionGuard(req: Request, _res: Response, next: NextFunction) {
   try {
     let status = req.body.status || null;
-    let curr_status = null;
-    if (req.route.path == "/test") {
+    let curr_status: TripStatus | null = null;
+
+    if (req.route.path === "/test") {
       status = req.body.status_test || null;
       curr_status = req.body.current_status_test || null;
     } else {
@@ -18,8 +27,9 @@ export async function tripTransitionGuard(req: Request, _res: Response, next: Ne
       if (!tripDoc.exists) {
         return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
       }
+
       const trip = tripDoc.data();
-      curr_status = trip?.status;
+      curr_status = (trip?.status as TripStatus) ?? null;
     }
 
     const tripStatuses: TripStatus[] = ["draft", "assigned", "completed", "cancelled", "in_progress"];
@@ -36,8 +46,7 @@ export async function tripTransitionGuard(req: Request, _res: Response, next: Ne
       return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Invalid current trip status"));
     }
 
-    // Special handling for integration tests to allow setting status directly
-    if (req.route.path == "/:id/assign") {
+    if (req.route.path === "/:id/assign") {
       status = "assigned";
     }
 
@@ -54,8 +63,32 @@ export async function tripTransitionGuard(req: Request, _res: Response, next: Ne
         ),
       );
     }
-    next();
+
+    return next();
   } catch {
     return next(new AppError(ErrorCode.INTERNAL_ERROR, 500, "Failed to verify trip status"));
+  }
+}
+
+export async function tripStopsValidationGuard(req: Request, _res: Response, next: NextFunction) {
+  try {
+    const tripId = req.params.id;
+    const tripDoc = await db.collection("trips").doc(tripId).get();
+
+    if (!tripDoc.exists) {
+      return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
+    }
+
+    const stopsSnapshot = await db.collection("trips").doc(tripId).collection("stops").get();
+
+    if (stopsSnapshot.empty) {
+      return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Trip must have at least one stop"));
+    }
+
+    req.stops = stopsSnapshot.docs.map((doc) => doc.data() as TripStop);
+
+    return next();
+  } catch {
+    return next(new AppError(ErrorCode.INTERNAL_ERROR, 500, "Failed to validate trip stops"));
   }
 }

@@ -14,7 +14,7 @@ import { computeRoute, geocodeAddress } from "../services/directions";
 import { randomUUID } from "crypto";
 import { pagination } from "../middleware/pagination";
 import { paginateFirestore } from "../utils/paginateFirestore";
-import { tripTransitionGuard } from "../middleware/trips";
+import { tripStopsValidationGuard, tripTransitionGuard } from "../middleware/trips";
 import { AppError } from "../utils/AppError";
 
 const router = Router();
@@ -38,7 +38,6 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
           lng = coords.lng;
         }
         return {
-          stopId: randomUUID(),
           address: s.address,
           contactName: s.contactName || "",
           lat,
@@ -53,15 +52,29 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
       driverId: null,
       createdBy: req.uid,
       status: "draft" as const,
-      stops: resolvedStops,
       route: null,
       notes: null,
       createdAt: now,
       updatedAt: now,
     };
 
-    const ref = await db.collection("trips").add(tripData);
-    res.status(201).json({ id: ref.id, ...tripData });
+    const tripDocRef = await db.collection("trips").add(tripData);
+    const stopsCollectionRef = tripDocRef.collection("stops");
+
+    const batch = db.batch();
+
+    resolvedStops.forEach((stop, i) => {
+      const stopDocRef = stopsCollectionRef.doc();
+
+      batch.set(stopDocRef, {
+        ...stop,
+        stopId: stopDocRef.id,
+        sequence: stop.sequence ?? i,
+      });
+    });
+
+    await batch.commit();
+    res.status(201).json({ id: tripDocRef.id, ...tripData });
   } catch (err) {
     next(err);
   }
@@ -170,7 +183,7 @@ router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTr
 /**
  * GET /trips/:id — get trip details
  */
-router.get("/:id", async (req, res, next) => {
+router.get("/:id",tripStopsValidationGuard, async (req, res, next) => {
   try {
     const tripDoc = await db.collection("trips").doc(req.params.id).get();
 
@@ -185,7 +198,7 @@ router.get("/:id", async (req, res, next) => {
       return next(new AppError(ErrorCode.FORBIDDEN, 403, "Not your trip"));
     }
 
-    res.json({ id: tripDoc.id, ...trip });
+    res.json({ id: tripDoc.id, ...trip, stops: req.stops });
   } catch (err) {
     next(err);
   }
@@ -194,7 +207,7 @@ router.get("/:id", async (req, res, next) => {
 /**
  * POST /trips/:id/duplicate — duplicate a completed trip into a new draft trip
  */
-router.post("/:id/duplicate", requireRole("dispatcher", "admin"), async (req, res, next) => {
+router.post("/:id/duplicate", requireRole("dispatcher", "admin"), tripStopsValidationGuard,  async (req, res, next) => {
   try {
     const sourceTripDoc = await db.collection("trips").doc(req.params.id).get();
 
@@ -208,19 +221,13 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), async (req, re
     }
 
     const now = new Date().toISOString();
-    const duplicatedStops = Array.isArray(sourceTrip?.stops)
-      ? sourceTrip.stops.map((stop: any, index: number) => ({
-          ...stop,
-          stopId: randomUUID(),
-          sequence: typeof stop?.sequence === "number" ? stop.sequence : index,
-        }))
-      : [];
+    const duplicatedStops = req!.stops || [];
+    
 
     const duplicatedTrip = {
       driverId: null,
       createdBy: req.uid,
       status: "draft" as const,
-      stops: duplicatedStops,
       route: null,
       notes: sourceTrip?.notes ?? null,
       createdAt: now,
@@ -228,7 +235,18 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), async (req, re
     };
 
     const newTripRef = await db.collection("trips").add(duplicatedTrip);
+    const stopsCollectionRef = newTripRef.collection("stops");
 
+    const batch = db.batch();
+    duplicatedStops.forEach((stop, i) => {
+      const stopDocRef = stopsCollectionRef.doc();
+      batch.set(stopDocRef, {
+        ...stop,
+        stopId: stopDocRef.id,
+        sequence: stop.sequence ?? i,
+      });
+    });
+    await batch.commit();
     await db.collection("events").add({
       type: "trip_duplicate",
       driverId: req.uid,
@@ -250,7 +268,8 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), async (req, re
 /**
  * PATCH /trips/:id -- update trip details
  */
-router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), async (req, res, next) => {
+
+router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), tripStopsValidationGuard, async (req, res, next) => {
   try {
     const { notes, stops } = req.body;
 
@@ -281,7 +300,7 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
             lng = coords.lng;
           }
           return {
-            stopId: s.stopId || randomUUID(),
+            stopId: s.stopId || null,
             address: s.address,
             contactName: s.contactName || "",
             lat,
@@ -292,41 +311,42 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
         }),
       );
     }
-
+    console.log("Resolved stops for update:", resolvedStops);
     const updateData: Record<string, unknown> = { updatedAt: new Date().toISOString() };
     if (notes !== undefined) updateData.notes = notes;
-    if (stops !== undefined){
-        const resolvedStops = await Promise.all(
-        stops.map(async (s: { address: string; lat?: number; lng?: number; sequence?: number; notes?: string }, i: number) => {
-          let lat = s.lat;
-          let lng = s.lng;
-          if (lat == null || lng == null) {
-            const coords = await geocodeAddress(s.address);
-            lat = coords.lat;
-            lng = coords.lng;
-          }
-          return {
-            stopId: randomUUID(),
-            address: s.address,
-            lat,
-            lng,
-            sequence: s.sequence ?? i,
-            notes: s.notes || "",
-          };
-        }),
+    // Deletes all stops that aren't included in the update payload (matched by stopId)
+    if (stops !== undefined) {
+      
+      const existingStops = req.stops || [];
+
+      
+      const incomingStopIds = new Set(
+        stops
+          .filter((s: any) => s.stopId) 
+          .map((s: any) => s.stopId)
       );
-      updateData.stops = resolvedStops;
-    } 
-    if (resolvedStops !== undefined) updateData.stops = resolvedStops;
+
+      const stopsToDelete = existingStops.filter(
+        (s) => !incomingStopIds.has(s.stopId)
+      );
+
+      for (const stop of stopsToDelete) {
+        await tripRef.collection("stops").doc(stop.stopId).delete();
+      }
+    }
 
     // If stops changed and there are 2+, recompute the route and optimize stop order
-    let routeResult = null;
     if (resolvedStops && resolvedStops.length >= 2) {
       try {
         const { route, optimizedStops } = await computeRoute(resolvedStops);
-        routeResult = route;
-        updateData.route = route;
-        updateData.stops = optimizedStops;
+        let routes = trip?.route || [];
+
+        if(!Array.isArray(routes)) {
+          routes = [];
+        }
+        routes.push(route);
+        updateData.route = routes;
+        resolvedStops = optimizedStops;
       } catch (routeErr) {
         // Route computation is best-effort; save stops even if it fails
         console.error("Auto route recomputation failed:", routeErr);
@@ -336,6 +356,20 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
       updateData.route = null;
     }
 
+    // Updates the stop documents after they have been geocoded and sequenced
+    if (resolvedStops !== undefined) {
+      for (const stop of resolvedStops) {
+        
+        const stopRef = stop.stopId
+          ? tripRef.collection("stops").doc(stop.stopId)
+          : tripRef.collection("stops").doc(); // generate new ID
+
+        await stopRef.set({
+          ...stop,
+          stopId: stop.stopId ?? stopRef.id,
+        });
+      }
+    }
     await tripRef.update(updateData);
 
     await db.collection("events").add({
@@ -345,7 +379,8 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
       createdAt: new Date().toISOString(),
     });
 
-    res.json({ ok: true, ...updateData, route: routeResult });
+    res.json({ ok: true, ...updateData, stops: resolvedStops || req.stops! });
+
   } catch (err) {
     next(err);
   }
@@ -382,7 +417,7 @@ router.delete("/:id", requireRole("dispatcher", "admin"), async (req, res, next)
 /**
  * POST /trips/:id/route — compute route using Google Directions API
  */
-router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res, next) => {
+router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidationGuard, async (req, res, next) => {
   try {
     const tripDoc = await db.collection("trips").doc(req.params.id).get();
 
@@ -391,7 +426,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res, n
     }
 
     const trip = tripDoc.data();
-    const stops = trip?.stops || [];
+    const stops = req!.stops || [];
 
     if (stops.length < 2) {
       return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Need at least 2 stops to compute route"));
@@ -400,14 +435,31 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res, n
     const { route: routeResult, optimizedStops } = await computeRoute(stops);
 
     let routes = trip?.route || [];
+
+    if(!Array.isArray(routes)) {
+      routes = [];
+    }
     routes.push(routeResult);
 
   
     await db.collection("trips").doc(req.params.id).update({
       route: routes,
-      stops: optimizedStops,
       updatedAt: new Date().toISOString(),
     });
+
+    const batch = db.batch();
+    const tripRef = db.collection("trips").doc(req.params.id);
+
+    for (const stop of optimizedStops) {
+      const stopRef = tripRef.collection("stops").doc(stop.stopId);
+
+      batch.update(stopRef, {
+        ...stop,
+        stopId: stop.stopId,
+      });
+    }
+
+    await batch.commit();
 
     res.json({ ok: true, route: routeResult, stops: optimizedStops });
   } catch (err) {
@@ -420,7 +472,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), async (req, res, n
  * Drivers can move to in_progress or completed (if assigned to them).
  * Dispatchers can set any status.
  */
-router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard, async (req, res, next) => {
+router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard, tripStopsValidationGuard, async (req, res, next) => {
   const { status, currentLocation } = req.body;
 
   try {
@@ -449,11 +501,23 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
     };
 
     // When a driver starts a trip, optionally recompute route from their live location.
-    if (status === "in_progress" && currentLocation && Array.isArray(trip?.stops) && trip.stops.length > 0) {
+    if (status === "in_progress" && currentLocation && Array.isArray(req?.stops) && req.stops.length > 0) {
       try {
-        const { route: reroutedRoute, optimizedStops } = await computeRoute(trip.stops, currentLocation);
+        const { route: reroutedRoute, optimizedStops } = await computeRoute(req.stops, currentLocation);
         updateData.route = reroutedRoute;
-        updateData.stops = optimizedStops;
+        const batch = db.batch();
+        const tripRef = db.collection("trips").doc(req.params.id);
+
+        for (const stop of optimizedStops) {
+          const stopRef = tripRef.collection("stops").doc(stop.stopId);
+
+          batch.update(stopRef, {
+            ...stop,
+            stopId: stop.stopId,
+          });
+        }
+
+        await batch.commit();
       } catch (rerouteErr) {
         const rerouteMessage = rerouteErr instanceof Error ? rerouteErr.message : "Unknown reroute error";
         console.error("Failed to reroute trip from driver location:", rerouteMessage);
