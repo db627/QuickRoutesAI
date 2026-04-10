@@ -26,7 +26,7 @@ export interface WeatherForecastHour {
 }
 
 export interface StopWeather {
-  stopId: string;
+  address: string;
   lat: number;
   lng: number;
   current: WeatherCurrent;
@@ -177,7 +177,7 @@ export async function computeWeather(stops: TripStop[], forecastHours = 6): Prom
         }
 
         return {
-        stopId: stop.stopId,
+        address: stop.address,
         lat: stop.lat,
         lng: stop.lng,
         current: mapCurrentWeather(data.current),

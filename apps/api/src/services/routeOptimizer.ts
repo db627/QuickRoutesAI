@@ -8,7 +8,7 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
  * total driving distance/time while respecting delivery time windows.
  * The first stop (origin) stays fixed; all other stops are reordered.
  */
-export async function optimizeStopOrder(stops: TripStop[]): Promise<{ stops: TripStop[]; reasoning: string }> {
+export async function optimizeStopOrder(stops: TripStop[], weatherInfo?: any): Promise<{ stops: TripStop[]; reasoning: string }> {
   if (stops.length <= 2) return { stops, reasoning: "" };
 
   const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
@@ -26,14 +26,22 @@ export async function optimizeStopOrder(stops: TripStop[]): Promise<{ stops: Tri
     .join("\n");
 
   const hasTimeWindows = rest.some((s) => s.timeWindow);
-
+  
+  let weatherDataStr = "No weather data available";
+  if (weatherInfo !== undefined) {
+    weatherDataStr = weatherInfo.stops.map((w: any) => `Stop ${w.address} -- Current: ${w.current.main}, Temperature: ${w.current.temperatureF}°F, Precipitation Chance: ${w.current.precipitationChance}%, Visibility: ${w.current.visibilityMiles} miles, Wind Speed: ${w.current.windSpeedMph} mph, -- Forecast: ${w.forecast.map((f: any) => `${new Date(f.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} Time: ${f.main}, Temperature: ${f.temperatureF}°F, Wind Speed: ${f.windSpeedMph} mph, Precipitation Chance: ${f.precipitationChance}%`).join("; ")}`).join("\n\n");
+  }
+  
   const prompt = `You are a route optimization engine. Given a starting point and a list of delivery stops, return the optimal order to visit ALL stops.
 
-${hasTimeWindows ? "IMPORTANT: Some stops have delivery time windows. You MUST respect these constraints — visit those stops within their time windows. Balance time constraints with minimizing total driving distance.\n" : ""}Starting point (fixed, always first):
+${hasTimeWindows ? "IMPORTANT: Some stops have delivery time windows. You MUST respect these constraints — visit those stops within their time windows. Balance time constraints with minimizing total driving distance.\nIf weather information is provided, please consider it in your reasoning when deciding the order.\n" : ""}Starting point (fixed, always first):
   "${origin.address}" (lat: ${origin.lat}, lng: ${origin.lng})
 
 Stops to reorder:
 ${stopList}
+
+Weather information for stops (if available):
+${weatherDataStr}
 
 Return ONLY a JSON object with two keys:
 - "order": array of the stop indices in optimal visiting order (e.g. [2, 0, 4, 1, 3])
