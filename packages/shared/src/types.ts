@@ -44,6 +44,7 @@ export interface TripStop {
   lng: number;
   sequence: number;
   notes: string;
+  contact?: string;
   timeWindow?: TimeWindow;
   status?: StopStatus;
   completedAt?: string; // ISO 8601

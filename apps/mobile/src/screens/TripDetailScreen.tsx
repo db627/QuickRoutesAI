@@ -174,7 +174,7 @@ export default function TripDetailScreen({ route, navigation }: Props) {
         </MapView>
       </View>
 
-      {/* Trip info */}
+      {/* Trip info / status header */}
       <View className="mx-4 mt-3 rounded-xl border border-gray-200 bg-white px-5 py-3">
         <View className="flex-row items-center justify-between">
           <Text className="font-semibold text-gray-900">
@@ -187,10 +187,20 @@ export default function TripDetailScreen({ route, navigation }: Props) {
           </View>
         </View>
         {trip.route && (
-          <Text className="mt-1 text-xs text-gray-500">
-            {(trip.route.distanceMeters / 1000).toFixed(1)} km &middot;{" "}
-            {Math.round(trip.route.durationSeconds / 60)} min
-          </Text>
+          <View className="mt-1 flex-row items-center gap-2">
+            <Text className="text-xs text-gray-500">
+              {(trip.route.distanceMeters / 1000).toFixed(1)} km &middot;{" "}
+              {Math.round(trip.route.durationSeconds / 60)} min
+            </Text>
+            <Text className="text-xs text-gray-400">&middot;</Text>
+            <Text className="text-xs font-medium text-blue-600">
+              ETA{" "}
+              {new Date(Date.now() + trip.route.durationSeconds * 1000).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </Text>
+          </View>
         )}
       </View>
 
@@ -215,9 +225,17 @@ export default function TripDetailScreen({ route, navigation }: Props) {
                 <Text className="text-sm font-bold text-white">{index + 1}</Text>
               </View>
               <View className="flex-1">
-                <Text className={`text-sm ${isCompleted ? "text-gray-400 line-through" : "text-gray-900"}`}>
+                <Text className={`text-sm font-medium ${isCompleted ? "text-gray-400 line-through" : "text-gray-900"}`}>
                   {item.address}
                 </Text>
+                {item.contact ? (
+                  <Text className="text-xs text-gray-500">{item.contact}</Text>
+                ) : null}
+                {item.timeWindow ? (
+                  <Text className="text-xs text-amber-600">
+                    {item.timeWindow.start} – {item.timeWindow.end}
+                  </Text>
+                ) : null}
                 {item.notes ? <Text className="text-xs text-gray-400">{item.notes}</Text> : null}
                 {isCompleted && item.completedAt ? (
                   <Text className="text-xs text-green-600">
@@ -225,14 +243,24 @@ export default function TripDetailScreen({ route, navigation }: Props) {
                   </Text>
                 ) : null}
               </View>
-              {isNext && (
-                <TouchableOpacity
-                  onPress={() => markStopComplete(item.stopId)}
-                  className="ml-2 rounded-lg bg-green-500 px-3 py-1.5"
-                >
-                  <Text className="text-xs font-semibold text-white">Mark Complete</Text>
-                </TouchableOpacity>
-              )}
+              <View className="ml-2 flex-col gap-1">
+                {trip.status === "in_progress" && !isCompleted && (
+                  <TouchableOpacity
+                    onPress={() => openNavigation(trip.stops)}
+                    className="rounded-lg bg-blue-500 px-3 py-1.5"
+                  >
+                    <Text className="text-xs font-semibold text-white">Navigate</Text>
+                  </TouchableOpacity>
+                )}
+                {isNext && (
+                  <TouchableOpacity
+                    onPress={() => markStopComplete(item.stopId)}
+                    className="rounded-lg bg-green-500 px-3 py-1.5"
+                  >
+                    <Text className="text-xs font-semibold text-white">Mark Complete</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           );
         }}
