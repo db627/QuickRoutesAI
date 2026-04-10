@@ -50,6 +50,7 @@ export interface TripRoute {
   durationSeconds: number;
   naiveDistanceMeters?: number; // straight-line sum without route optimization
   fuelSavingsGallons?: number; // estimated fuel saved vs naive routing (US gallons)
+  reasoning?: string; // AI explanation of stop ordering decision
 }
 
 export interface Trip {

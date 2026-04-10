@@ -852,6 +852,16 @@ export default function TripDetailPage() {
         </div>
       </div>
 
+      {/* AI Route Reasoning */}
+      {trip.route?.reasoning && (
+        <div className="rounded-xl border border-brand-100 bg-brand-50 px-5 py-4">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-brand-600">
+            AI Route Reasoning
+          </p>
+          <p className="text-sm text-gray-700">{trip.route.reasoning}</p>
+        </div>
+      )}
+
       {/* Map */}
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         {MAPS_KEY ? (
