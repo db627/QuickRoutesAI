@@ -44,6 +44,7 @@ jest.mock('react-native-maps', () => ({
 }));
 
 const mockRoute = { params: { tripId: 'trip1' } };
+const mockNavigation = { navigate: jest.fn() };
 
 const baseTrip = {
   driverId: 'driver123',
@@ -83,39 +84,39 @@ describe('TripDetailScreen', () => {
 
   it('shows trip not found when document does not exist', () => {
     mockDocSnapshot(null);
-    const { getByText } = render(<TripDetailScreen route={mockRoute} />);
+    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
     expect(getByText('Trip Not Found')).toBeTruthy();
   });
 
   it('renders stop addresses for assigned trip', () => {
     mockDocSnapshot(assignedTrip);
-    const { getByText } = render(<TripDetailScreen route={mockRoute} />);
+    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
     expect(getByText('123 Main St')).toBeTruthy();
     expect(getByText('456 Oak Ave')).toBeTruthy();
   });
 
   it('renders stop notes when present', () => {
     mockDocSnapshot(assignedTrip);
-    const { getByText } = render(<TripDetailScreen route={mockRoute} />);
+    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
     expect(getByText('Ring bell')).toBeTruthy();
   });
 
   it('shows Start Trip button for assigned trip', () => {
     mockDocSnapshot(assignedTrip);
-    const { getByText } = render(<TripDetailScreen route={mockRoute} />);
+    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
     expect(getByText('Start Trip')).toBeTruthy();
   });
 
   it('shows Navigate and Complete Trip buttons for in_progress trip', () => {
     mockDocSnapshot(inProgressTrip);
-    const { getByText } = render(<TripDetailScreen route={mockRoute} />);
+    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
     expect(getByText('Navigate')).toBeTruthy();
     expect(getByText('Complete Trip')).toBeTruthy();
   });
 
   it('calls apiFetch and startTracking when Start Trip is tapped', async () => {
     mockDocSnapshot(assignedTrip);
-    const { getByText } = render(<TripDetailScreen route={mockRoute} />);
+    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
     fireEvent.press(getByText('Start Trip'));
     await waitFor(() => {
       expect(apiFetch).toHaveBeenCalledWith(
@@ -128,7 +129,7 @@ describe('TripDetailScreen', () => {
 
   it('shows confirmation dialog when Complete Trip is tapped', () => {
     mockDocSnapshot(inProgressTrip);
-    const { getByText } = render(<TripDetailScreen route={mockRoute} />);
+    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
     fireEvent.press(getByText('Complete Trip'));
     expect(Alert.alert).toHaveBeenCalledWith(
       'Complete Trip',
@@ -142,7 +143,7 @@ describe('TripDetailScreen', () => {
     (Alert.alert as jest.Mock).mockImplementation((_title, _msg, buttons) => {
       buttons.find((b: any) => b.text === 'Complete')?.onPress();
     });
-    const { getByText } = render(<TripDetailScreen route={mockRoute} />);
+    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
     fireEvent.press(getByText('Complete Trip'));
     await waitFor(() => {
       expect(apiFetch).toHaveBeenCalledWith(
@@ -158,7 +159,7 @@ describe('TripDetailScreen', () => {
     (Alert.alert as jest.Mock).mockImplementation((_title, _msg, buttons) => {
       buttons.find((b: any) => b.text === 'Cancel')?.onPress?.();
     });
-    const { getByText } = render(<TripDetailScreen route={mockRoute} />);
+    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
     fireEvent.press(getByText('Complete Trip'));
     await waitFor(() => {
       expect(apiFetch).not.toHaveBeenCalled();
@@ -168,7 +169,7 @@ describe('TripDetailScreen', () => {
   it('shows offline alert and skips apiFetch when network is unavailable', async () => {
     mockIsConnected = false;
     mockDocSnapshot(assignedTrip);
-    const { getByText } = render(<TripDetailScreen route={mockRoute} />);
+    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
     fireEvent.press(getByText('Start Trip'));
     await waitFor(() => {
       expect(Alert.alert).toHaveBeenCalledWith(
@@ -182,7 +183,7 @@ describe('TripDetailScreen', () => {
   it('shows error alert when apiFetch fails', async () => {
     mockDocSnapshot(assignedTrip);
     (apiFetch as jest.Mock).mockRejectedValue(new Error('API error'));
-    const { getByText } = render(<TripDetailScreen route={mockRoute} />);
+    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
     fireEvent.press(getByText('Start Trip'));
     await waitFor(() => {
       expect(Alert.alert).toHaveBeenCalledWith(
