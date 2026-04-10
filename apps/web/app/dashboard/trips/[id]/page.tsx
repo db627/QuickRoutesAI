@@ -231,6 +231,7 @@ function StopEditor({
       {
         stopId: crypto.randomUUID(),
         address: addr,
+        contactName: "",
         lat: 0,
         lng: 0,
         sequence: prev.length,
@@ -714,11 +715,8 @@ export default function TripDetailPage() {
   const canCancel = trip.status === "draft" || trip.status === "assigned";
   const canDuplicate = trip.status === "completed";
 
-  // Pre-fill stop addresses sorted by sequence
-  const initialStops = stops
-    .slice()
-    .sort((a, b) => a.sequence - b.sequence)
-    .map((s) => s.address);
+  // Pre-fill stops sorted by sequence
+  const initialStops = stops.slice().sort((a, b) => a.sequence - b.sequence);
 
   return (
     <div className="space-y-6">
@@ -851,6 +849,16 @@ export default function TripDetailPage() {
           )}
         </div>
       </div>
+
+      {/* AI Route Reasoning */}
+      {trip.route?.reasoning && (
+        <div className="rounded-xl border border-brand-100 bg-brand-50 px-5 py-4">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-brand-600">
+            AI Route Reasoning
+          </p>
+          <p className="text-sm text-gray-700">{trip.route.reasoning}</p>
+        </div>
+      )}
 
       {/* Map */}
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
