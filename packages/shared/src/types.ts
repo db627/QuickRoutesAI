@@ -49,6 +49,15 @@ export interface TripStop {
   status?: StopStatus;
   completedAt?: string; // ISO 8601
 }
+export interface RouteLeg {
+  fromStopId?: string;
+  toStopId?: string;
+  fromIndex: number;
+  toIndex: number;
+  distanceMeters: number;
+  durationSeconds: number;         // traffic-aware
+  staticDurationSeconds?: number;  // traffic-unaware
+};
 
 export interface TripRoute {
   polyline: string; // encoded polyline from Directions API
@@ -58,6 +67,7 @@ export interface TripRoute {
   input?: TripStop[];
   naiveDistanceMeters?: number; // straight-line sum without route optimization
   fuelSavingsGallons?: number; // estimated fuel saved vs naive routing (US gallons)
+  legs: RouteLeg[];
   reasoning?: string; // AI explanation of stop ordering decision
 }
 

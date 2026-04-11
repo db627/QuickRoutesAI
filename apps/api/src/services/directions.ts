@@ -1,5 +1,5 @@
 import { Client, TravelMode, Status } from "@googlemaps/google-maps-services-js";
-import type { TripRoute, TripStop } from "@quickroutesai/shared";
+import type { TripRoute, TripStop, RouteLeg } from "@quickroutesai/shared";
 import { optimizeStopOrder } from "./routeOptimizer";
 
 const client = new Client({});
@@ -79,6 +79,34 @@ interface RouteOrigin {
   lng: number;
 }
 
+const routeCache = new Map<string, { expiresAt: number; value: ComputeRouteResult }>();
+
+
+function buildRouteCacheKey(
+  stops: TripStop[],
+  originOverride?: RouteOrigin
+): string {
+  return JSON.stringify({
+    originOverride: originOverride
+      ? { lat: originOverride.lat, lng: originOverride.lng }
+      : null,
+    stops: stops
+      .slice()
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((s) => ({
+        lat: s.lat,
+        lng: s.lng,
+        sequence: s.sequence,
+      })),
+  });
+}
+
+function durationStrToSeconds(v?: string): number {
+  if (!v) return 0;
+  const match = /^([0-9]+(?:\.[0-9]+)?)s$/.exec(v);
+  return match ? Math.round(Number(match[1])) : 0;
+}
+
 /**
  * Compute an optimized route through stops.
  * 1. OpenAI reorders stops for the best driving order (origin stays first).
@@ -92,13 +120,30 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
 
   // Validate coordinates before doing anything
   for (const stop of sorted) {
-    if (typeof stop.lat !== "number" || typeof stop.lng !== "number" || isNaN(stop.lat) || isNaN(stop.lng)) {
-      throw new Error(`Invalid coordinates for stop "${stop.address}": lat=${stop.lat}, lng=${stop.lng}`);
+    if (
+      typeof stop.lat !== "number" ||
+      typeof stop.lng !== "number" ||
+      Number.isNaN(stop.lat) ||
+      Number.isNaN(stop.lng)
+    ) {
+      throw new Error(
+        `Invalid coordinates for stop "${stop.address}": lat=${stop.lat}, lng=${stop.lng}`
+      );
     }
   }
 
-  // Compute naive distance BEFORE optimization for fuel savings comparison
-  const naivePath = originOverride ? [{ lat: originOverride.lat, lng: originOverride.lng }, ...sorted] : sorted;
+  const cacheKey = buildRouteCacheKey(sorted, originOverride);
+  const cached = routeCache.get(cacheKey);
+  console.log("Cache", { cacheKey, hit: !!cached });
+  if (cached && cached.expiresAt > Date.now()) {
+    console.log("Using cached route for stops:", sorted.map((s) => s.address));
+    return cached.value;
+  }
+
+  const naivePath = originOverride
+    ? [{ lat: originOverride.lat, lng: originOverride.lng }, ...sorted]
+    : sorted;
+
   const naiveDistanceMeters = Math.round(naiveTotalDistance(naivePath));
 
   // Step 1: Use OpenAI to find the optimal stop order
@@ -117,9 +162,8 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
 
       const withOrigin = sorted.map((s, idx) => ({ ...s, sequence: idx + 1 }));
       const optimizedWithOrigin = await optimizeStopOrder([syntheticOrigin, ...withOrigin]);
-      optimizedStops = optimizedWithOrigin.stops
-        .slice(1)
-        .map((s, idx) => ({ ...s, sequence: idx }));
+
+      optimizedStops = optimizedWithOrigin.slice(1).map((s, idx) => ({ ...s, sequence: idx }));
       optimizationReasoning = optimizedWithOrigin.reasoning;
     } else {
       const result = await optimizeStopOrder(sorted);
@@ -135,66 +179,123 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
   // Step 2: Compute the actual route via Google Directions using optimized order
   const origin = originOverride ?? optimizedStops[0];
   const destination = optimizedStops[optimizedStops.length - 1];
-  const waypoints = originOverride
+  const intermediates = originOverride
     ? optimizedStops.slice(0, -1)
     : optimizedStops.slice(1, -1);
 
-  try {
-    const waypointParams = waypoints.length > 0
-      ? waypoints.map((wp) => ({ lat: wp.lat, lng: wp.lng }))
-      : undefined;
-
-    const response = await client.directions({
-      params: {
-        origin: { lat: origin.lat, lng: origin.lng },
-        destination: { lat: destination.lat, lng: destination.lng },
-        ...(waypointParams && { waypoints: waypointParams }),
-        mode: TravelMode.driving,
-        key: apiKey,
+  const body = {
+    origin: {
+      location: {
+        latLng: {
+          latitude: origin.lat,
+          longitude: origin.lng,
+        },
       },
-    });
-    
-    if (response.data.status !== Status.OK) {
-      throw new Error(
-        `Directions API error: ${response.data.status}` +
-          (response.data.error_message ? ` - ${response.data.error_message}` : ""),
-      );
-    }
-
-    const route = response.data.routes[0];
-    if (!route) {
-      throw new Error("No route found from Directions API");
-    }
-
-    // Sum up total distance and duration across all legs
-    let distanceMeters = 0;
-    let durationSeconds = 0;
-    for (const leg of route.legs) {
-      distanceMeters += leg.distance.value;
-      durationSeconds += leg.duration.value;
-    }
-
-    // Estimate fuel savings vs naive (original order) routing
-    const distanceSavedMeters = Math.max(naiveDistanceMeters - distanceMeters, 0);
-    const fuelSavingsGallons = Math.round(distanceSavedMeters * FUEL_CONSUMPTION_GAL_PER_M * 100) / 100;
-
-    return {
-      route: {
-        polyline: route.overview_polyline.points,
-        distanceMeters,
-        durationSeconds,
-        naiveDistanceMeters,
-        fuelSavingsGallons,
-        createdAt: new Date().toISOString(),
-        input: sorted,
-        ...(optimizationReasoning && { reasoning: optimizationReasoning }),
+    },
+    destination: {
+      location: {
+        latLng: {
+          latitude: destination.lat,
+          longitude: destination.lng,
+        },
       },
-      optimizedStops,
-    };
-  } catch (err) {
-    console.log(err)
-    if (err instanceof Error && err.message.startsWith("Directions API error")) throw err;
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Directions request failed: ${msg}`);
+    },
+    intermediates: intermediates.map((s) => ({
+      location: {
+        latLng: {
+          latitude: s.lat,
+          longitude: s.lng,
+        },
+      },
+    })),
+    travelMode: "DRIVE",
+    routingPreference: "TRAFFIC_AWARE",
+    departureTime: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
+    computeAlternativeRoutes: false,
+  };
+
+  const fieldMask = [
+    "routes.distanceMeters",
+    "routes.duration",
+    "routes.staticDuration",
+    "routes.polyline.encodedPolyline",
+    "routes.legs.distanceMeters",
+    "routes.legs.duration",
+    "routes.legs.staticDuration",
+  ].join(",");
+
+  const response = await fetch(
+    "https://routes.googleapis.com/directions/v2:computeRoutes",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": fieldMask,
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Routes API error: ${response.status} ${text}`);
   }
+
+  const json:any = await response.json();
+  const route = json.routes?.[0];
+
+  if (!route) {
+    throw new Error("No route found from Routes API");
+  }
+
+  const legs: RouteLeg[] = (route.legs ?? []).map((leg: any, i: number) => ({
+    fromIndex: i,
+    toIndex: i + 1,
+    fromStopId: originOverride
+      ? (i === 0 ? "__driver_origin__" : optimizedStops[i - 1]?.stopId)
+      : optimizedStops[i]?.stopId,
+    toStopId: originOverride
+      ? optimizedStops[i]?.stopId
+      : optimizedStops[i + 1]?.stopId,
+    distanceMeters: leg.distanceMeters ?? 0,
+    durationSeconds: durationStrToSeconds(leg.duration),
+    staticDurationSeconds: leg.staticDuration
+      ? durationStrToSeconds(leg.staticDuration)
+      : undefined,
+  }));
+
+  const distanceMeters = route.distanceMeters ?? legs.reduce((sum, leg) => sum + leg.distanceMeters, 0);
+  const durationSeconds =
+    durationStrToSeconds(route.duration) ||
+    legs.reduce((sum, leg) => sum + leg.durationSeconds, 0);
+
+  const staticDurationSeconds = route.staticDuration
+    ? durationStrToSeconds(route.staticDuration)
+    : undefined;
+
+  const distanceSavedMeters = Math.max(naiveDistanceMeters - distanceMeters, 0);
+  const fuelSavingsGallons =
+    Math.round(distanceSavedMeters * FUEL_CONSUMPTION_GAL_PER_M * 100) / 100;
+
+  const result: ComputeRouteResult = {
+    route: {
+      polyline: route.polyline?.encodedPolyline ?? "",
+      distanceMeters,
+      durationSeconds,
+      naiveDistanceMeters,
+      fuelSavingsGallons,
+      legs,
+      reasoning: optimizationReasoning,
+      createdAt: new Date().toISOString(),
+    },
+    optimizedStops,
+  };
+
+  routeCache.set(cacheKey, {
+    expiresAt: Date.now() + 5 * 60 * 1000,
+    value: result,
+  });
+
+  return result;
 }
