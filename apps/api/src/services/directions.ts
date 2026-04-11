@@ -1,7 +1,7 @@
 import { Client, TravelMode, Status } from "@googlemaps/google-maps-services-js";
 import type { TripRoute, TripStop, RouteLeg } from "@quickroutesai/shared";
 import { optimizeStopOrder } from "./routeOptimizer";
-
+import { computeWeather } from "./weather";
 const client = new Client({});
 
 // Average fuel consumption: ~27.7 MPG (mid-size delivery vehicle ≈ 8.5 L/100km)
@@ -150,6 +150,9 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
   let optimizedStops: TripStop[];
   let optimizationReasoning = "";
   try {
+    const weatherInfo = await computeWeather(stops) || undefined;
+
+    
     if (originOverride) {
       const syntheticOrigin: TripStop = {
         stopId: "__driver_origin__",
@@ -160,13 +163,14 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
         notes: "",
       };
 
+  
       const withOrigin = sorted.map((s, idx) => ({ ...s, sequence: idx + 1 }));
-      const optimizedWithOrigin = await optimizeStopOrder([syntheticOrigin, ...withOrigin]);
+      const optimizedWithOrigin = await optimizeStopOrder([syntheticOrigin, ...withOrigin], weatherInfo);
 
       optimizedStops = optimizedWithOrigin.slice(1).map((s, idx) => ({ ...s, sequence: idx }));
       optimizationReasoning = optimizedWithOrigin.reasoning;
     } else {
-      const result = await optimizeStopOrder(sorted);
+      const result = await optimizeStopOrder(sorted, weatherInfo);
       optimizedStops = result.stops;
       optimizationReasoning = result.reasoning;
     }
