@@ -22,6 +22,10 @@ router.post("/location", validate(locationPingSchema), async (req, res) => {
 
   try {
     // Update driver document
+
+    //Proposal: store last location, with timestamp, possibly encode into a polyline for historical tracking.
+    // Historical location data can be stored in a separate collection if needed for analytics or route replay features.
+    // This keeps the driver document lightweight for frequent updates while still allowing us to track location history if desired.
     await db
       .collection("drivers")
       .doc(req.uid)

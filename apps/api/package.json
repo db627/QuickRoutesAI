@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@googlemaps/google-maps-services-js": "^3.4.0",
+    "@googlemaps/polyline-codec": "^1.0.28",
     "@quickroutesai/shared": "workspace:*",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

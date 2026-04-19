@@ -1,4 +1,5 @@
 import { Client, TravelMode, Status } from "@googlemaps/google-maps-services-js";
+import { decode } from "@googlemaps/polyline-codec";
 import type { TripRoute, TripStop, RouteLeg } from "@quickroutesai/shared";
 import { optimizeStopOrder } from "./routeOptimizer";
 import { computeWeather } from "./weather";
@@ -226,6 +227,7 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
     "routes.legs.distanceMeters",
     "routes.legs.duration",
     "routes.legs.staticDuration",
+    "routes.legs.polyline.encodedPolyline",
   ].join(",");
 
   const response = await fetch(
@@ -267,6 +269,7 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
     staticDurationSeconds: leg.staticDuration
       ? durationStrToSeconds(leg.staticDuration)
       : undefined,
+      polyline: leg.polyline?.encodedPolyline ?? "",
   }));
 
   const distanceMeters = route.distanceMeters ?? legs.reduce((sum, leg) => sum + leg.distanceMeters, 0);

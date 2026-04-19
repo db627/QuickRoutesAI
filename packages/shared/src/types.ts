@@ -57,6 +57,7 @@ export interface RouteLeg {
   distanceMeters: number;
   durationSeconds: number;         // traffic-aware
   staticDurationSeconds?: number;  // traffic-unaware
+  polyline?: string; // encoded polyline from Directions API
 };
 
 export interface TripRoute {
