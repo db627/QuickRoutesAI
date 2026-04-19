@@ -101,13 +101,21 @@ export default function OnboardingPage() {
   const persistProgress = useCallback(
     async (nextStep: 1 | 2 | 3, mergedData: WizardData) => {
       const dataForApi: WizardProgressInput["data"] = {};
-      if (Object.keys(mergedData.orgBasics).length) {
+
+      const hasOrgBasicsData = Object.values(mergedData.orgBasics).some(Boolean);
+      if (hasOrgBasicsData) {
         dataForApi.orgBasics = mergedData.orgBasics as OrgBasicsInput;
       }
-      if (mergedData.address.street) {
+
+      const hasAddressData = Object.keys(mergedData.address).some(
+        (k) => k !== "country" && Boolean(mergedData.address[k as keyof OrgAddressInput]),
+      );
+      if (hasAddressData) {
         dataForApi.address = mergedData.address as OrgAddressInput;
       }
-      if (Object.keys(mergedData.adminProfile).length) {
+
+      const hasAdminProfileData = Object.values(mergedData.adminProfile).some(Boolean);
+      if (hasAdminProfileData) {
         dataForApi.adminProfile = mergedData.adminProfile as AdminProfileInput;
       }
       try {
