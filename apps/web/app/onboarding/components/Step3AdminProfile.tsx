@@ -13,7 +13,6 @@ export function validateStep3(value: Partial<AdminProfileInput>) {
 }
 
 function getTimezones(): string[] {
-  // @ts-expect-error — supportedValuesOf exists on modern runtimes
   const list: string[] | undefined = typeof Intl.supportedValuesOf === "function"
     ? (Intl as any).supportedValuesOf("timeZone")
     : undefined;
