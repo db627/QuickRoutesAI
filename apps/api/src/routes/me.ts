@@ -60,7 +60,12 @@ router.patch(
   validate(wizardProgressSchema),
   async (req, res, next: NextFunction) => {
     try {
-      await db.collection("users").doc(req.uid).update({
+      const userRef = db.collection("users").doc(req.uid);
+      const snap = await userRef.get();
+      if (!snap.exists) {
+        return next(new AppError(ErrorCode.USER_NOT_FOUND, 404, "User profile not found"));
+      }
+      await userRef.update({
         wizardProgress: {
           currentStep: req.body.currentStep,
           data: req.body.data,

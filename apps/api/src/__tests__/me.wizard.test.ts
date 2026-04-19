@@ -143,4 +143,38 @@ describe("PATCH /me/wizard-progress", () => {
 
     expect(res.status).toBe(403);
   });
+
+  it("PATCH 404 when user doc is missing", async () => {
+    const uid = "admin-ghost";
+    setupMockUser(uid, "admin");
+    // verifyFirebaseToken calls users.doc().get() once (returns admin role);
+    // the handler then calls users.doc().get() a second time (returns missing).
+    let getUserCallCount = 0;
+    db.collection.mockImplementation((col: string) => {
+      if (col === "users") {
+        return {
+          doc: (_id: string) => ({
+            get: jest.fn().mockImplementation(() => {
+              getUserCallCount += 1;
+              if (getUserCallCount === 1) {
+                // First call: verifyFirebaseToken — user exists with admin role
+                return Promise.resolve({ exists: true, data: () => ({ role: "admin" }) });
+              }
+              // Second call: handler existence check — doc missing
+              return Promise.resolve({ exists: false, data: () => null });
+            }),
+            update: jest.fn(),
+          }),
+        };
+      }
+      return { doc: jest.fn().mockReturnThis(), get: jest.fn().mockResolvedValue({ exists: false }) };
+    });
+
+    const res = await request(app)
+      .patch("/me/wizard-progress")
+      .set("Authorization", "Bearer fake-token")
+      .send({ currentStep: 1, data: {} });
+
+    expect(res.status).toBe(404);
+  });
 });
