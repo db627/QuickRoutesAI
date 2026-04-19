@@ -39,8 +39,10 @@ describe("DashboardLayout", () => {
     mockedUseAuth.mockReturnValue({
       user: { uid: "u1" } as never,
       role: "admin",
+      orgId: null,
       loading: false,
       logout: jest.fn(),
+      refresh: jest.fn(),
     });
   });
 
