@@ -4,6 +4,11 @@ import {
   assignTripSchema,
   updateTripStatusSchema,
   createUserProfileSchema,
+  orgAddressSchema,
+  orgBasicsSchema,
+  adminProfileSchema,
+  wizardProgressSchema,
+  createOrgSchema,
 } from "@quickroutesai/shared";
 
 describe("locationPingSchema", () => {
@@ -137,14 +142,6 @@ describe("createUserProfileSchema", () => {
     expect(createUserProfileSchema.safeParse({ name: "Test", role: "superadmin" }).success).toBe(false);
   });
 });
-
-import {
-  orgAddressSchema,
-  orgBasicsSchema,
-  adminProfileSchema,
-  wizardProgressSchema,
-  createOrgSchema,
-} from "@quickroutesai/shared";
 
 describe("orgAddressSchema", () => {
   it("accepts a valid address", () => {
