@@ -1,20 +1,21 @@
-import { Router } from "express";
+import { Router, NextFunction } from "express";
 import { db } from "../config/firebase";
 import { requireRole } from "../middleware/auth";
 import { validate } from "../middleware/validate";
-import { wizardProgressSchema } from "@quickroutesai/shared";
+import { wizardProgressSchema, ErrorCode } from "@quickroutesai/shared";
+import { AppError } from "../utils/AppError";
 
 const router = Router();
 
 /**
  * GET /me — returns the authenticated user's profile + role
  */
-router.get("/", async (req, res) => {
+router.get("/", async (req, res, next: NextFunction) => {
   try {
     const userDoc = await db.collection("users").doc(req.uid).get();
 
     if (!userDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "User profile not found" });
+      return next(new AppError(ErrorCode.USER_NOT_FOUND, 404, "User profile not found"));
     }
 
     const data = userDoc.data();
@@ -29,7 +30,8 @@ router.get("/", async (req, res) => {
       createdAt: data?.createdAt || null,
     });
   } catch (err) {
-    res.status(500).json({ error: "Internal Error", message: "Failed to fetch profile" });
+    console.error("ME ROUTE ERROR:", err);
+    next(err);
   }
 });
 
@@ -37,13 +39,14 @@ router.get("/", async (req, res) => {
  * GET /me/wizard-progress — returns saved wizard state or null.
  * Admin only.
  */
-router.get("/wizard-progress", requireRole("admin"), async (req, res) => {
+router.get("/wizard-progress", requireRole("admin"), async (req, res, next: NextFunction) => {
   try {
     const userDoc = await db.collection("users").doc(req.uid).get();
     const progress = userDoc.exists ? userDoc.data()?.wizardProgress ?? null : null;
     res.json({ wizardProgress: progress });
   } catch (err) {
-    res.status(500).json({ error: "Internal Error", message: "Failed to fetch wizard progress" });
+    console.error("ME ROUTE ERROR:", err);
+    next(err);
   }
 });
 
@@ -55,7 +58,7 @@ router.patch(
   "/wizard-progress",
   requireRole("admin"),
   validate(wizardProgressSchema),
-  async (req, res) => {
+  async (req, res, next: NextFunction) => {
     try {
       await db.collection("users").doc(req.uid).update({
         wizardProgress: {
@@ -66,7 +69,8 @@ router.patch(
       });
       res.status(204).send();
     } catch (err) {
-      res.status(500).json({ error: "Internal Error", message: "Failed to save wizard progress" });
+      console.error("ME ROUTE ERROR:", err);
+      next(err);
     }
   },
 );
