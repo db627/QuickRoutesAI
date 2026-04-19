@@ -44,6 +44,10 @@ jest.mock('react-native-maps', () => ({
   PROVIDER_GOOGLE: 'google',
 }));
 
+jest.mock('../hooks/useCurrentPosition', () => ({
+  useCurrentPosition: () => null,
+}));
+
 const mockRoute = { params: { tripId: 'trip1' } };
 const mockNavigation = { navigate: jest.fn() };
 
@@ -91,8 +95,9 @@ describe('TripDetailScreen', () => {
 
   it('renders stop addresses for assigned trip', () => {
     mockDocSnapshot(assignedTrip);
-    const { getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
-    expect(getByText('123 Main St')).toBeTruthy();
+    const { getAllByText, getByText } = render(<TripDetailScreen route={mockRoute} navigation={mockNavigation} />);
+    // First stop may appear in both the stop list and the ETA card
+    expect(getAllByText('123 Main St').length).toBeGreaterThanOrEqual(1);
     expect(getByText('456 Oak Ave')).toBeTruthy();
   });
 

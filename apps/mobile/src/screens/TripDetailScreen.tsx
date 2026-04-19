@@ -8,6 +8,7 @@ import type { Trip } from "@quickroutesai/shared";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import { openNavigation } from "../services/navigation";
 import { startTracking, stopTracking } from "../services/location";
+import TripETA from "../components/TripETA";
 
 function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
   const points: { latitude: number; longitude: number }[] = [];
@@ -139,7 +140,8 @@ export default function TripDetailScreen({ route, navigation }: Props) {
   }
 
   const routeCoords = trip.route?.polyline ? decodePolyline(trip.route.polyline) : [];
-  const sortedStops = [...trip.stops].sort((a, b) => a.sequence - b.sequence);
+  const stops = Array.isArray(trip.stops) ? trip.stops : [];
+  const sortedStops = [...stops].sort((a, b) => a.sequence - b.sequence);
 
   return (
     <View className="flex-1 bg-gray-50">
@@ -178,7 +180,7 @@ export default function TripDetailScreen({ route, navigation }: Props) {
       <View className="mx-4 mt-3 rounded-xl border border-gray-200 bg-white px-5 py-3">
         <View className="flex-row items-center justify-between">
           <Text className="font-semibold text-gray-900">
-            {trip.stops.length} stop{trip.stops.length !== 1 && "s"}
+            {stops.length} stop{stops.length !== 1 && "s"}
           </Text>
           <View className={`rounded-full px-3 py-1 ${statusBg(trip.status)}`}>
             <Text className={`text-xs font-medium ${statusText(trip.status)}`}>
@@ -192,17 +194,11 @@ export default function TripDetailScreen({ route, navigation }: Props) {
               {(trip.route.distanceMeters / 1000).toFixed(1)} km &middot;{" "}
               {Math.round(trip.route.durationSeconds / 60)} min
             </Text>
-            <Text className="text-xs text-gray-400">&middot;</Text>
-            <Text className="text-xs font-medium text-blue-600">
-              ETA{" "}
-              {new Date(Date.now() + trip.route.durationSeconds * 1000).toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </Text>
           </View>
         )}
       </View>
+
+      <TripETA trip={trip} />
 
       {/* Stop list */}
       <FlatList
@@ -246,7 +242,7 @@ export default function TripDetailScreen({ route, navigation }: Props) {
               <View className="ml-2 flex-col gap-1">
                 {trip.status === "in_progress" && !isCompleted && (
                   <TouchableOpacity
-                    onPress={() => openNavigation(trip.stops)}
+                    onPress={() => openNavigation(stops)}
                     className="rounded-lg bg-blue-500 px-3 py-1.5"
                   >
                     <Text className="text-xs font-semibold text-white">Navigate</Text>
@@ -279,7 +275,7 @@ export default function TripDetailScreen({ route, navigation }: Props) {
         {trip.status === "in_progress" && (
           <View className="flex-row gap-3">
             <TouchableOpacity
-              onPress={() => openNavigation(trip.stops)}
+              onPress={() => openNavigation(stops)}
               disabled={!trip.route}
               className={`flex-1 items-center rounded-xl py-3 ${
                 trip.route ? "bg-blue-500" : "bg-gray-300"
