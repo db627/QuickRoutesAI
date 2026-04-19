@@ -90,3 +90,44 @@ export const updateUserSchema = z.object({
   status: z.enum(["active", "deactivated"]).optional(),
 });
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+
+// ── Organization ──
+export const orgAddressSchema = z.object({
+  street: z.string().min(1).max(200),
+  city: z.string().min(1).max(100),
+  state: z.string().min(1).max(50),
+  zip: z.string().min(1).max(20),
+  country: z.string().length(2).default("US"),
+});
+export type OrgAddressInput = z.infer<typeof orgAddressSchema>;
+
+export const orgBasicsSchema = z.object({
+  name: z.string().min(1).max(120),
+  industry: z.enum(["delivery", "logistics", "field_service", "other"]),
+  fleetSize: z.enum(["1-5", "6-20", "21-50", "51-200", "200+"]),
+});
+export type OrgBasicsInput = z.infer<typeof orgBasicsSchema>;
+
+export const adminProfileSchema = z.object({
+  name: z.string().min(1).max(100),
+  phone: z.string().min(7).max(20),
+  timezone: z.string().min(1).max(64),
+});
+export type AdminProfileInput = z.infer<typeof adminProfileSchema>;
+
+export const wizardProgressSchema = z.object({
+  currentStep: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  data: z.object({
+    orgBasics: orgBasicsSchema.optional(),
+    address: orgAddressSchema.optional(),
+    adminProfile: adminProfileSchema.optional(),
+  }),
+});
+export type WizardProgressInput = z.infer<typeof wizardProgressSchema>;
+
+export const createOrgSchema = z.object({
+  orgBasics: orgBasicsSchema,
+  address: orgAddressSchema,
+  adminProfile: adminProfileSchema,
+});
+export type CreateOrgInput = z.infer<typeof createOrgSchema>;

@@ -137,3 +137,147 @@ describe("createUserProfileSchema", () => {
     expect(createUserProfileSchema.safeParse({ name: "Test", role: "superadmin" }).success).toBe(false);
   });
 });
+
+import {
+  orgAddressSchema,
+  orgBasicsSchema,
+  adminProfileSchema,
+  wizardProgressSchema,
+  createOrgSchema,
+} from "@quickroutesai/shared";
+
+describe("orgAddressSchema", () => {
+  it("accepts a valid address", () => {
+    const r = orgAddressSchema.safeParse({
+      street: "1 Main St",
+      city: "Boston",
+      state: "MA",
+      zip: "02101",
+      country: "US",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("defaults country to US", () => {
+    const r = orgAddressSchema.safeParse({
+      street: "1 Main St",
+      city: "Boston",
+      state: "MA",
+      zip: "02101",
+    });
+    expect(r.success).toBe(true);
+    expect(r.success && r.data.country).toBe("US");
+  });
+
+  it("rejects empty street", () => {
+    const r = orgAddressSchema.safeParse({
+      street: "",
+      city: "Boston",
+      state: "MA",
+      zip: "02101",
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe("orgBasicsSchema", () => {
+  it("accepts a valid payload", () => {
+    const r = orgBasicsSchema.safeParse({
+      name: "Acme Delivery",
+      industry: "delivery",
+      fleetSize: "6-20",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects unknown industry", () => {
+    const r = orgBasicsSchema.safeParse({
+      name: "Acme",
+      industry: "banking",
+      fleetSize: "6-20",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects unknown fleetSize bucket", () => {
+    const r = orgBasicsSchema.safeParse({
+      name: "Acme",
+      industry: "delivery",
+      fleetSize: "1000",
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe("adminProfileSchema", () => {
+  it("accepts a valid profile", () => {
+    const r = adminProfileSchema.safeParse({
+      name: "Alice",
+      phone: "555-1234",
+      timezone: "America/New_York",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects short phone", () => {
+    const r = adminProfileSchema.safeParse({
+      name: "Alice",
+      phone: "12",
+      timezone: "America/New_York",
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe("wizardProgressSchema", () => {
+  it("accepts step 1 with only orgBasics", () => {
+    const r = wizardProgressSchema.safeParse({
+      currentStep: 1,
+      data: {
+        orgBasics: { name: "Acme", industry: "delivery", fleetSize: "1-5" },
+      },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects currentStep out of range", () => {
+    const r = wizardProgressSchema.safeParse({
+      currentStep: 4,
+      data: {},
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe("createOrgSchema", () => {
+  it("accepts a complete payload", () => {
+    const r = createOrgSchema.safeParse({
+      orgBasics: { name: "Acme", industry: "delivery", fleetSize: "1-5" },
+      address: {
+        street: "1 Main St",
+        city: "Boston",
+        state: "MA",
+        zip: "02101",
+        country: "US",
+      },
+      adminProfile: {
+        name: "Alice",
+        phone: "555-1234",
+        timezone: "America/New_York",
+      },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects when address is missing", () => {
+    const r = createOrgSchema.safeParse({
+      orgBasics: { name: "Acme", industry: "delivery", fleetSize: "1-5" },
+      adminProfile: {
+        name: "Alice",
+        phone: "555-1234",
+        timezone: "America/New_York",
+      },
+    });
+    expect(r.success).toBe(false);
+  });
+});
