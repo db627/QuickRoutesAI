@@ -51,21 +51,17 @@ router.post(
         updatedAt: now,
       };
 
-      let conflict = false;
-
       await db.runTransaction(async (tx) => {
         const snap = await tx.get(userRef);
-        if (snap.exists && snap.data()?.orgId) {
-          conflict = true;
-          return;
+        if (!snap.exists) {
+          throw new AppError(ErrorCode.USER_NOT_FOUND, 404, "User profile not found");
+        }
+        if (snap.data()?.orgId) {
+          throw new AppError(ErrorCode.CONFLICT, 409, "User already belongs to an organization");
         }
         tx.set(orgRef, org);
         tx.update(userRef, userPatch);
       });
-
-      if (conflict) {
-        return next(new AppError(ErrorCode.CONFLICT, 409, "User already belongs to an organization"));
-      }
 
       res.status(201).json({
         org,

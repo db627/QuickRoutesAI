@@ -180,4 +180,37 @@ describe("POST /orgs", () => {
 
     expect(res.status).toBe(409);
   });
+
+  it("404 when the user doc is missing mid-transaction", async () => {
+    const uid = "admin-1";
+    setupMockUser(uid, "admin");
+    // Setup mocks manually so tx.get returns { exists: false }
+    const txGet = jest.fn().mockResolvedValue({ exists: false, data: () => null });
+    const txUpdate = jest.fn();
+    const txSet = jest.fn();
+    db.runTransaction = jest.fn(async (fn: any) => fn({ get: txGet, update: txUpdate, set: txSet }));
+    db.collection.mockImplementation((col: string) => {
+      if (col === "users") {
+        return {
+          doc: (_id: string) => ({
+            get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "admin" }) }),
+            id: uid,
+          }),
+        };
+      }
+      if (col === "orgs") {
+        return { doc: jest.fn().mockReturnValue({ id: "new-org-id-abc" }) };
+      }
+      return { doc: jest.fn().mockReturnThis(), get: jest.fn().mockResolvedValue({ exists: false }) };
+    });
+
+    const res = await request(app)
+      .post("/orgs")
+      .set("Authorization", "Bearer fake-token")
+      .send(validPayload);
+
+    expect(res.status).toBe(404);
+    expect(txSet).not.toHaveBeenCalled();
+    expect(txUpdate).not.toHaveBeenCalled();
+  });
 });
