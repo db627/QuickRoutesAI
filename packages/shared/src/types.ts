@@ -94,6 +94,22 @@ export interface DriverEvent {
   createdAt: string;
 }
 
+// ── Insights ──
+export interface DailyInsights {
+  date: string;              // YYYY-MM-DD (date-only; what day the insights cover)
+  highlights: string[];      // 1-5 bullet points
+  concerns: string[];        // 1-5 bullet points
+  recommendations: string[]; // 1-5 bullet points
+  generatedAt: string;       // ISO timestamp when AI call was made
+  stats: {
+    tripsCompleted: number;
+    tripsCancelled: number;
+    activeDrivers: number;
+    avgDurationSeconds?: number;
+    avgEtaErrorMinutes?: number;
+  };
+}
+
 // ── API Responses ──
 import type { ErrorCode } from "./errors";
 

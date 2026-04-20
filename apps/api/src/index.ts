@@ -12,6 +12,7 @@ import driverRoutes from "./routes/drivers";
 import tripRoutes from "./routes/trips";
 import userRoutes from "./routes/users";
 import aiRoutes from "./routes/ai";
+import insightsRoutes from "./routes/insights";
 import quoteRoutes from "./routes/quote";
 import { errorHandler } from "./middleware/errorHandler";
 const app = express();
@@ -33,6 +34,7 @@ app.use("/drivers", verifyFirebaseToken, driverRoutes);
 app.use("/trips", verifyFirebaseToken, tripRoutes);
 app.use("/users", verifyFirebaseToken, userRoutes);
 app.use("/ai", verifyFirebaseToken, aiRoutes);
+app.use("/insights", verifyFirebaseToken, insightsRoutes);
 
 // Global error handler
 app.use(errorHandler);
