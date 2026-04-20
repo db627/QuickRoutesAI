@@ -11,11 +11,13 @@ import {
   ErrorCode,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
+import { predictEta } from "../services/etaPredictor";
 import { randomUUID } from "crypto";
 import { pagination } from "../middleware/pagination";
 import { paginateFirestore } from "../utils/paginateFirestore";
 import { tripStopsValidationGuard, tripTransitionGuard } from "../middleware/trips";
 import { AppError } from "../utils/AppError";
+import type { PredictedEta, Trip, TripStop } from "@quickroutesai/shared";
 
 const router = Router();
 
@@ -468,6 +470,57 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidatio
 });
 
 /**
+ * POST /trips/:id/predict-eta — generate an AI-adjusted ETA for the trip.
+ * Dispatcher + admin only. Persists the prediction on the trip doc.
+ */
+router.post("/:id/predict-eta", requireRole("dispatcher", "admin"), async (req, res, next) => {
+  try {
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
+
+    if (!tripDoc.exists) {
+      return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
+    }
+
+    const tripData = tripDoc.data();
+
+    // Materialize stops from the subcollection so predictEta can use them.
+    const stopsSnap = await tripRef.collection("stops").get();
+    const stops: TripStop[] = stopsSnap.docs.map((d) => d.data() as TripStop);
+
+    // Normalize the route field: existing trips may store an array of routes
+    // (from successive reroutes) or a single TripRoute.
+    let route = tripData?.route ?? null;
+    if (Array.isArray(route)) {
+      route = route[route.length - 1] ?? null;
+    }
+
+    const trip: Trip = {
+      id: tripDoc.id,
+      driverId: tripData?.driverId ?? null,
+      createdBy: tripData?.createdBy ?? "",
+      status: tripData?.status ?? "draft",
+      stops,
+      route,
+      notes: tripData?.notes ?? null,
+      createdAt: tripData?.createdAt ?? new Date().toISOString(),
+      updatedAt: tripData?.updatedAt ?? new Date().toISOString(),
+    };
+
+    const prediction = await predictEta(trip);
+
+    await tripRef.update({
+      predictedEta: prediction,
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.json({ ok: true, prediction });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * POST /trips/:id/status — update trip status
  * Drivers can move to in_progress or completed (if assigned to them).
  * Dispatchers can set any status.
@@ -499,6 +552,28 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
       status,
       updatedAt: new Date().toISOString(),
     };
+
+    // Accuracy tracking: when a trip with a prior prediction completes,
+    // record the actual arrival time and error vs the predicted arrival.
+    if (
+      status === "completed" &&
+      trip?.predictedEta &&
+      !trip.predictedEta.actualArrivalAt
+    ) {
+      const existing = trip.predictedEta as PredictedEta;
+      const actualArrivalAt = new Date().toISOString();
+      const predictedMs = new Date(existing.predictedArrivalAt).getTime();
+      const actualMs = new Date(actualArrivalAt).getTime();
+      const errorMinutes = Number.isFinite(predictedMs)
+        ? Math.abs((actualMs - predictedMs) / 60000)
+        : 0;
+
+      updateData.predictedEta = {
+        ...existing,
+        actualArrivalAt,
+        errorMinutes,
+      };
+    }
 
     // When a driver starts a trip, optionally recompute route from their live location.
     if (status === "in_progress" && currentLocation && Array.isArray(req?.stops) && req.stops.length > 0) {

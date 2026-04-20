@@ -71,6 +71,25 @@ export interface TripRoute {
   reasoning?: string; // AI explanation of stop ordering decision
 }
 
+// ── Predictive ETA ──
+export interface PredictedEta {
+  predictedArrivalAt: string;      // ISO 8601
+  baselineDurationSeconds: number; // Directions output
+  adjustedDurationSeconds: number; // After AI adjustment
+  confidence: "low" | "medium" | "high";
+  reasoning: string;               // AI explanation, <500 chars
+  factors: {
+    dayOfWeek: number;             // 0-6 (0 = Sunday)
+    timeOfDayHour: number;         // 0-23
+    historicalSampleSize: number;
+    weatherSummary?: string;
+  };
+  generatedAt: string;
+  // Populated once the trip completes:
+  actualArrivalAt?: string;
+  errorMinutes?: number;
+}
+
 export interface Trip {
   id: string;
   driverId: string | null;
@@ -81,6 +100,7 @@ export interface Trip {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+  predictedEta?: PredictedEta;
 }
 
 // ── Event ──
