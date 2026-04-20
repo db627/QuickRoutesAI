@@ -253,6 +253,12 @@ function TripFormInner({
       toast.success(isEditMode ? "Trip updated successfully" : "Trip created successfully");
       onCreated();
     } catch (err) {
+      // Surface the real error to the console so it's debuggable — the toast
+      // only shows err.message, which loses stack + any response details.
+      console.error(
+        isEditMode ? "Failed to update trip:" : "Failed to create trip:",
+        err,
+      );
       toast.error(
         err instanceof Error
           ? err.message
