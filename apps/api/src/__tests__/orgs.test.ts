@@ -382,12 +382,18 @@ describe("PATCH /orgs/:id", () => {
   it("200 updates the org and returns the merged doc", async () => {
     const uid = "admin-1";
     setupMockUser(uid, "admin");
-    const { orgUpdate } = mockOrgLookup({
+    const { orgUpdate, orgGet } = mockOrgLookup({
       uid,
       role: "admin",
       userOrgId: "org-1",
       orgData: sampleOrg,
     });
+
+    // First .get() call is the existence check (returns sampleOrg via mockResolvedValue already set).
+    // Second .get() call (re-read after update) returns the modified org — queue it as a once value.
+    orgGet
+      .mockResolvedValueOnce({ exists: true, data: () => sampleOrg })
+      .mockResolvedValueOnce({ exists: true, data: () => ({ ...sampleOrg, name: "Acme Logistics" }) });
 
     const patch = { name: "Acme Logistics", industry: "logistics" as const };
 
@@ -404,5 +410,19 @@ describe("PATCH /orgs/:id", () => {
         updatedAt: expect.any(String),
       }),
     );
+    expect(res.body).toMatchObject({ name: "Acme Logistics" });
+  });
+
+  it("400 when body is empty", async () => {
+    const uid = "admin-1";
+    setupMockUser(uid, "admin");
+    mockOrgLookup({ uid, role: "admin", userOrgId: "org-1", orgData: sampleOrg });
+
+    const res = await request(app)
+      .patch("/orgs/test-org")
+      .set("Authorization", "Bearer fake-token")
+      .send({});
+
+    expect(res.status).toBe(400);
   });
 });
