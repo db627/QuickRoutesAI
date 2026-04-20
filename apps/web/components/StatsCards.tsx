@@ -1,16 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api";
-import type { DriverRecord } from "@quickroutesai/shared";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { firestore } from "@/lib/firebase";
 import { Users, Truck, Loader, CheckCircle } from "lucide-react";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
-
-interface TripStats {
-  totalTrips: number;
-  inProgressTrips: number;
-  completedToday: number;
-}
 
 interface Stats {
   activeDrivers: number;
@@ -29,27 +23,76 @@ export default function StatsCards() {
   });
 
   useEffect(() => {
-    async function fetchStats() {
-      try {
-        const [activeDrivers, tripStats] = await Promise.all([
-          apiFetch<DriverRecord[]>("/drivers/active"),
-          apiFetch<TripStats>("/trips/stats"),
-        ]);
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const todayIso = startOfToday.toISOString();
 
-        setStats({
-          activeDrivers: activeDrivers.length,
-          totalTrips: tripStats.totalTrips,
-          inProgressTrips: tripStats.inProgressTrips,
-          completedToday: tripStats.completedToday,
-        });
-      } catch {
-        // Keep zeros on error — display degrades gracefully
-      } finally {
+    let resolved = 0;
+    const partial: Partial<Stats> = {};
+
+    function merge(patch: Partial<Stats>) {
+      Object.assign(partial, patch);
+      resolved += 1;
+      if (resolved === 4) {
+        setStats({ ...partial } as Stats);
         setLoading(false);
       }
     }
 
-    fetchStats();
+    const unsubActiveDrivers = onSnapshot(
+      query(collection(firestore, "drivers"), where("isOnline", "==", true)),
+      (snap) => {
+        if (resolved < 4) {
+          merge({ activeDrivers: snap.size });
+        } else {
+          setStats((prev) => ({ ...prev, activeDrivers: snap.size }));
+        }
+      },
+    );
+
+    const unsubTotalTrips = onSnapshot(collection(firestore, "trips"), (snap) => {
+      if (resolved < 4) {
+        merge({ totalTrips: snap.size });
+      } else {
+        setStats((prev) => ({ ...prev, totalTrips: snap.size }));
+      }
+    });
+
+    const unsubInProgress = onSnapshot(
+      query(
+        collection(firestore, "trips"),
+        where("status", "in", ["assigned", "in_progress"]),
+      ),
+      (snap) => {
+        if (resolved < 4) {
+          merge({ inProgressTrips: snap.size });
+        } else {
+          setStats((prev) => ({ ...prev, inProgressTrips: snap.size }));
+        }
+      },
+    );
+
+    const unsubCompletedToday = onSnapshot(
+      query(
+        collection(firestore, "trips"),
+        where("status", "==", "completed"),
+        where("updatedAt", ">=", todayIso),
+      ),
+      (snap) => {
+        if (resolved < 4) {
+          merge({ completedToday: snap.size });
+        } else {
+          setStats((prev) => ({ ...prev, completedToday: snap.size }));
+        }
+      },
+    );
+
+    return () => {
+      unsubActiveDrivers();
+      unsubTotalTrips();
+      unsubInProgress();
+      unsubCompletedToday();
+    };
   }, []);
 
   const cards = [
