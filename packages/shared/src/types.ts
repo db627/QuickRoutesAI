@@ -71,6 +71,13 @@ export interface TripRoute {
   reasoning?: string; // AI explanation of stop ordering decision
 }
 
+export interface RouteOverride {
+  active: boolean;
+  reason: string;
+  overriddenAt: string; // ISO 8601
+  overriddenBy: string; // uid
+}
+
 export interface Trip {
   id: string;
   driverId: string | null;
@@ -81,6 +88,7 @@ export interface Trip {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+  routeOverride?: RouteOverride;
 }
 
 // ── Event ──

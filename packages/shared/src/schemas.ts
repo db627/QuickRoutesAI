@@ -60,6 +60,13 @@ export const updateTripSchema = z.object({
 });
 export type UpdateTripInput = z.infer<typeof updateTripSchema>;
 
+// ── Reorder Stops (Manual Route Override) ──
+export const reorderStopsSchema = z.object({
+  stopIds: z.array(z.string().min(1)).min(2, "At least two stops are required to reorder"),
+  reason: z.string().min(1, "Reason is required").max(500, "Reason must be 500 characters or fewer"),
+});
+export type ReorderStopsInput = z.infer<typeof reorderStopsSchema>;
+
 // ── User Registration ──
 export const userRoleSchema = z.enum(["driver", "dispatcher", "admin"]);
 
