@@ -8,6 +8,7 @@ import {
   assignTripSchema,
   updateTripStatusSchema,
   updateTripSchema,
+  reorderStopsSchema,
   ErrorCode,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
@@ -466,6 +467,112 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidatio
     next(err);
   }
 });
+
+/**
+ * POST /trips/:id/override — dispatcher/admin manually reorders stops and recalculates ETA.
+ * Bypasses AI optimization — trusts the caller's ordering.
+ * Body: { stopIds: string[], reason: string }
+ */
+router.post(
+  "/:id/override",
+  requireRole("dispatcher", "admin"),
+  validate(reorderStopsSchema),
+  tripStopsValidationGuard,
+  async (req, res, next) => {
+    const { stopIds, reason } = req.body as { stopIds: string[]; reason: string };
+    try {
+      const tripRef = db.collection("trips").doc(req.params.id);
+      const tripDoc = await tripRef.get();
+
+      if (!tripDoc.exists) {
+        return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
+      }
+
+      const trip = tripDoc.data();
+      if (trip?.status === "completed" || trip?.status === "cancelled") {
+        return next(
+          new AppError(ErrorCode.CONFLICT, 409, "Completed or cancelled trips cannot be overridden"),
+        );
+      }
+
+      const currentStops = req.stops || [];
+
+      // Validate: stopIds must contain exactly the same set of stopIds as the trip.
+      const currentIds = currentStops.map((s) => s.stopId);
+      const sameLength = currentIds.length === stopIds.length;
+      const currentSet = new Set(currentIds);
+      const incomingSet = new Set(stopIds);
+      const allMatch =
+        sameLength &&
+        currentIds.every((id) => incomingSet.has(id)) &&
+        stopIds.every((id) => currentSet.has(id));
+
+      if (!allMatch) {
+        return next(
+          new AppError(
+            ErrorCode.BAD_REQUEST,
+            400,
+            "stopIds must contain exactly the same stop IDs as the trip (reordering only)",
+          ),
+        );
+      }
+
+      // Reorder according to stopIds, updating sequence.
+      const stopById = new Map(currentStops.map((s) => [s.stopId, s]));
+      const reorderedStops = stopIds.map((id, i) => ({
+        ...(stopById.get(id) as (typeof currentStops)[number]),
+        sequence: i,
+      }));
+
+      // Compute route directly (bypass AI optimization).
+      const { route: newRoute } = await computeRoute(reorderedStops);
+
+      const now = new Date().toISOString();
+      const overrideMeta = {
+        active: true,
+        reason,
+        overriddenAt: now,
+        overriddenBy: req.uid,
+      };
+
+      // Persist: update the trip doc + each stop's sequence atomically.
+      const batch = db.batch();
+      for (const stop of reorderedStops) {
+        const stopRef = tripRef.collection("stops").doc(stop.stopId);
+        batch.update(stopRef, { ...stop, stopId: stop.stopId });
+      }
+      await batch.commit();
+
+      await tripRef.update({
+        stops: reorderedStops,
+        route: newRoute,
+        routeOverride: overrideMeta,
+        updatedAt: now,
+      });
+
+      await db.collection("events").add({
+        type: "trip_override",
+        uid: req.uid,
+        payload: {
+          tripId: req.params.id,
+          stopIds,
+          reason,
+        },
+        createdAt: now,
+      });
+
+      res.json({
+        ok: true,
+        id: req.params.id,
+        stops: reorderedStops,
+        route: newRoute,
+        routeOverride: overrideMeta,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 /**
  * POST /trips/:id/status — update trip status
