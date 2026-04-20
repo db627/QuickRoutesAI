@@ -107,13 +107,41 @@ function durationStrToSeconds(v?: string): number {
   return match ? Math.round(Number(match[1])) : 0;
 }
 
+export interface ComputeRouteOptions {
+  /** When true, skip the AI optimizeStopOrder call and use the input order directly. */
+  skipOptimization?: boolean;
+  /** Optional driver origin to use as the route starting point. */
+  originOverride?: RouteOrigin;
+}
+
 /**
  * Compute an optimized route through stops.
  * 1. OpenAI reorders stops for the best driving order (origin stays first).
  * 2. Google Directions computes the actual route along the optimized order.
  * Returns both the route and the reordered stops with updated sequence numbers.
+ *
+ * Pass `{ skipOptimization: true }` to bypass AI reordering and preserve the
+ * input stop order (used by the manual override endpoint).
  */
-export async function computeRoute(stops: TripStop[], originOverride?: RouteOrigin): Promise<ComputeRouteResult> {
+export async function computeRoute(
+  stops: TripStop[],
+  optionsOrOrigin?: ComputeRouteOptions | RouteOrigin,
+): Promise<ComputeRouteResult> {
+  // Support legacy call signature: computeRoute(stops, originOverride)
+  // as well as new options object: computeRoute(stops, { skipOptimization, originOverride })
+  let skipOptimization = false;
+  let originOverride: RouteOrigin | undefined;
+  if (optionsOrOrigin) {
+    if ("skipOptimization" in optionsOrOrigin || ("originOverride" in optionsOrOrigin && !("lat" in optionsOrOrigin))) {
+      // It's a ComputeRouteOptions object
+      const opts = optionsOrOrigin as ComputeRouteOptions;
+      skipOptimization = opts.skipOptimization ?? false;
+      originOverride = opts.originOverride;
+    } else {
+      // Legacy: plain RouteOrigin { lat, lng }
+      originOverride = optionsOrOrigin as RouteOrigin;
+    }
+  }
   const apiKey = getApiKey();
 
   const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
@@ -146,38 +174,44 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
 
   const naiveDistanceMeters = Math.round(naiveTotalDistance(naivePath));
 
-  // Step 1: Use OpenAI to find the optimal stop order
+  // Step 1: Use OpenAI to find the optimal stop order (skipped when skipOptimization is true)
   let optimizedStops: TripStop[];
   let optimizationReasoning = "";
-  try {
-    const weatherInfo = await computeWeather(stops) || undefined;
 
-    
-    if (originOverride) {
-      const syntheticOrigin: TripStop = {
-        stopId: "__driver_origin__",
-        address: "Driver Current Location",
-        lat: originOverride.lat,
-        lng: originOverride.lng,
-        sequence: -1,
-        notes: "",
-      };
-
-  
-      const withOrigin = sorted.map((s, idx) => ({ ...s, sequence: idx + 1 }));
-      const optimizedWithOrigin = await optimizeStopOrder([syntheticOrigin, ...withOrigin], weatherInfo);
-
-      optimizedStops = optimizedWithOrigin.slice(1).map((s, idx) => ({ ...s, sequence: idx }));
-      optimizationReasoning = optimizedWithOrigin.reasoning;
-    } else {
-      const result = await optimizeStopOrder(sorted, weatherInfo);
-      optimizedStops = result.stops;
-      optimizationReasoning = result.reasoning;
-    }
-    console.log("OpenAI optimized stop order:", optimizedStops.map((s) => `${s.sequence}: ${s.address}`));
-  } catch (err) {
-    console.error("OpenAI optimization failed, using original order:", err);
+  if (skipOptimization) {
+    // Manual override — preserve the caller's stop order exactly.
     optimizedStops = sorted.map((s, i) => ({ ...s, sequence: i }));
+    optimizationReasoning = "Manual override — AI optimization skipped";
+    console.log("Skipping AI optimization, using input order:", optimizedStops.map((s) => `${s.sequence}: ${s.address}`));
+  } else {
+    try {
+      const weatherInfo = await computeWeather(stops) || undefined;
+
+      if (originOverride) {
+        const syntheticOrigin: TripStop = {
+          stopId: "__driver_origin__",
+          address: "Driver Current Location",
+          lat: originOverride.lat,
+          lng: originOverride.lng,
+          sequence: -1,
+          notes: "",
+        };
+
+        const withOrigin = sorted.map((s, idx) => ({ ...s, sequence: idx + 1 }));
+        const optimizedWithOrigin = await optimizeStopOrder([syntheticOrigin, ...withOrigin], weatherInfo);
+
+        optimizedStops = optimizedWithOrigin.slice(1).map((s, idx) => ({ ...s, sequence: idx }));
+        optimizationReasoning = optimizedWithOrigin.reasoning;
+      } else {
+        const result = await optimizeStopOrder(sorted, weatherInfo);
+        optimizedStops = result.stops;
+        optimizationReasoning = result.reasoning;
+      }
+      console.log("OpenAI optimized stop order:", optimizedStops.map((s) => `${s.sequence}: ${s.address}`));
+    } catch (err) {
+      console.error("OpenAI optimization failed, using original order:", err);
+      optimizedStops = sorted.map((s, i) => ({ ...s, sequence: i }));
+    }
   }
 
   // Step 2: Compute the actual route via Google Directions using optimized order

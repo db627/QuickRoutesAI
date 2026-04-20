@@ -525,7 +525,7 @@ router.post(
       }));
 
       // Compute route directly (bypass AI optimization).
-      const { route: newRoute } = await computeRoute(reorderedStops);
+      const { route: newRoute } = await computeRoute(reorderedStops, { skipOptimization: true });
 
       const now = new Date().toISOString();
       const overrideMeta = {

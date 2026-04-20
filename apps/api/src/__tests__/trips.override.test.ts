@@ -228,11 +228,12 @@ describe("POST /trips/:id/override", () => {
     expect(res.body.ok).toBe(true);
 
     // computeRoute called once with the reordered stops in the new order,
-    // each with updated sequence.
+    // each with updated sequence, and skipOptimization: true to preserve manual order.
     expect(computeRoute).toHaveBeenCalledTimes(1);
-    const callArg = computeRoute.mock.calls[0][0];
+    const [callArg, callOptions] = computeRoute.mock.calls[0];
     expect(callArg.map((s: any) => s.stopId)).toEqual(["s3", "s1", "s2"]);
     expect(callArg.map((s: any) => s.sequence)).toEqual([0, 1, 2]);
+    expect(callOptions).toEqual({ skipOptimization: true });
 
     // Trip doc updated with stops, route, routeOverride
     expect(updateMock).toHaveBeenCalledWith(
