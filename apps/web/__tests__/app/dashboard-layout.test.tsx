@@ -68,7 +68,7 @@ describe("DashboardLayout", () => {
     });
   });
 
-  it("uses overflow-safe container and mobile-only hamburger header classes", () => {
+  it("renders top bar on all screen sizes with overflow-safe container", () => {
     const { container } = render(
       <DashboardLayout>
         <div>child</div>
@@ -76,7 +76,10 @@ describe("DashboardLayout", () => {
     );
 
     const header = container.querySelector("header");
-    expect(header?.className).toContain("md:hidden");
+    expect(header).toBeInTheDocument();
+    // hamburger button is mobile-only; bell is always visible
+    const hamburger = header?.querySelector("button[aria-label='Open navigation menu']");
+    expect(hamburger?.className).toContain("md:hidden");
 
     const overflowRow = container.querySelector("div.flex.flex-1.overflow-hidden");
     expect(overflowRow).toBeInTheDocument();

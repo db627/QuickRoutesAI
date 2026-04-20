@@ -83,6 +83,18 @@ export interface Trip {
   updatedAt: string;
 }
 
+// ── Notification ──
+export type NotificationType = "trip_assigned" | "trip_completed" | "driver_offline";
+
+export interface Notification {
+  id: string;
+  type: NotificationType;
+  message: string;
+  read: boolean;
+  userId: string; // recipient uid
+  createdAt: string; // ISO 8601
+}
+
 // ── Event ──
 export type EventType = "location_ping" | "status_change";
 
