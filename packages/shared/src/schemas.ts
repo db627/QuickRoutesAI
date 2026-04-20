@@ -131,3 +131,10 @@ export const createOrgSchema = z.object({
   adminProfile: adminProfileSchema,
 });
 export type CreateOrgInput = z.infer<typeof createOrgSchema>;
+
+// ── Update Organization ──
+// Partial update of orgBasics fields merged with an optional address object.
+export const updateOrgSchema = orgBasicsSchema
+  .partial()
+  .merge(z.object({ address: orgAddressSchema.optional() }));
+export type UpdateOrgInput = z.infer<typeof updateOrgSchema>;
