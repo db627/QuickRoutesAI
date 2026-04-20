@@ -23,6 +23,7 @@ import { firestore } from "@/lib/firebase";
 import { apiFetch } from "@/lib/api";
 import { decodePolyline, formatDistance, formatDuration } from "@/lib/utils";
 import TripForm from "@/components/TripForm";
+import DraggableStopList from "@/components/DraggableStopList";
 import { useToast } from "@/lib/toast-context";
 import type { Trip, TripStop, DriverRecord } from "@quickroutesai/shared";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -779,6 +780,14 @@ export default function TripDetailPage() {
               >
                 {trip.status.replace("_", " ")}
               </span>
+              {trip.routeOverride?.active && (
+                <span
+                  className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700"
+                  title={trip.routeOverride.reason}
+                >
+                  Manually overridden
+                </span>
+              )}
             </div>
             <p className="mt-0.5 text-xs text-gray-400">ID: {trip.id}</p>
           </div>
@@ -1035,6 +1044,15 @@ export default function TripDetailPage() {
         currentStops={stops}
         editable={trip.status !== "completed" && trip.status !== "cancelled"}
       />
+
+      {/* Manual route override (drag-and-drop reorder + reason) */}
+      {stops.length >= 2 && (
+        <DraggableStopList
+          tripId={trip.id}
+          stops={stops}
+          canOverride={trip.status !== "completed" && trip.status !== "cancelled"}
+        />
+      )}
 
       {/* Created / Updated */}
       <div className="flex gap-6 text-xs text-gray-400">

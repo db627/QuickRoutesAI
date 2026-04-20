@@ -124,8 +124,9 @@ describe("TripDetailPage", () => {
       expect(screen.getByText("Trip Detail")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("123 Main St")).toBeInTheDocument();
-    expect(screen.getByText("456 Oak Ave")).toBeInTheDocument();
+    // Addresses appear in both StopEditor (add/remove) and DraggableStopList (reorder).
+    expect(screen.getAllByText("123 Main St").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("456 Oak Ave").length).toBeGreaterThan(0);
   });
 
   it("shows the Compute Route button when route is null", async () => {
