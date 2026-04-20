@@ -214,3 +214,195 @@ describe("POST /orgs", () => {
     expect(txUpdate).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Mock helper: wire up Firestore for GET / PATCH /orgs/:id.
+ *   - users/{uid}     → returns { role, orgId: userOrgId }
+ *   - orgs/{orgIdArg} → returns { exists: orgExists, data: orgData }
+ * Returns the orgUpdate jest.fn so PATCH tests can assert on it.
+ */
+function mockOrgLookup(opts: {
+  uid: string;
+  role: string;
+  userOrgId: string | null;
+  orgData?: Record<string, unknown> | null;
+}) {
+  const orgUpdate = jest.fn().mockResolvedValue(undefined);
+  const orgExists = opts.orgData !== null && opts.orgData !== undefined;
+  const orgGet = jest.fn().mockResolvedValue({
+    exists: orgExists,
+    data: () => opts.orgData ?? null,
+  });
+
+  db.collection.mockImplementation((col: string) => {
+    if (col === "users") {
+      return {
+        doc: (_id: string) => ({
+          get: jest.fn().mockResolvedValue({
+            exists: true,
+            data: () => ({
+              role: opts.role,
+              ...(opts.userOrgId ? { orgId: opts.userOrgId } : {}),
+            }),
+          }),
+        }),
+      };
+    }
+    if (col === "orgs") {
+      return {
+        doc: (_id: string) => ({
+          get: orgGet,
+          update: orgUpdate,
+        }),
+      };
+    }
+    return {
+      doc: jest.fn().mockReturnThis(),
+      get: jest.fn().mockResolvedValue({ exists: false }),
+    };
+  });
+
+  return { orgUpdate, orgGet };
+}
+
+const sampleOrg = {
+  id: "org-1",
+  name: "Acme Delivery",
+  industry: "delivery",
+  fleetSize: "6-20",
+  address: {
+    street: "1 Main St",
+    city: "Boston",
+    state: "MA",
+    zip: "02101",
+    country: "US",
+  },
+  ownerUid: "admin-1",
+  createdAt: "2026-04-19T00:00:00.000Z",
+  updatedAt: "2026-04-19T00:00:00.000Z",
+};
+
+describe("GET /orgs/:id", () => {
+  it("403 for non-admin", async () => {
+    const uid = "disp-1";
+    setupMockUser(uid, "dispatcher");
+    mockOrgLookup({ uid, role: "dispatcher", userOrgId: "org-1", orgData: sampleOrg });
+
+    const res = await request(app)
+      .get("/orgs/org-1")
+      .set("Authorization", "Bearer fake-token");
+
+    expect(res.status).toBe(403);
+  });
+
+  it("403 when admin belongs to a different org", async () => {
+    const uid = "admin-1";
+    setupMockUser(uid, "admin");
+    mockOrgLookup({ uid, role: "admin", userOrgId: "some-other-org", orgData: sampleOrg });
+
+    const res = await request(app)
+      .get("/orgs/org-1")
+      .set("Authorization", "Bearer fake-token");
+
+    expect(res.status).toBe(403);
+  });
+
+  it("404 when org is missing", async () => {
+    const uid = "admin-1";
+    setupMockUser(uid, "admin");
+    mockOrgLookup({ uid, role: "admin", userOrgId: "org-1", orgData: null });
+
+    const res = await request(app)
+      .get("/orgs/org-1")
+      .set("Authorization", "Bearer fake-token");
+
+    expect(res.status).toBe(404);
+  });
+
+  it("200 returns the org for the owning admin", async () => {
+    const uid = "admin-1";
+    setupMockUser(uid, "admin");
+    mockOrgLookup({ uid, role: "admin", userOrgId: "org-1", orgData: sampleOrg });
+
+    const res = await request(app)
+      .get("/orgs/org-1")
+      .set("Authorization", "Bearer fake-token");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      id: "org-1",
+      name: "Acme Delivery",
+      industry: "delivery",
+      fleetSize: "6-20",
+      ownerUid: "admin-1",
+    });
+  });
+});
+
+describe("PATCH /orgs/:id", () => {
+  it("403 for non-admin", async () => {
+    const uid = "disp-1";
+    setupMockUser(uid, "dispatcher");
+    mockOrgLookup({ uid, role: "dispatcher", userOrgId: "org-1", orgData: sampleOrg });
+
+    const res = await request(app)
+      .patch("/orgs/org-1")
+      .set("Authorization", "Bearer fake-token")
+      .send({ name: "New Name" });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("403 when admin belongs to a different org", async () => {
+    const uid = "admin-1";
+    setupMockUser(uid, "admin");
+    mockOrgLookup({ uid, role: "admin", userOrgId: "some-other-org", orgData: sampleOrg });
+
+    const res = await request(app)
+      .patch("/orgs/org-1")
+      .set("Authorization", "Bearer fake-token")
+      .send({ name: "New Name" });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("400 for invalid payload", async () => {
+    const uid = "admin-1";
+    setupMockUser(uid, "admin");
+    mockOrgLookup({ uid, role: "admin", userOrgId: "org-1", orgData: sampleOrg });
+
+    const res = await request(app)
+      .patch("/orgs/org-1")
+      .set("Authorization", "Bearer fake-token")
+      .send({ industry: "not-a-real-industry" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("200 updates the org and returns the merged doc", async () => {
+    const uid = "admin-1";
+    setupMockUser(uid, "admin");
+    const { orgUpdate } = mockOrgLookup({
+      uid,
+      role: "admin",
+      userOrgId: "org-1",
+      orgData: sampleOrg,
+    });
+
+    const patch = { name: "Acme Logistics", industry: "logistics" as const };
+
+    const res = await request(app)
+      .patch("/orgs/org-1")
+      .set("Authorization", "Bearer fake-token")
+      .send(patch);
+
+    expect(res.status).toBe(200);
+    expect(orgUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Acme Logistics",
+        industry: "logistics",
+        updatedAt: expect.any(String),
+      }),
+    );
+  });
+});
