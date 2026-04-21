@@ -7,6 +7,7 @@ import DriverDetailPanel from "@/components/DriverDetailPanel";
 import TripList from "@/components/TripList";
 import TripForm from "@/components/TripForm";
 import StatsCards from "@/components/StatsCards";
+import InsightsSection from "@/components/InsightsSection";
 import { useState } from "react";
 
 export default function DashboardPage() {
@@ -45,6 +46,9 @@ export default function DashboardPage() {
       {showTripForm && (
         <TripForm onCreated={() => setShowTripForm(false)} />
       )}
+
+      {/* AI Insights */}
+      <InsightsSection />
 
       {/* Stats overview */}
       <StatsCards />

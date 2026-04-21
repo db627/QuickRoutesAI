@@ -9,6 +9,7 @@ import driverRoutes from "../../routes/drivers";
 import tripRoutes from "../../routes/trips";
 import userRoutes from "../../routes/users";
 import orgRoutes from "../../routes/orgs";
+import insightsRoutes from "../../routes/insights";
 
 // Mock Firebase Admin SDK
 jest.mock("../../config/firebase", () => {
@@ -94,6 +95,7 @@ export function createTestApp() {
   app.use("/trips", verifyFirebaseToken, tripRoutes);
   app.use("/users", verifyFirebaseToken, userRoutes);
   app.use("/orgs", verifyFirebaseToken, orgRoutes);
+  app.use("/insights", verifyFirebaseToken, insightsRoutes);
   app.use(errorHandler);
   return app;
 }
