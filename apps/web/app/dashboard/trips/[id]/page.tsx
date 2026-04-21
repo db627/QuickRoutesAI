@@ -25,7 +25,8 @@ import { decodePolyline, formatDistance, formatDuration } from "@/lib/utils";
 import TripForm from "@/components/TripForm";
 import DraggableStopList from "@/components/DraggableStopList";
 import { useToast } from "@/lib/toast-context";
-import type { Trip, TripStop, DriverRecord } from "@quickroutesai/shared";
+import { useAuth } from "@/lib/auth-context";
+import type { Trip, TripStop, DriverRecord, PredictedEta } from "@quickroutesai/shared";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
 const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || "";
@@ -547,12 +548,120 @@ function ETAPanel({ tripId }: { tripId: string }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Predictive ETA Engine card                                         */
+/* ------------------------------------------------------------------ */
+function PredictedEtaCard({
+  tripId,
+  prediction,
+  canPredict,
+}: {
+  tripId: string;
+  prediction: PredictedEta | undefined;
+  canPredict: boolean;
+}) {
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      await apiFetch(`/trips/${tripId}/predict-eta`, { method: "POST" });
+      toast.success("ETA prediction generated");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to predict ETA");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confidenceColors: Record<string, string> = {
+    low: "bg-gray-100 text-gray-700",
+    medium: "bg-amber-100 text-amber-800",
+    high: "bg-green-100 text-green-800",
+  };
+
+  return (
+    <div className="rounded-xl border border-violet-200 bg-violet-50">
+      <div className="flex items-center justify-between border-b border-violet-200 px-5 py-3">
+        <h2 className="font-semibold text-violet-900">Predictive ETA</h2>
+        {canPredict && (
+          <button
+            onClick={run}
+            disabled={loading}
+            className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700 disabled:opacity-50"
+          >
+            {loading ? "Predicting..." : prediction ? "Re-run Prediction" : "Predict ETA"}
+          </button>
+        )}
+      </div>
+      {prediction ? (
+        <div className="space-y-3 px-5 py-4">
+          <div className="flex flex-wrap items-center gap-6">
+            <div>
+              <p className="text-xs text-violet-700">Predicted Arrival</p>
+              <p className="text-lg font-semibold text-violet-900">
+                {new Date(prediction.predictedArrivalAt).toLocaleString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  month: "short",
+                  day: "numeric",
+                })}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-violet-700">Confidence</p>
+              <span
+                className={`mt-0.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${confidenceColors[prediction.confidence] || ""}`}
+              >
+                {prediction.confidence}
+              </span>
+            </div>
+            <div>
+              <p className="text-xs text-violet-700">Baseline / Adjusted</p>
+              <p className="text-sm font-medium text-violet-900">
+                {Math.round(prediction.baselineDurationSeconds / 60)} /{" "}
+                {Math.round(prediction.adjustedDurationSeconds / 60)} min
+              </p>
+            </div>
+            {prediction.actualArrivalAt && typeof prediction.errorMinutes === "number" && (
+              <div>
+                <p className="text-xs text-violet-700">Actual (error)</p>
+                <p className="text-sm font-medium text-violet-900">
+                  {new Date(prediction.actualArrivalAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}{" "}
+                  (±{prediction.errorMinutes.toFixed(1)} min)
+                </p>
+              </div>
+            )}
+          </div>
+          {prediction.reasoning && (
+            <p className="text-sm text-gray-700">{prediction.reasoning}</p>
+          )}
+          <p className="text-xs text-violet-600">
+            Factors: DoW {prediction.factors.dayOfWeek}, hour {prediction.factors.timeOfDayHour},{" "}
+            {prediction.factors.historicalSampleSize} historical samples
+            {prediction.factors.weatherSummary ? `; weather: ${prediction.factors.weatherSummary}` : ""}
+          </p>
+        </div>
+      ) : (
+        <div className="px-5 py-4 text-sm text-violet-700">
+          No prediction yet. {canPredict ? "Click Predict ETA to generate one." : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main page component                                                */
 /* ------------------------------------------------------------------ */
 export default function TripDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { toast } = useToast();
+  const { role } = useAuth();
   const [trip, setTrip] = useState<Trip | null>(null);
   const [loading, setLoading] = useState(true);
   const [driverPos, setDriverPos] = useState<{
@@ -1036,6 +1145,15 @@ export default function TripDetailPage() {
       {/* AI ETA Prediction */}
       {trip.status === "in_progress" && (
         <ETAPanel tripId={trip.id} />
+      )}
+
+      {/* Predictive ETA Engine (historical + weather-adjusted) */}
+      {trip.status !== "cancelled" && (
+        <PredictedEtaCard
+          tripId={trip.id}
+          prediction={trip.predictedEta}
+          canPredict={role === "dispatcher" || role === "admin"}
+        />
       )}
 
       {/* Stops (editable for non-terminal trips) */}

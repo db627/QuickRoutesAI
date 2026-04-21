@@ -1,12 +1,18 @@
 import OpenAI from "openai";
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let _client: OpenAI | null = null;
+function client(): OpenAI {
+  if (!_client) {
+    _client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "test-placeholder" });
+  }
+  return _client;
+}
 
 /**
  * Shared OpenAI helper — sends a prompt and parses JSON from the response.
  */
 export async function aiJson<T>(prompt: string, maxTokens = 1000): Promise<T> {
-  const response = await client.chat.completions.create({
+  const response = await client().chat.completions.create({
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
     temperature: 0,
@@ -30,7 +36,7 @@ export async function aiJson<T>(prompt: string, maxTokens = 1000): Promise<T> {
  * Shared OpenAI helper — returns plain text.
  */
 export async function aiText(prompt: string, maxTokens = 2000): Promise<string> {
-  const response = await client.chat.completions.create({
+  const response = await client().chat.completions.create({
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,

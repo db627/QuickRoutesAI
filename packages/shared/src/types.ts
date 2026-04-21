@@ -87,6 +87,24 @@ export interface RouteOverride {
   overriddenBy: string; // uid
 }
 
+// ── Predictive ETA ──
+export interface PredictedEta {
+  predictedArrivalAt: string;
+  baselineDurationSeconds: number;
+  adjustedDurationSeconds: number;
+  confidence: "low" | "medium" | "high";
+  reasoning: string;
+  factors: {
+    dayOfWeek: number;
+    timeOfDayHour: number;
+    historicalSampleSize: number;
+    weatherSummary?: string;
+  };
+  generatedAt: string;
+  actualArrivalAt?: string;
+  errorMinutes?: number;
+}
+
 export interface Trip {
   id: string;
   driverId: string | null;
@@ -100,6 +118,7 @@ export interface Trip {
   orgId?: string;
   stopCount?: number;
   routeOverride?: RouteOverride;
+  predictedEta?: PredictedEta;
 }
 
 // ── Event ──
