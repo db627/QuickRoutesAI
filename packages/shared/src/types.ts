@@ -9,6 +9,10 @@ export interface UserProfile {
   role: UserRole;
   status?: UserStatus; // omitted on legacy documents — treat as "active"
   createdAt: string; // ISO 8601
+  orgId?: string;
+  phone?: string;
+  timezone?: string;
+  wizardProgress?: WizardProgress;
 }
 
 // ── Driver ──
@@ -106,4 +110,38 @@ export interface ApiError {
 export interface HealthResponse {
   ok: boolean;
   service: string;
+}
+
+// ── Organization ──
+export type OrgIndustry = "delivery" | "logistics" | "field_service" | "other";
+export type FleetSizeBucket = "1-5" | "6-20" | "21-50" | "51-200" | "200+";
+
+export interface OrgAddress {
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+  country: string; // ISO-3166 alpha-2
+}
+
+export interface Org {
+  id: string;
+  name: string;
+  industry: OrgIndustry;
+  fleetSize: FleetSizeBucket;
+  address: OrgAddress;
+  ownerUid: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Wizard ──
+export interface WizardProgress {
+  currentStep: 1 | 2 | 3;
+  data: {
+    orgBasics?: { name: string; industry: OrgIndustry; fleetSize: FleetSizeBucket };
+    address?: OrgAddress;
+    adminProfile?: { name: string; phone: string; timezone: string };
+  };
+  updatedAt: string;
 }
