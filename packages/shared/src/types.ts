@@ -80,6 +80,13 @@ export interface TripRoute {
   reasoning?: string; // AI explanation of stop ordering decision
 }
 
+export interface RouteOverride {
+  active: boolean;
+  reason: string;
+  overriddenAt: string; // ISO 8601
+  overriddenBy: string; // uid
+}
+
 export interface Trip {
   id: string;
   driverId: string | null;
@@ -90,17 +97,9 @@ export interface Trip {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
-  // Optional for backward compatibility with legacy documents that predate
-  // org-based tenancy. New trips are always written with orgId. Legacy trips
-  // without orgId are invisible to all users post-isolation fix — backfill
-  // required to restore visibility.
   orgId?: string;
-  // Denormalized count of stops in the trip's `stops` subcollection. Maintained
-  // on every mutation that adds/removes stops so list views (which subscribe
-  // to the `trips` collection without fetching subcollections) can display
-  // "N stops" without an extra read. May be missing on legacy trip documents;
-  // GET /trips/:id backfills it on first access.
   stopCount?: number;
+  routeOverride?: RouteOverride;
 }
 
 // ── Event ──
