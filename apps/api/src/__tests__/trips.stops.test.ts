@@ -21,6 +21,7 @@ function mockInProgressTrip(stopOverrides: object[] = [STOP_A, STOP_B]) {
     stops: stopOverrides,
     route: null,
     notes: null,
+    orgId: "org-test",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -45,7 +46,7 @@ function setupTripMock(tripData: object | null, updateMock = jest.fn().mockResol
     }
     return {
       doc: jest.fn().mockReturnThis(),
-      get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "driver" }) }),
+      get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "driver", orgId: "org-test" }) }),
       set: jest.fn().mockResolvedValue(undefined),
     };
   });
