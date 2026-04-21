@@ -3,10 +3,20 @@ import admin from "firebase-admin";
 import { db } from "../config/firebase";
 import { requireRole } from "../middleware/auth";
 import { validate } from "../middleware/validate";
-import { createOrgSchema, ErrorCode } from "@quickroutesai/shared";
+import { createOrgSchema, updateOrgSchema, ErrorCode } from "@quickroutesai/shared";
 import { AppError } from "../utils/AppError";
 
 const router = Router();
+
+/**
+ * Verify the admin belongs to the requested org. Throws 403 if not.
+ */
+async function assertOwnsOrg(uid: string, orgId: string) {
+  const userSnap = await db.collection("users").doc(uid).get();
+  if (!userSnap.exists || userSnap.data()?.orgId !== orgId) {
+    throw new AppError(ErrorCode.FORBIDDEN, 403, "You do not have access to this organization");
+  }
+}
 
 /**
  * POST /orgs — create an organization and link the current admin to it.
@@ -73,6 +83,57 @@ router.post(
           timezone: adminProfile.timezone,
         },
       });
+    } catch (err) {
+      console.error("ORGS ROUTE ERROR:", err);
+      next(err);
+    }
+  },
+);
+
+/**
+ * GET /orgs/:id — fetch a single org.
+ * Admin only. 403 if the admin's users/{uid}.orgId !== :id. 404 if missing.
+ */
+router.get("/:id", requireRole("admin"), async (req, res, next) => {
+  try {
+    await assertOwnsOrg(req.uid, req.params.id);
+
+    const orgSnap = await db.collection("orgs").doc(req.params.id).get();
+    if (!orgSnap.exists) {
+      return next(new AppError(ErrorCode.NOT_FOUND, 404, "Organization not found"));
+    }
+
+    res.json(orgSnap.data());
+  } catch (err) {
+    console.error("ORGS ROUTE ERROR:", err);
+    next(err);
+  }
+});
+
+/**
+ * PATCH /orgs/:id — partial update of an org.
+ * Admin only. 403 if the admin's users/{uid}.orgId !== :id. Writes an
+ * `updatedAt` timestamp and returns the merged org doc.
+ */
+router.patch(
+  "/:id",
+  requireRole("admin"),
+  validate(updateOrgSchema),
+  async (req, res, next) => {
+    try {
+      await assertOwnsOrg(req.uid, req.params.id);
+
+      const orgRef = db.collection("orgs").doc(req.params.id);
+      const existing = await orgRef.get();
+      if (!existing.exists) {
+        return next(new AppError(ErrorCode.NOT_FOUND, 404, "Organization not found"));
+      }
+
+      const patch = { ...req.body, updatedAt: new Date().toISOString() };
+      await orgRef.update(patch);
+
+      const updated = await orgRef.get();
+      res.json(updated.data());
     } catch (err) {
       console.error("ORGS ROUTE ERROR:", err);
       next(err);
