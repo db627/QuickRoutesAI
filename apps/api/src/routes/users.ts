@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { auth, db } from "../config/firebase";
 import admin from "firebase-admin";
-import { requireRole } from "../middleware/auth";
+import { requireRole, requireOrg } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { updateUserSchema, ErrorCode } from "@quickroutesai/shared";
 import { pagination } from "../middleware/pagination";
@@ -9,6 +9,20 @@ import { paginateFirestore } from "../utils/paginateFirestore";
 import { AppError } from "../utils/AppError";
 
 const router = Router();
+
+/**
+ * Ensures the target user belongs to the caller's organization.
+ * Throws AppError(FORBIDDEN, 403) on mismatch or if the target user has no orgId.
+ */
+function assertUserInOrg(
+  userData: FirebaseFirestore.DocumentData | undefined,
+  orgId: string | undefined,
+): void {
+  const userOrgId = userData?.orgId;
+  if (!userOrgId || !orgId || userOrgId !== orgId) {
+    throw new AppError(ErrorCode.FORBIDDEN, 403, "User belongs to another organization");
+  }
+}
 
 /**
  * GET /users — list users
@@ -23,10 +37,15 @@ const router = Router();
 router.get(
   "/",
   requireRole("dispatcher", "admin"),
+  requireOrg,
   pagination,
   async (req, res) => {
     try {
-      let ref: admin.firestore.Query = db.collection("users");
+      // Scope to caller's org. Combined with `role` filter, may need a
+      // composite index (orgId ASC, role ASC, createdAt DESC) — see PR.
+      let ref: admin.firestore.Query = db
+        .collection("users")
+        .where("orgId", "==", req.orgId!);
 
       if (req.query.role === "driver") {
         ref = ref.where("role", "==", "driver");
@@ -55,6 +74,7 @@ router.get(
 router.patch(
   "/:id",
   requireRole("admin"),
+  requireOrg,
   validate(updateUserSchema),
   async (req, res, next) => {
     const { id } = req.params;
@@ -77,6 +97,11 @@ router.patch(
       }
 
       const data = userDoc.data();
+      try {
+        assertUserInOrg(data, req.orgId);
+      } catch (err) {
+        return next(err);
+      }
       const updates: Record<string, string> = { updatedAt: new Date().toISOString() };
       if (role !== undefined) updates.role = role;
       if (status !== undefined) updates.status = status;
@@ -107,7 +132,7 @@ router.patch(
  * DELETE /users/:id — permanently delete a user.
  * Admin only.
  */
-router.delete("/:id", requireRole("admin"), async (req, res, next) => {
+router.delete("/:id", requireRole("admin"), requireOrg, async (req, res, next) => {
   try {
     const userRef = db.collection("users").doc(req.params.id);
     const userDoc = await userRef.get();
@@ -117,6 +142,11 @@ router.delete("/:id", requireRole("admin"), async (req, res, next) => {
     }
 
     const data = userDoc.data();
+    try {
+      assertUserInOrg(data, req.orgId);
+    } catch (err) {
+      return next(err);
+    }
 
     await userRef.delete();
     await auth.deleteUser(req.params.id);

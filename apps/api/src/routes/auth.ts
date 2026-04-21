@@ -75,13 +75,18 @@ router.post("/signup", signupLimiter, validate(signupSchema), async (req, res) =
     };
     await db.collection("users").doc(userRecord.uid).set(profile);
 
-    // If driver, also create driver document
+    // If driver, also create driver document.
+    // orgId is explicitly null — drivers sign up without an org link; a
+    // dedicated driver-invite flow (planned follow-up) will populate orgId
+    // when an admin invites them. Until then, driver accounts created via
+    // public signup will be invisible to all org-scoped listings.
     if (profile.role === "driver") {
       await db.collection("drivers").doc(userRecord.uid).set({
         isOnline: false,
         lastLocation: null,
         lastSpeedMps: 0,
         lastHeading: 0,
+        orgId: null,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -194,13 +199,16 @@ router.post(
 
       await userRef.set(profile);
 
-      // If driver, also create driver document
+      // If driver, also create driver document.
+      // See POST /auth/signup — orgId is explicitly null until a driver
+      // invite flow links them to an org.
       if (profile.role === "driver") {
         await db.collection("drivers").doc(req.uid).set({
           isOnline: false,
           lastLocation: null,
           lastSpeedMps: 0,
           lastHeading: 0,
+          orgId: null,
           updatedAt: new Date().toISOString(),
         });
       }

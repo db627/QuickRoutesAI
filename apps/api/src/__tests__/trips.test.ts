@@ -23,6 +23,7 @@ function mockTripData(overrides: Partial<any> = {}) {
     status: "draft",
     notes: "Initial notes",
     route: null,
+    orgId: "org-test",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,
@@ -78,7 +79,7 @@ describe("PATCH /trips/:id", () => {
             doc: (id: string) => ({
                 get: jest.fn().mockResolvedValue({
                 exists: id === uid,
-                data: () => ({ role: "dispatcher" }),
+                data: () => ({ role: "dispatcher", orgId: "org-test" }),
                 }),
             }),
             };
@@ -124,7 +125,7 @@ describe("PATCH /trips/:id", () => {
             doc: jest.fn().mockReturnThis(),
             get: jest.fn().mockResolvedValue({
             exists: true,
-            data: () => ({ role: "dispatcher" }),
+            data: () => ({ role: "dispatcher", orgId: "org-test" }),
             }),
         };
         });
@@ -228,7 +229,7 @@ describe("PATCH /trips/:id", () => {
 
         return {
             doc: jest.fn().mockReturnThis(),
-            get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+            get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher", orgId: "org-test" }) }),
             set: jest.fn().mockResolvedValue(undefined),
         };
         });
@@ -294,7 +295,7 @@ describe("PATCH /trips/:id", () => {
 
         return {
             doc: jest.fn().mockReturnThis(),
-            get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+            get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher", orgId: "org-test" }) }),
             set: jest.fn().mockResolvedValue(undefined),
         };
         });
@@ -394,7 +395,7 @@ describe("POST /trips/:id/route", () => {
       }
       return {
         doc: jest.fn().mockReturnThis(),
-        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher", orgId: "org-test" }) }),
         set: jest.fn().mockResolvedValue(undefined),
       };
     });
@@ -422,7 +423,7 @@ describe("POST /trips/:id/route", () => {
       }
       return {
         doc: jest.fn().mockReturnThis(),
-        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher", orgId: "org-test" }) }),
         set: jest.fn().mockResolvedValue(undefined),
       };
     });
@@ -451,7 +452,7 @@ describe("POST /trips/:id/route", () => {
       }
       return {
         doc: jest.fn().mockReturnThis(),
-        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher", orgId: "org-test" }) }),
         set: jest.fn().mockResolvedValue(undefined),
       };
     });
@@ -503,7 +504,7 @@ describe("DELETE /trips/:id", () => {
 
         return {
             doc: jest.fn().mockReturnThis(),
-            get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+            get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher", orgId: "org-test" }) }),
             set: jest.fn().mockResolvedValue(undefined),
         };
       });
@@ -541,7 +542,7 @@ describe("DELETE /trips/:id", () => {
 
     return {
         doc: jest.fn().mockReturnThis(),
-        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher", orgId: "org-test" }) }),
         set: jest.fn().mockResolvedValue(undefined),
     };
     });
@@ -587,7 +588,7 @@ describe("DELETE /trips/:id", () => {
 
     return {
         doc: jest.fn().mockReturnThis(),
-        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher", orgId: "org-test" }) }),
         set: jest.fn().mockResolvedValue(undefined),
     };
     });
@@ -603,4 +604,222 @@ describe("DELETE /trips/:id", () => {
     expect(deleteMock).not.toHaveBeenCalled();
   });
 
+});
+
+describe("Org isolation for /trips", () => {
+  const uid = "dispatcher-1";
+  const tripId = "trip-xyz";
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    db.collection = jest.fn();
+    db.batch = jest.fn();
+  });
+
+  it("GET /trips → 403 when the caller has no orgId", async () => {
+    // setupMockUser(..., null) installs a users mock with no orgId.
+    setupMockUser(uid, "dispatcher", "Test Dispatcher", null);
+
+    const res = await request(app)
+      .get("/trips")
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("FORBIDDEN");
+    expect(res.body.message).toMatch(/not linked to an organization/i);
+  });
+
+  it("GET /trips/:id → 403 when trip belongs to a different org", async () => {
+    setupMockUser(uid, "dispatcher", "Test Dispatcher", "org-alpha");
+    const foreignTrip = mockTripData({ orgId: "org-beta" });
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "users") {
+        return {
+          doc: (id: string) => ({
+            get: jest.fn().mockResolvedValue({
+              exists: id === uid,
+              data: () => ({ role: "dispatcher", orgId: "org-alpha" }),
+            }),
+          }),
+        };
+      }
+      if (col === "trips") {
+        return {
+          doc: () => ({
+            get: jest.fn().mockResolvedValue({ exists: true, data: () => foreignTrip }),
+            collection: () => ({
+              // tripStopsValidationGuard needs at least one stop to avoid 400
+              get: jest.fn().mockResolvedValue({
+                empty: false,
+                docs: [
+                  {
+                    data: () => ({ stopId: "s1", address: "x", lat: 1, lng: 1, sequence: 0, notes: "" }),
+                  },
+                ],
+              }),
+            }),
+          }),
+        };
+      }
+      return {
+        doc: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({ exists: false }),
+      };
+    });
+
+    const res = await request(app)
+      .get(`/trips/${tripId}`)
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("FORBIDDEN");
+  });
+
+  it("GET /trips/:id → 403 when trip has no orgId (legacy)", async () => {
+    setupMockUser(uid, "dispatcher", "Test Dispatcher", "org-alpha");
+    const legacyTrip = mockTripData();
+    delete (legacyTrip as any).orgId;
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "users") {
+        return {
+          doc: (id: string) => ({
+            get: jest.fn().mockResolvedValue({
+              exists: id === uid,
+              data: () => ({ role: "dispatcher", orgId: "org-alpha" }),
+            }),
+          }),
+        };
+      }
+      if (col === "trips") {
+        return {
+          doc: () => ({
+            get: jest.fn().mockResolvedValue({ exists: true, data: () => legacyTrip }),
+            collection: () => ({
+              get: jest.fn().mockResolvedValue({
+                empty: false,
+                docs: [
+                  {
+                    data: () => ({ stopId: "s1", address: "x", lat: 1, lng: 1, sequence: 0, notes: "" }),
+                  },
+                ],
+              }),
+            }),
+          }),
+        };
+      }
+      return { doc: jest.fn().mockReturnThis(), get: jest.fn().mockResolvedValue({ exists: false }) };
+    });
+
+    const res = await request(app)
+      .get(`/trips/${tripId}`)
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("FORBIDDEN");
+  });
+
+  it("POST /trips → stamps orgId from req.orgId on the new doc", async () => {
+    setupMockUser(uid, "dispatcher", "Test Dispatcher", "org-alpha");
+
+    const addTripMock = jest.fn().mockResolvedValue({
+      id: "new-trip-abc",
+      collection: () => ({
+        doc: () => ({ id: "stop-1" }),
+      }),
+    });
+    const batchSetMock = jest.fn();
+    const batchCommitMock = jest.fn().mockResolvedValue(undefined);
+    db.batch.mockReturnValue({ set: batchSetMock, commit: batchCommitMock });
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "users") {
+        return {
+          doc: (id: string) => ({
+            get: jest.fn().mockResolvedValue({
+              exists: id === uid,
+              data: () => ({ role: "dispatcher", orgId: "org-alpha" }),
+            }),
+          }),
+        };
+      }
+      if (col === "trips") {
+        return { add: addTripMock };
+      }
+      return { doc: jest.fn().mockReturnThis(), get: jest.fn().mockResolvedValue({ exists: false }) };
+    });
+
+    const res = await request(app)
+      .post("/trips")
+      .send({
+        stops: [
+          { address: "A", lat: 40, lng: -74 },
+          { address: "B", lat: 41, lng: -75 },
+        ],
+      })
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(201);
+    expect(addTripMock).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-alpha", createdBy: uid, status: "draft" }),
+    );
+  });
+
+  it("POST /trips → 403 when the caller has no orgId", async () => {
+    setupMockUser(uid, "dispatcher", "Test Dispatcher", null);
+
+    const res = await request(app)
+      .post("/trips")
+      .send({
+        stops: [
+          { address: "A", lat: 40, lng: -74 },
+          { address: "B", lat: 41, lng: -75 },
+        ],
+      })
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("FORBIDDEN");
+  });
+
+  it("DELETE /trips/:id → 403 when trip belongs to a different org", async () => {
+    setupMockUser(uid, "dispatcher", "Test Dispatcher", "org-alpha");
+    const foreignTrip = mockTripData({ orgId: "org-beta" });
+    const deleteMock = jest.fn();
+    const addEventMock = jest.fn();
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "users") {
+        return {
+          doc: (id: string) => ({
+            get: jest.fn().mockResolvedValue({
+              exists: id === uid,
+              data: () => ({ role: "dispatcher", orgId: "org-alpha" }),
+            }),
+          }),
+        };
+      }
+      if (col === "trips") {
+        return {
+          doc: () => ({
+            get: jest.fn().mockResolvedValue({ exists: true, data: () => foreignTrip }),
+            delete: deleteMock,
+          }),
+        };
+      }
+      if (col === "events") {
+        return { add: addEventMock };
+      }
+      return { doc: jest.fn().mockReturnThis(), get: jest.fn().mockResolvedValue({ exists: false }) };
+    });
+
+    const res = await request(app)
+      .delete(`/trips/${tripId}`)
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(403);
+    expect(deleteMock).not.toHaveBeenCalled();
+    expect(addEventMock).not.toHaveBeenCalled();
+  });
 });

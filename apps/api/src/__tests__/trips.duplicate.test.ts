@@ -11,6 +11,7 @@ function mockCompletedTrip(overrides: Partial<any> = {}) {
     status: "completed",
     notes: "Repeat this route next week",
     route: { polyline: "abc", distanceMeters: 1000, durationSeconds: 600 },
+    orgId: "org-test",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,
@@ -70,7 +71,7 @@ describe("POST /trips/:id/duplicate", () => {
           doc: (id: string) => ({
             get: jest.fn().mockResolvedValue({
               exists: id === uid,
-              data: () => ({ role: "dispatcher" }),
+              data: () => ({ role: "dispatcher", orgId: "org-test" }),
             }),
           }),
         };
@@ -199,7 +200,7 @@ describe("POST /trips/:id/duplicate", () => {
           doc: (id: string) => ({
             get: jest.fn().mockResolvedValue({
               exists: id === uid,
-              data: () => ({ role: "dispatcher" }),
+              data: () => ({ role: "dispatcher", orgId: "org-test" }),
             }),
           }),
         };
