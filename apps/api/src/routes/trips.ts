@@ -419,13 +419,8 @@ router.patch("/:id", requireRole("dispatcher", "admin"), requireOrg, validate(up
     if (resolvedStops && resolvedStops.length >= 2) {
       try {
         const { route, optimizedStops } = await computeRoute(resolvedStops);
-        let routes = trip?.route || [];
-
-        if(!Array.isArray(routes)) {
-          routes = [];
-        }
-        routes.push(route);
-        updateData.route = routes;
+        // Overwrite with the latest computed route (single object).
+        updateData.route = route;
         resolvedStops = optimizedStops;
       } catch (routeErr) {
         // Route computation is best-effort; save stops even if it fails
@@ -527,16 +522,12 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), requireOrg, tripSt
 
     const { route: routeResult, optimizedStops } = await computeRoute(stops);
 
-    let routes = trip?.route || [];
-
-    if(!Array.isArray(routes)) {
-      routes = [];
-    }
-    routes.push(routeResult);
-
-  
+    // Store the latest computed route as a single object. The Trip type and
+    // the web client both expect `route: TripRoute | null`; earlier code
+    // appended into an array, which broke UI reads of
+    // `trip.route.distanceMeters` / `trip.route.durationSeconds`.
     await db.collection("trips").doc(req.params.id).update({
-      route: routes,
+      route: routeResult,
       updatedAt: new Date().toISOString(),
     });
 
