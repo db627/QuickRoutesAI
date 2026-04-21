@@ -95,6 +95,12 @@ export interface Trip {
   // without orgId are invisible to all users post-isolation fix — backfill
   // required to restore visibility.
   orgId?: string;
+  // Denormalized count of stops in the trip's `stops` subcollection. Maintained
+  // on every mutation that adds/removes stops so list views (which subscribe
+  // to the `trips` collection without fetching subcollections) can display
+  // "N stops" without an extra read. May be missing on legacy trip documents;
+  // GET /trips/:id backfills it on first access.
+  stopCount?: number;
 }
 
 // ── Event ──

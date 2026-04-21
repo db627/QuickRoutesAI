@@ -72,6 +72,7 @@ router.post("/", requireRole("dispatcher", "admin"), requireOrg, validate(create
       status: "draft" as const,
       route: null,
       notes: null,
+      stopCount: resolvedStops.length,
       createdAt: now,
       updatedAt: now,
     };
@@ -214,7 +215,8 @@ router.post("/:id/assign", requireRole("dispatcher", "admin"), requireOrg, valid
  */
 router.get("/:id", requireOrg, tripStopsValidationGuard, async (req, res, next) => {
   try {
-    const tripDoc = await db.collection("trips").doc(req.params.id).get();
+    const tripRef = db.collection("trips").doc(req.params.id);
+    const tripDoc = await tripRef.get();
 
     if (!tripDoc.exists) {
       return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
@@ -235,7 +237,22 @@ router.get("/:id", requireOrg, tripStopsValidationGuard, async (req, res, next) 
       return next(new AppError(ErrorCode.FORBIDDEN, 403, "Not your trip"));
     }
 
-    res.json({ id: tripDoc.id, ...trip, stops: req.stops });
+    // Always populate stopCount in the response from the live subcollection
+    // size. For trips missing stopCount on the doc (pre-migration legacy),
+    // self-heal by writing it back so future list-view reads have it.
+    const stopCount = (req.stops ?? []).length;
+    if (typeof trip?.stopCount !== "number") {
+      try {
+        await tripRef.update({ stopCount });
+      } catch (backfillErr) {
+        // Best-effort backfill. If it fails (permissions, transient), still
+        // return the correct count in the response so the client renders
+        // accurately.
+        console.error("stopCount backfill failed:", backfillErr);
+      }
+    }
+
+    res.json({ id: tripDoc.id, ...trip, stopCount, stops: req.stops });
   } catch (err) {
     next(err);
   }
@@ -273,6 +290,7 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), requireOrg, tr
       status: "draft" as const,
       route: null,
       notes: sourceTrip?.notes ?? null,
+      stopCount: duplicatedStops.length,
       createdAt: now,
       updatedAt: now,
     };
@@ -408,7 +426,7 @@ router.patch("/:id", requireRole("dispatcher", "admin"), requireOrg, validate(up
     // Updates the stop documents after they have been geocoded and sequenced
     if (resolvedStops !== undefined) {
       for (const stop of resolvedStops) {
-        
+
         const stopRef = stop.stopId
           ? tripRef.collection("stops").doc(stop.stopId)
           : tripRef.collection("stops").doc(); // generate new ID
@@ -418,6 +436,9 @@ router.patch("/:id", requireRole("dispatcher", "admin"), requireOrg, validate(up
           stopId: stop.stopId ?? stopRef.id,
         });
       }
+      // Denormalize stop count onto the trip doc so list views (which can't
+      // fetch subcollections) can render "N stops" without extra reads.
+      updateData.stopCount = resolvedStops.length;
     }
     await tripRef.update(updateData);
 

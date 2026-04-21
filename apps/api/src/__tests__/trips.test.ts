@@ -145,6 +145,7 @@ describe("PATCH /trips/:id", () => {
         expect(updateMock).toHaveBeenCalledWith(
         expect.objectContaining({
             notes: "Updated notes",
+            stopCount: newStops.length,
             updatedAt: expect.any(String),
         }),
         );
@@ -762,8 +763,14 @@ describe("Org isolation for /trips", () => {
 
     expect(res.status).toBe(201);
     expect(addTripMock).toHaveBeenCalledWith(
-      expect.objectContaining({ orgId: "org-alpha", createdBy: uid, status: "draft" }),
+      expect.objectContaining({
+        orgId: "org-alpha",
+        createdBy: uid,
+        status: "draft",
+        stopCount: 2,
+      }),
     );
+    expect(res.body).toMatchObject({ stopCount: 2 });
   });
 
   it("POST /trips → 403 when the caller has no orgId", async () => {
