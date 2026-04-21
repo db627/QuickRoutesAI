@@ -166,10 +166,14 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
 
   
       const withOrigin = sorted.map((s, idx) => ({ ...s, sequence: idx + 1 }));
-      const optimizedWithOrigin = await optimizeStopOrder([syntheticOrigin, ...withOrigin], weatherInfo);
+      const result = await optimizeStopOrder([syntheticOrigin, ...withOrigin], weatherInfo);
 
-      optimizedStops = optimizedWithOrigin.slice(1).map((s, idx) => ({ ...s, sequence: idx }));
-      optimizationReasoning = optimizedWithOrigin.reasoning;
+      optimizedStops = result.stops
+        .slice(1)
+        .map((s, idx) => ({ ...s, sequence: idx }));
+
+      optimizationReasoning = result.reasoning;
+
     } else {
       const result = await optimizeStopOrder(sorted, weatherInfo);
       optimizedStops = result.stops;

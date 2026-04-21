@@ -17,7 +17,8 @@ import { pagination } from "../middleware/pagination";
 import { paginateFirestore } from "../utils/paginateFirestore";
 import { tripStopsValidationGuard, tripTransitionGuard } from "../middleware/trips";
 import { AppError } from "../utils/AppError";
-
+import fs from "fs";
+import { postTripAnalytics } from "../services/ai";
 const router = Router();
 
 /**
@@ -200,7 +201,13 @@ router.get("/:id",tripStopsValidationGuard, async (req, res, next) => {
     if (req.userRole === "driver" && trip?.driverId !== req.uid) {
       return next(new AppError(ErrorCode.FORBIDDEN, 403, "Not your trip"));
     }
-
+    const decoded = decodePolyline(trip?.route[0].polyline || "");
+    const decoded2 = decodePolyline(trip?.route[0].legs[1].polyline || "");
+    
+    postTripAnalytics(req.params.id, req.stops  || []).catch((err) => {
+      console.error("Error posting trip analytics:", err);
+    });
+    
     res.json({ id: tripDoc.id, ...trip, stops: req.stops });
   } catch (err) {
     next(err);
@@ -427,7 +434,7 @@ router.delete("/:id", requireRole("dispatcher", "admin"), async (req, res, next)
 router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidationGuard, async (req, res, next) => {
   try {
     const tripDoc = await db.collection("trips").doc(req.params.id).get();
-
+    const { currentLocation } = req.body;
     if (!tripDoc.exists) {
       return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
@@ -439,7 +446,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidatio
       return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Need at least 2 stops to compute route"));
     }
 
-    const { route: routeResult, optimizedStops } = await computeRoute(stops);
+    const { route: routeResult, optimizedStops } = await computeRoute(stops, currentLocation);
 
     let routes = trip?.route || [];
 

@@ -1,5 +1,7 @@
 import OpenAI from "openai";
-
+import { db } from "../config/firebase";
+import { Timestamp } from "firebase-admin/firestore";
+import { decodePolyline } from "./directions";
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /**
@@ -300,6 +302,42 @@ interface ETAPrediction {
   perStopETA: { stopIndex: number; address: string; etaMinutes: number }[];
 }
 
+type Point = {
+  lat: number;
+  lng: number;
+};
+
+function haversineMeters(a: Point, b: Point): number {
+  const R = 6371000; // Earth radius in meters
+  const toRad = (deg: number) => deg * Math.PI / 180;
+
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) *
+    Math.cos(lat2) *
+    Math.sin(dLng / 2) ** 2;
+
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function totalDistanceMeters(points: Point[]): number {
+  if (points.length < 2) return 0;
+
+  let total = 0;
+
+  for (let i = 1; i < points.length; i++) {
+    total += haversineMeters(points[i - 1], points[i]);
+  }
+
+  return total;
+}
+
 export async function predictETA(input: ETAInput): Promise<ETAPrediction> {
   const stopList = input.remainingStops
     .map(
@@ -336,4 +374,165 @@ Return ONLY a JSON object:
 }`;
 
   return aiJson<ETAPrediction>(prompt, 600);
+}
+
+
+export async function postTripAnalytics(tripId: string, stops: any[]): Promise<void> {
+  const trip = await db.collection("trips").doc(tripId).get();
+  
+  const sortedStops = [...stops].sort((a, b) => a.sequence - b.sequence);
+
+  const driverId = trip.data()?.driverId;
+  const rawStart = sortedStops[0]?.start_time;
+  const rawEnd = sortedStops[sortedStops.length - 1]?.end_time;
+
+  if (!driverId || !rawStart || !rawEnd) {
+    console.error("Missing driverId, start_time, or end_time");
+    return;
+  }
+
+  const start_time =
+    rawStart instanceof Timestamp ? rawStart : Timestamp.fromDate(new Date(rawStart));
+
+  const end_time =
+    rawEnd instanceof Timestamp ? rawEnd : Timestamp.fromDate(new Date(rawEnd));
+
+  const geopointData = await db
+    .collection("events")
+    .where("type", "==", "location_ping")
+    .where("driverId", "==", driverId)
+    .where("createdAt", ">=", start_time)
+    .where("createdAt", "<=", end_time)
+    .orderBy("createdAt")
+    .get();
+
+  const gpsData = geopointData.docs.map(doc => {
+    const data = doc.data();
+    return {
+      lat: data.payload.lat,
+      lng: data.payload.lng,
+      timestamp: data.createdAt.toDate().getTime(),
+      speedMps: data.payload.speedMps,
+    };
+  });
+
+  const route = trip.data()?.route || {};
+  const currRoute = route[route.length - 1] || {};
+  const legs = currRoute.legs || [];
+  let index = 0;
+
+  const etaInputs= [];
+  const anomaliesPerLeg = [];
+  const legDistances = [];
+  const legPoints = [];
+  for(const leg of legs) {
+    let legStart, legEnd;
+    if (leg.fromStopId == "__driver_origin__"){
+      legStart = sortedStops[0]?.start_time;
+      legEnd = sortedStops[0]?.end_time;
+
+    }else {
+      legStart = leg.fromStopId ? sortedStops.find(s => s.stopId === leg.toStopId)?.start_time : null;
+      legEnd = leg.toStopId ? sortedStops.find(s => s.stopId === leg.toStopId)?.end_time : null;
+    }
+    const leg_start =
+    rawStart instanceof Timestamp ? legStart : Timestamp.fromDate(new Date(legStart));
+    const leg_end =
+    rawEnd instanceof Timestamp ? legEnd : Timestamp.fromDate(new Date(legEnd));
+
+    const decodedLegPolyline = decodePolyline(leg.polyline || "");
+    const legGpsPoints = gpsData.filter(point => {
+      const pointTime = point.timestamp;
+      const legStartTime = leg_start instanceof Timestamp ? leg_start.toDate().getTime() : new Date(leg_start).getTime();
+      const legEndTime = leg_end instanceof Timestamp ? leg_end.toDate().getTime() : new Date(leg_end).getTime();
+      return pointTime >= legStartTime && pointTime <= legEndTime;
+    });
+    if (index < stops.length - 1) {
+      let avglegSpeedMps = legGpsPoints.reduce((sum, p) => sum + p.speedMps, 0) / (legGpsPoints.length || 1);
+      if (avglegSpeedMps < 0.1) {
+        avglegSpeedMps = 20; // prevent zero or near-zero speed which can break ETA prediction
+      }
+      if (leg.fromStopId === "__driver_origin__") {
+        index = -1;
+      }
+      const etaLegInput = {
+        tripId,
+        currentLat: legGpsPoints[0]?.lat || gpsData[0]?.lat || 0,
+        currentLng: legGpsPoints[0]?.lng || gpsData[0]?.lng || 0,
+        remainingStops: [{address: sortedStops[index+1]?.address || "", lat: sortedStops[index+1]?.lat || 0, lng: sortedStops[index+1]?.lng || 0, sequence: sortedStops[index+1]?.sequence || 0}],
+        currentSpeedMps: avglegSpeedMps,
+        routeDistanceMeters: leg.distanceMeters,
+        routeDurationSeconds: leg.durationSeconds,
+        timeOfDay: legStart instanceof Timestamp ? legStart.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "",
+        dayOfWeek: legStart instanceof Timestamp ? legStart.toDate().toLocaleDateString([], { weekday: 'long' }) : "",
+      }
+
+      const etaPrediction = await predictETA(etaLegInput);
+      etaInputs.push({startLat: etaLegInput.currentLat, startLng: etaLegInput.currentLng, avgSpeed: etaLegInput.currentSpeedMps, ...etaPrediction});
+
+      const legDriverActivity: DriverActivity = {
+        driverId,
+        driverName: "",
+        events: legGpsPoints.map(p => ({
+          type: "location_ping",
+          lat: p.lat,
+          lng: p.lng,
+          speedMps: p.speedMps,
+          timestamp: new Date(p.timestamp).toISOString()
+        })),
+      };
+
+      const legAnomalies = await detectAnomalies([legDriverActivity]);
+      anomaliesPerLeg.push({ legIndex: index + 1, anomalies: legAnomalies });
+
+    }
+
+    const distance = totalDistanceMeters(legGpsPoints);
+    legDistances.push({legIndex: index + 1, distance});
+
+    legPoints.push({legIndex: index + 1, points: legGpsPoints, decodedRoute: decodedLegPolyline});
+    console.log(distance);
+    console.log({...decodedLegPolyline});
+    index++;
+  }
+
+
+  console.log(anomaliesPerLeg);
+  console.log(legDistances);
+  
+  const stopsTimeToComplete = sortedStops.map(s => ({
+    stopIndex: s.sequence,
+    address: s.address,
+    etaMinutes: s.end_time ? (s.end_time.seconds - s.start_time.seconds) / 60 : 0
+  }));
+  console.log("Time to complete each stop:", stopsTimeToComplete);
+
+  const prompt = `Trip Analytics for Trip ID: ${tripId}
+
+1. ETA Predictions per Leg:
+${etaInputs.map((input, i) => `Leg ${i} starting at (${input.startLat.toFixed(5)}, ${input.startLng.toFixed(5)}) to ${input.perStopETA[0].address}, with avg speed ${(input.avgSpeed * 2.237).toFixed(0)} mph -- Estimated arrival in ${input.perStopETA[0].etaMinutes} min (confidence: ${(input.confidence * 100).toFixed(1)}%) -- Factors: ${input.factors.join(", ")}`).join("\n")}
+
+2. Anomalies Detected:
+${anomaliesPerLeg.map(a => `Leg ${a.legIndex}: ${a.anomalies.length > 0 ? a.anomalies.map(anomaly => `- ${anomaly.type} (${anomaly.severity}): ${anomaly.description}`).join("\n") : "No anomalies detected"}`).join("\n")}
+
+3. Actual time to complete each stop:
+${stopsTimeToComplete.map(s => `Stop ${s.stopIndex} at "${s.address}": ${s.etaMinutes.toFixed(1)} min`).join("\n")}
+
+4. Route distance vs actual distance driven per leg:
+${legDistances.map(d => `Leg ${d.legIndex}: ${d.distance.toFixed(1)} meters driven`).join("\n")}
+
+5. Route adherence:
+${legPoints.map(lp => `Leg ${lp.legIndex}: ${lp.points.length} GPS points recorded, route deviation of ${totalDistanceMeters(lp.points) - totalDistanceMeters(lp.decodedRoute)} meters`).join("\n")}
+Analyze the above data and provide insights on:
+- How accurate were the ETA predictions? Were there any legs with low confidence that had significant anomalies?
+- Were there any patterns in the anomalies detected (e.g. consistent off-route behavior, speeding)?
+- How did the actual time to complete stops compare to typical expectations (e.g. 3-5 min per stop)?
+
+Provide a concise analysis of the trip performance based on the ETA predictions, anomalies, and stop completion times.
+
+
+`;
+
+console.log(prompt);
+
 }
