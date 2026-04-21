@@ -82,6 +82,7 @@ export const signupSchema = z.object({
   password: z.string().min(6, "Password must be at least 6 characters"),
   name: z.string().min(1).max(100),
   role: userRoleSchema.default("driver"),
+  orgCode: z.string().min(1).max(128).optional(),
 });
 export type SignupInput = z.infer<typeof signupSchema>;
 

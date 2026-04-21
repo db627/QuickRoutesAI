@@ -60,33 +60,58 @@ async function signInWithFirebase(
  */
 router.post("/signup", signupLimiter, validate(signupSchema), async (req, res) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, orgCode } = req.body as {
+      email: string;
+      password: string;
+      name: string;
+      role?: "driver" | "dispatcher" | "admin";
+      orgCode?: string;
+    };
+
+    const resolvedRole = role || "driver";
+
+    // Two-path signup: either the signup creates a new business (admin without
+    // orgCode; they'll run the onboarding wizard on first dashboard visit) or
+    // joins an existing one (orgCode required). Non-admin roles can only exist
+    // within an org, so we reject driver/dispatcher signups that omit orgCode.
+    if (orgCode) {
+      const orgSnap = await db.collection("orgs").doc(orgCode).get();
+      if (!orgSnap.exists) {
+        return res.status(400).json({ error: "Invalid organization code" });
+      }
+    } else if (resolvedRole !== "admin") {
+      return res.status(400).json({
+        error:
+          "Organization code is required when signing up as driver or dispatcher",
+      });
+    }
 
     // Create user in Firebase Auth
     const userRecord = await auth.createUser({ email, password });
 
-    // Create user profile in Firestore
-    const profile = {
+    // Create user profile in Firestore — stamp orgId iff an orgCode was provided.
+    const profile: Record<string, unknown> = {
       email,
       name,
-      role: role || "driver",
+      role: resolvedRole,
       active: true,
       createdAt: new Date().toISOString(),
     };
+    if (orgCode) profile.orgId = orgCode;
+
     await db.collection("users").doc(userRecord.uid).set(profile);
 
-    // If driver, also create driver document.
-    // orgId is explicitly null — drivers sign up without an org link; a
-    // dedicated driver-invite flow (planned follow-up) will populate orgId
-    // when an admin invites them. Until then, driver accounts created via
-    // public signup will be invisible to all org-scoped listings.
-    if (profile.role === "driver") {
+    // If driver, also create driver document. If orgCode was supplied, stamp
+    // it on the driver doc so the driver is immediately visible to org-scoped
+    // listings. If not (shouldn't happen now that we reject driver-without-
+    // orgCode above, but defensive), leave orgId null.
+    if (resolvedRole === "driver") {
       await db.collection("drivers").doc(userRecord.uid).set({
         isOnline: false,
         lastLocation: null,
         lastSpeedMps: 0,
         lastHeading: 0,
-        orgId: null,
+        orgId: orgCode ?? null,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -102,7 +127,7 @@ router.post("/signup", signupLimiter, validate(signupSchema), async (req, res) =
         uid: userRecord.uid,
         email,
         name,
-        role: profile.role,
+        role: resolvedRole,
       },
     });
   } catch (err: unknown) {
