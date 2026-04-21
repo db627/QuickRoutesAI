@@ -9,6 +9,7 @@ import {
   updateTripStatusSchema,
   updateTripSchema,
   ErrorCode,
+  decodePolyline,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
 import { randomUUID } from "crypto";
@@ -44,6 +45,8 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
           lng,
           sequence: s.sequence ?? i,
           notes: s.notes || "",
+          start_time: null,
+          end_time: null,
         };
       }),
     );
@@ -244,6 +247,8 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), tripStopsValid
         ...stop,
         stopId: stopDocRef.id,
         sequence: stop.sequence ?? i,
+        start_time: null,
+        end_time: null,
       });
     });
     await batch.commit();
@@ -307,6 +312,8 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
             lng,
             sequence: s.sequence ?? i,
             notes: s.notes || "",
+            start_time: s.start_time || null,
+            end_time: s.end_time || null,
           };
         }),
       );
@@ -440,7 +447,6 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidatio
       routes = [];
     }
     routes.push(routeResult);
-
   
     await db.collection("trips").doc(req.params.id).update({
       route: routes,
@@ -524,6 +530,12 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
       }
     }
 
+    const firstStop = await tripRef.collection("stops").orderBy("sequence").limit(1).get().then((snap) => snap.docs[0]?.data());
+
+    await db.collection("trips").doc(req.params.id).collection("stops").doc(firstStop.stopId).update({
+      start_time: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
     await tripRef.update(updateData);
 
     // Log status change event
@@ -544,7 +556,7 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
  * POST /trips/:id/stops/:stopId/complete — driver marks a stop as completed
  * Sequential enforcement: all prior stops must be completed first.
  */
-router.post("/:id/stops/:stopId/complete", async (req, res) => {
+router.post("/:id/stops/:stopId/complete",tripStopsValidationGuard, async (req, res) => {
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
@@ -563,24 +575,27 @@ router.post("/:id/stops/:stopId/complete", async (req, res) => {
       return res.status(403).json({ error: "Forbidden", message: "Not your trip" });
     }
 
-    const stops: any[] = trip?.stops || [];
-    const stopIndex = stops.findIndex((s) => s.stopId === req.params.stopId);
+    const stops: any[] = req.stops || [];
+    let stopIndex = stops.findIndex((s) => s.stopId === req.params.stopId);
 
     if (stopIndex === -1) {
       return res.status(404).json({ error: "Not Found", message: "Stop not found" });
     }
 
     const stop = stops[stopIndex];
-    if (stop.status === "completed") {
+    if (stop.end_time !== null) {
       return res.status(409).json({ error: "Conflict", message: "Stop already completed" });
     }
 
     // Sequential enforcement: all stops with lower sequence must be completed
     const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
     const stopSequence = stop.sequence;
+    stopIndex = sorted.findIndex((s) => s.stopId === req.params.stopId);
     const blockedBy = sorted.find(
-      (s) => s.sequence < stopSequence && s.status !== "completed",
+      (s) => s.sequence < stopSequence && s.end_time === null,
     );
+
+  
     if (blockedBy) {
       return res.status(400).json({
         error: "Bad Request",
@@ -588,10 +603,19 @@ router.post("/:id/stops/:stopId/complete", async (req, res) => {
       });
     }
 
-    const completedAt = new Date().toISOString();
-    stops[stopIndex] = { ...stop, status: "completed", completedAt };
+    const completedAt = admin.firestore.FieldValue.serverTimestamp();
 
-    await tripRef.update({ stops, updatedAt: completedAt });
+    await tripRef.collection("stops").doc(stop.stopId).update({
+      end_time: completedAt,
+    });
+    let nextStopSequence = -1;
+    if(stopIndex < sorted.length - 1) {
+      console.log("test")
+      nextStopSequence = sorted[stopIndex+1].sequence;
+      await tripRef.collection("stops").doc(sorted[nextStopSequence].stopId).update({
+      start_time: completedAt,
+      });
+    }
 
     await db.collection("events").add({
       type: "stop_completed",
@@ -599,8 +623,8 @@ router.post("/:id/stops/:stopId/complete", async (req, res) => {
       payload: { tripId: req.params.id, stopId: req.params.stopId, completedAt },
       createdAt: completedAt,
     });
-
-    res.json({ ok: true, stopId: req.params.stopId, completedAt });
+    console.log("test1")
+    res.json({ ok: true, stopId: req.params.stopId, headingToNext: nextStopSequence });
   } catch (err) {
     res.status(500).json({ error: "Internal Error", message: "Failed to complete stop" });
   }
