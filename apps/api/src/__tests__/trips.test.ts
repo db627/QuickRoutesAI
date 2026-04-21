@@ -30,6 +30,96 @@ function mockTripData(overrides: Partial<any> = {}) {
   };
 }
 
+describe("POST /trips", () => {
+  const uid = "dispatcher-123";
+
+  it("returns a well-shaped Trip (id, stops, status, createdAt, updatedAt, route, driverId, createdBy, notes)", async () => {
+    setupMockUser(uid, "dispatcher", "Test Dispatcher");
+
+    const commitMock = jest.fn().mockResolvedValue(undefined);
+    const setMock = jest.fn();
+    db.batch = jest.fn(() => ({ set: setMock, commit: commitMock }));
+
+    // Generate distinct stop doc ids per call so stopIds end up unique.
+    let stopIdCounter = 0;
+    const addMock = jest.fn().mockResolvedValue({
+      id: "new-trip-id",
+      collection: (subcol: string) => {
+        if (subcol === "stops") {
+          return {
+            doc: () => ({ id: `generated-stop-${++stopIdCounter}` }),
+          };
+        }
+        return {};
+      },
+    });
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "users") {
+        return {
+          doc: () => ({
+            get: jest.fn().mockResolvedValue({
+              exists: true,
+              data: () => ({ role: "dispatcher" }),
+            }),
+          }),
+        };
+      }
+      if (col === "trips") {
+        return { add: addMock };
+      }
+      return {
+        doc: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+        set: jest.fn().mockResolvedValue(undefined),
+      };
+    });
+
+    const res = await request(app)
+      .post("/trips")
+      .send({
+        stops: [
+          { address: "123 Main St", contactName: "Alice", lat: 40, lng: -74, sequence: 0, notes: "" },
+          { address: "456 Oak Ave", contactName: "Bob", lat: 41, lng: -75, sequence: 1, notes: "" },
+        ],
+      })
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      id: "new-trip-id",
+      driverId: null,
+      createdBy: uid,
+      status: "draft",
+      route: null,
+      notes: null,
+    });
+    expect(typeof res.body.createdAt).toBe("string");
+    expect(typeof res.body.updatedAt).toBe("string");
+    expect(Array.isArray(res.body.stops)).toBe(true);
+    expect(res.body.stops).toHaveLength(2);
+    expect(res.body.stops[0]).toMatchObject({
+      address: "123 Main St",
+      contactName: "Alice",
+      lat: 40,
+      lng: -74,
+      sequence: 0,
+      notes: "",
+    });
+    expect(res.body.stops[0].stopId).toBeTruthy();
+    expect(res.body.stops[1]).toMatchObject({
+      address: "456 Oak Ave",
+      contactName: "Bob",
+      lat: 41,
+      lng: -75,
+      sequence: 1,
+    });
+    expect(res.body.stops[1].stopId).toBeTruthy();
+    expect(setMock).toHaveBeenCalledTimes(2);
+    expect(commitMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("PATCH /trips/:id", () => {
     const tripId = "trip-123";
     const uid = "dispatcher-123";

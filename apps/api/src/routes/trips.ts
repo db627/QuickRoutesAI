@@ -81,19 +81,29 @@ router.post("/", requireRole("dispatcher", "admin"), requireOrg, validate(create
     const stopsCollectionRef = tripDocRef.collection("stops");
 
     const batch = db.batch();
+    const persistedStops: Array<Record<string, unknown>> = [];
 
     resolvedStops.forEach((stop, i) => {
       const stopDocRef = stopsCollectionRef.doc();
-
-      batch.set(stopDocRef, {
+      const stopRecord = {
         ...stop,
         stopId: stopDocRef.id,
         sequence: stop.sequence ?? i,
-      });
+      };
+      batch.set(stopDocRef, stopRecord);
+      persistedStops.push(stopRecord);
     });
 
     await batch.commit();
-    res.status(201).json({ id: tripDocRef.id, ...tripData });
+
+    // Return a well-shaped Trip (id, stops, status, createdAt, updatedAt,
+    // route: null, driverId: null, createdBy, notes: null) so the client can
+    // use the response without an extra fetch.
+    res.status(201).json({
+      id: tripDocRef.id,
+      ...tripData,
+      stops: persistedStops,
+    });
   } catch (err) {
     next(err);
   }
