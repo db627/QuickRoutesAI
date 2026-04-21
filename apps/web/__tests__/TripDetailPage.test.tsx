@@ -110,12 +110,14 @@ describe("Duplicate Trip button", () => {
   });
 
   it.each(["draft", "assigned", "in_progress", "cancelled"] as Trip["status"][])(
-    "hides Duplicate Trip button for %s trips",
+    "shows Duplicate Trip button for %s trips too (any status is duplicable)",
     async (status) => {
       setupOnSnapshot(status);
       render(<TripDetailPage />);
       await screen.findByText("Trip Detail");
-      expect(screen.queryByRole("button", { name: "Duplicate Trip" })).not.toBeInTheDocument();
+      expect(
+        await screen.findByRole("button", { name: "Duplicate Trip" }),
+      ).toBeInTheDocument();
     },
   );
 

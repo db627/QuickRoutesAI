@@ -119,9 +119,10 @@ function AssignDriverDropdown({
   const [open, setOpen] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [autoAssigning, setAutoAssigning] = useState(false);
+  const [claiming, setClaiming] = useState(false);
 
-  useEffect(() => {
-    apiFetch<{ data: DriverOption[] }>("/drivers")
+  const fetchDrivers = useCallback(() => {
+    return apiFetch<{ data: DriverOption[] }>("/drivers")
       .then((res) => setDrivers(res.data))
       .catch(() => {
         const q = query(collection(firestore, "drivers"));
@@ -136,6 +137,32 @@ function AssignDriverDropdown({
         return unsub;
       });
   }, []);
+
+  useEffect(() => {
+    fetchDrivers();
+  }, [fetchDrivers]);
+
+  // Drivers that signed up publicly land with `orgId: null` and don't show up
+  // in org-scoped listings. This action attaches them to the caller's org.
+  const claimUnlinked = async () => {
+    setClaiming(true);
+    try {
+      const result = await apiFetch<{ claimed: number; driverIds: string[] }>(
+        "/drivers/claim-unlinked",
+        { method: "POST" },
+      );
+      if (result.claimed > 0) {
+        toast.success(`${result.claimed} drivers linked to your organization`);
+        await fetchDrivers();
+      } else {
+        toast.info("No unlinked drivers to claim");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to link drivers");
+    } finally {
+      setClaiming(false);
+    }
+  };
 
   const assign = async (driverId: string) => {
     setAssigning(true);
@@ -191,7 +218,12 @@ function AssignDriverDropdown({
         <div className="absolute right-0 z-50 mt-10 w-64 rounded-lg border border-gray-200 bg-white shadow-xl">
           <div className="max-h-60 overflow-y-auto divide-y divide-gray-200">
             {drivers.length === 0 && (
-              <p className="px-4 py-3 text-sm text-gray-400">No drivers found</p>
+              <div className="px-4 py-3 text-sm text-gray-400">
+                <p>No drivers found</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  If drivers signed up but aren&apos;t showing, link them to your org.
+                </p>
+              </div>
             )}
             {drivers.map((d) => (
               <button
@@ -212,6 +244,15 @@ function AssignDriverDropdown({
                 </span>
               </button>
             ))}
+          </div>
+          <div className="border-t border-gray-200 px-2 py-2">
+            <button
+              onClick={claimUnlinked}
+              disabled={claiming}
+              className="w-full rounded-md px-3 py-2 text-left text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+            >
+              {claiming ? "Linking..." : "Link unlinked drivers"}
+            </button>
           </div>
         </div>
       )}

@@ -161,6 +161,75 @@ router.get("/", requireRole("dispatcher", "admin"), requireOrg, pagination, asyn
 });
 
 /**
+ * POST /drivers/claim-unlinked — admin / dispatcher bootstraps drivers that
+ * signed up via the public signup flow before the invite flow existed.
+ *
+ * Driver docs created via POST /auth/signup carry `orgId: null`, which makes
+ * them invisible to every org-scoped listing. This endpoint finds those
+ * unlinked drivers and attaches them to the caller's org (also patching the
+ * matching users/{uid} doc so the user record stays consistent). Intended as
+ * a one-click recovery action; the long-term solution is a proper driver
+ * invite flow.
+ *
+ * Response: { claimed: number, driverIds: string[] }
+ */
+router.post("/claim-unlinked", requireRole("dispatcher", "admin"), requireOrg, async (req, res) => {
+  try {
+    const orgId = req.orgId!;
+
+    // Try the indexed query first; fall back to a full scan + in-memory
+    // filter if the composite index isn't present (or the query throws for
+    // any reason — e.g. older Firestore versions on the emulator).
+    let unlinkedDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    try {
+      const snap = await db.collection("drivers").where("orgId", "==", null).get();
+      unlinkedDocs = snap.docs;
+    } catch {
+      const snap = await db.collection("drivers").get();
+      unlinkedDocs = snap.docs.filter((d) => {
+        const data = d.data();
+        return data.orgId === null || data.orgId === undefined;
+      });
+    }
+
+    if (unlinkedDocs.length === 0) {
+      return res.json({ claimed: 0, driverIds: [] });
+    }
+
+    const now = new Date().toISOString();
+    const driverIds: string[] = [];
+
+    // Batched writes, up to 500 ops/batch. Each driver produces 2 writes
+    // (drivers/{uid} + users/{uid}), so cap drivers-per-batch at 250.
+    const BATCH_SIZE = 250;
+    for (let i = 0; i < unlinkedDocs.length; i += BATCH_SIZE) {
+      const slice = unlinkedDocs.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+
+      for (const driverDoc of slice) {
+        const uid = driverDoc.id;
+        driverIds.push(uid);
+
+        batch.update(driverDoc.ref, { orgId, updatedAt: now });
+
+        // Mirror onto the matching user doc (if it exists and is a driver).
+        // We use set-merge so a missing user doc doesn't blow up the batch.
+        const userRef = db.collection("users").doc(uid);
+        batch.set(userRef, { orgId }, { merge: true });
+      }
+
+      await batch.commit();
+    }
+
+    return res.json({ claimed: driverIds.length, driverIds });
+  } catch (err) {
+    return res
+      .status(500)
+      .json({ error: "Internal Error", message: "Failed to claim unlinked drivers" });
+  }
+});
+
+/**
  * POST /drivers/offline — driver sets themselves offline
  */
 router.post("/offline", async (req, res) => {
