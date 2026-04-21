@@ -170,7 +170,7 @@ describe("POST /trips/:id/duplicate", () => {
     );
   });
 
-  it("returns 409 when source trip is not completed", async () => {
+  it("duplicates a non-completed trip (e.g. assigned) into a new draft trip", async () => {
     setupMockUser(uid, "dispatcher", "Dispatcher");
 
     const sourceTrip = mockCompletedTrip({ status: "assigned" });
@@ -179,13 +179,22 @@ describe("POST /trips/:id/duplicate", () => {
       { stopId: "old-2", address: "Middletown, NJ", lat: 40.39, lng: -74.11, sequence: 1, notes: "" },
     ];
 
+    const stopDocMock = jest
+      .fn()
+      .mockReturnValueOnce({ id: "new-stop-1" })
+      .mockReturnValueOnce({ id: "new-stop-2" });
+
     const addTripMock = jest.fn().mockResolvedValue({
       id: "new-trip-456",
-      collection: () => ({
-        doc: jest.fn(),
-      }),
+      collection: (subcol: string) => {
+        if (subcol === "stops") {
+          return { doc: stopDocMock };
+        }
+        return {};
+      },
     });
 
+    const addEventMock = jest.fn().mockResolvedValue(undefined);
     const batchSetMock = jest.fn();
     const batchCommitMock = jest.fn().mockResolvedValue(undefined);
 
@@ -233,7 +242,7 @@ describe("POST /trips/:id/duplicate", () => {
 
       if (col === "events") {
         return {
-          add: jest.fn().mockResolvedValue(undefined),
+          add: addEventMock,
         };
       }
 
@@ -247,10 +256,19 @@ describe("POST /trips/:id/duplicate", () => {
       .post(`/trips/${tripId}/duplicate`)
       .set("Authorization", "Bearer valid-token");
 
-    expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: "CONFLICT", message: "Only completed trips can be duplicated" });
-    expect(addTripMock).not.toHaveBeenCalled();
-    expect(batchSetMock).not.toHaveBeenCalled();
-    expect(batchCommitMock).not.toHaveBeenCalled();
+    expect(res.status).toBe(201);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.id).toBe("new-trip-456");
+    expect(res.body.status).toBe("draft");
+    expect(res.body.driverId).toBeNull();
+    expect(res.body.route).toBeNull();
+    expect(addTripMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "draft",
+        driverId: null,
+        route: null,
+      }),
+    );
+    expect(batchCommitMock).toHaveBeenCalled();
   });
 });

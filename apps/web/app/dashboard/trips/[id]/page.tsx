@@ -1038,7 +1038,7 @@ export default function TripDetailPage() {
 
   const canEdit = trip.status === "draft";
   const canCancel = trip.status === "draft" || trip.status === "assigned";
-  const canDuplicate = trip.status === "completed";
+  const canDuplicate = true;
 
   // Pre-fill stops sorted by sequence
   const initialStops = stops.slice().sort((a, b) => a.sequence - b.sequence);

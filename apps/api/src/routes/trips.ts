@@ -272,7 +272,10 @@ router.get("/:id", requireOrg, tripStopsValidationGuard, async (req, res, next) 
 });
 
 /**
- * POST /trips/:id/duplicate — duplicate a completed trip into a new draft trip
+ * POST /trips/:id/duplicate — duplicate any trip into a new draft trip.
+ * Source trip status is ignored (draft / assigned / in_progress / completed /
+ * cancelled are all valid sources). The new trip is always created as draft
+ * with no driver and no route.
  */
 router.post("/:id/duplicate", requireRole("dispatcher", "admin"), requireOrg, tripStopsValidationGuard,  async (req, res, next) => {
   try {
@@ -287,9 +290,6 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), requireOrg, tr
       assertTripInOrg(sourceTrip, req.orgId);
     } catch (err) {
       return next(err);
-    }
-    if (sourceTrip?.status !== "completed") {
-      return next(new AppError(ErrorCode.CONFLICT, 409, "Only completed trips can be duplicated"));
     }
 
     const now = new Date().toISOString();
