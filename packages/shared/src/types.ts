@@ -94,6 +94,20 @@ export interface DriverEvent {
   createdAt: string;
 }
 
+// ── Multi-driver optimization ──
+export interface MultiDriverPlan {
+  driverId: string;
+  driverName: string;
+  tripId: string;
+  stops: TripStop[];
+  reasoning: string;
+}
+
+export interface MultiDriverOptimizationResult {
+  plans: MultiDriverPlan[];
+  overallReasoning: string;
+}
+
 // ── API Responses ──
 import type { ErrorCode } from "./errors";
 
