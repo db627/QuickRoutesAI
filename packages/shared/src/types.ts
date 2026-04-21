@@ -28,6 +28,11 @@ export interface DriverRecord {
   lastSpeedMps: number;
   lastHeading: number;
   updatedAt: string;
+  // Optional for backward compatibility with legacy documents that predate
+  // org-based tenancy. New driver records are always written with orgId once
+  // the driver is linked to an organization (currently only via admin signup;
+  // a driver invite flow is planned as a follow-up).
+  orgId?: string | null;
 }
 
 // ── Trip ──
@@ -85,6 +90,11 @@ export interface Trip {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+  // Optional for backward compatibility with legacy documents that predate
+  // org-based tenancy. New trips are always written with orgId. Legacy trips
+  // without orgId are invisible to all users post-isolation fix — backfill
+  // required to restore visibility.
+  orgId?: string;
 }
 
 // ── Event ──
