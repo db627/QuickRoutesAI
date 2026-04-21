@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -815,7 +815,8 @@ export default function TripDetailPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { role } = useAuth();
-  const [trip, setTrip] = useState<Trip | null>(null);
+  const [rawTrip, setRawTrip] = useState<Trip | null>(null);
+  const [stops, setStops] = useState<TripStop[]>([]);
   const [loading, setLoading] = useState(true);
   const [driverPos, setDriverPos] = useState<{
     lat: number;
@@ -840,14 +841,35 @@ export default function TripDetailPage() {
     if (!id) return;
     const unsub = onSnapshot(doc(firestore, "trips", id), (snap) => {
       if (snap.exists()) {
-        setTrip({ id: snap.id, ...(snap.data() as Omit<Trip, "id">) });
+        setRawTrip({ id: snap.id, ...(snap.data() as Omit<Trip, "id">) });
       } else {
-        setTrip(null);
+        setRawTrip(null);
       }
       setLoading(false);
     });
     return unsub;
   }, [id]);
+
+  // Subscribe to stops subcollection in real-time
+  useEffect(() => {
+    if (!id) return;
+    const stopsRef = collection(firestore, "trips", id, "stops");
+    const unsub = onSnapshot(stopsRef, (snap) => {
+      const docs = snap.docs.map((d) => ({
+        stopId: d.id,
+        ...(d.data() as Omit<TripStop, "stopId">),
+      }));
+      docs.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+      setStops(docs);
+    });
+    return unsub;
+  }, [id]);
+
+  // Merge rawTrip with live stops from subcollection
+  const trip = useMemo(
+    () => (rawTrip ? { ...rawTrip, stops } : null),
+    [rawTrip, stops],
+  );
 
   // Subscribe to driver's live position when driver is assigned
   useEffect(() => {
@@ -1000,8 +1022,6 @@ export default function TripDetailPage() {
 
   // Decode route polyline if available
   const polylinePath = trip.route?.polyline ? decodePolyline(trip.route.polyline) : [];
-
-  const stops = trip.stops ?? [];
 
   // Determine map center from first stop or default
   const mapCenter =

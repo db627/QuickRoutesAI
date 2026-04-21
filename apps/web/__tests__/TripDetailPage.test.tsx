@@ -63,14 +63,35 @@ function makeTripData(status: Trip["status"]): Omit<Trip, "id"> {
 }
 
 function setupOnSnapshot(status: Trip["status"]) {
-  mockOnSnapshot.mockImplementation((_ref: unknown, callback: (snap: unknown) => void) => {
+  const tripData = makeTripData(status);
+  const stops = tripData.stops ?? [];
+
+  // 1st call: trip document subscription
+  mockOnSnapshot.mockImplementationOnce((_ref: unknown, callback: (snap: unknown) => void) => {
     callback({
       exists: () => true,
       id: "test-trip-id",
-      data: () => makeTripData(status),
+      data: () => ({ ...tripData, stops: undefined }),
     });
     return jest.fn(); // unsubscribe
   });
+
+  // 2nd call: stops subcollection subscription
+  mockOnSnapshot.mockImplementationOnce((_ref: unknown, callback: (snap: unknown) => void) => {
+    callback({
+      docs: stops.map((s) => ({
+        id: s.stopId,
+        data: () => {
+          const { stopId: _id, ...rest } = s;
+          return rest;
+        },
+      })),
+    });
+    return jest.fn(); // unsubscribe
+  });
+
+  // Subsequent calls (driver position etc.) — no-op
+  mockOnSnapshot.mockImplementation(() => jest.fn());
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
