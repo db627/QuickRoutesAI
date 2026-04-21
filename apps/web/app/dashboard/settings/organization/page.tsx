@@ -196,6 +196,15 @@ export default function OrganizationSettingsPage() {
 
   // ── Render ────────────────────────────────────────────────────────────
 
+  const handleCopyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(orgId);
+      toast.success("Code copied to clipboard");
+    } catch {
+      toast.error("Failed to copy code");
+    }
+  };
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
@@ -204,6 +213,37 @@ export default function OrganizationSettingsPage() {
           Update your organization&apos;s profile and primary address.
         </p>
       </div>
+
+      {/* Team Invite Code — the org id IS the code. Admins share it with
+          teammates so they can self-join via the "Join existing business"
+          flow on /signup. */}
+      <section
+        aria-labelledby="invite-code-heading"
+        className="space-y-3 rounded-xl border border-brand-200 bg-brand-50 p-6"
+      >
+        <h2 id="invite-code-heading" className="text-base font-semibold text-gray-900">
+          Team Invite Code
+        </h2>
+        <p className="text-sm text-gray-700">
+          Share this code with your teammates when they sign up via the
+          &quot;Join existing business&quot; option.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <code
+            data-testid="invite-code"
+            className="flex-1 break-all rounded-md border border-brand-200 bg-white px-3 py-2 font-mono text-sm text-gray-900"
+          >
+            {orgId}
+          </code>
+          <button
+            type="button"
+            onClick={handleCopyCode}
+            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+          >
+            Copy
+          </button>
+        </div>
+      </section>
 
       <section className="space-y-4 rounded-xl border border-gray-200 bg-white p-6">
         <h2 className="text-base font-semibold text-gray-900">Organization details</h2>
