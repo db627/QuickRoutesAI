@@ -50,7 +50,11 @@ export interface TripCardProps {
  */
 export function TripCard({ trip, driverName }: TripCardProps) {
   const stops = trip.stops ?? [];
-  const stopCount = stops.length;
+  // Prefer the denormalized stopCount from the trip doc (list views subscribe
+  // to the `trips` collection without reading the `stops` subcollection, so
+  // `trip.stops` is undefined there). Fall back to the embedded array on
+  // detail views that hydrate it.
+  const stopCount = trip.stopCount ?? stops.length;
   const previewStops = stops.slice(0, 2);
 
   const distanceMiles =

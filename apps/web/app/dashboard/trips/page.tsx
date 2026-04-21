@@ -9,14 +9,41 @@ import type { Trip, TripStatus } from "@quickroutesai/shared";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { TripCard } from "@/components/TripCard";
 
-const statusOptions: { label: string; value: TripStatus | "all" }[] = [
-  { label: "All", value: "all" },
-  { label: "Draft", value: "draft" },
-  { label: "Assigned", value: "assigned" },
-  { label: "In Progress", value: "in_progress" },
-  { label: "Completed", value: "completed" },
-  { label: "Cancelled", value: "cancelled" },
-];
+type TripTab = "active" | "completed" | "cancelled" | "all";
+
+const TAB_ORDER: TripTab[] = ["active", "completed", "cancelled", "all"];
+
+const TAB_LABELS: Record<TripTab, string> = {
+  active: "Active",
+  completed: "Completed",
+  cancelled: "Cancelled",
+  all: "All",
+};
+
+// Which trip statuses belong to each tab. "active" means the trip is still
+// moving through the pipeline (draft, assigned, in_progress) — the opposite
+// of a terminal state.
+const ACTIVE_STATUSES: TripStatus[] = ["draft", "assigned", "in_progress"];
+
+function matchesTab(tab: TripTab, status: TripStatus): boolean {
+  switch (tab) {
+    case "active":
+      return ACTIVE_STATUSES.includes(status);
+    case "completed":
+      return status === "completed";
+    case "cancelled":
+      return status === "cancelled";
+    case "all":
+      return true;
+  }
+}
+
+function parseTab(raw: string | null): TripTab {
+  if (raw === "completed" || raw === "cancelled" || raw === "all" || raw === "active") {
+    return raw;
+  }
+  return "active";
+}
 
 function TripsPageInner() {
   const searchParams = useSearchParams();
@@ -26,9 +53,9 @@ function TripsPageInner() {
   const [loading, setLoading] = useState(true);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [search, setSearch] = useState(searchParams.get("search") ?? "");
-  const [statusFilter, setStatusFilter] = useState<TripStatus | "all">(
-    (searchParams.get("status") ?? "all") as TripStatus | "all",
-  );
+  // Tab presets replace the old per-status dropdown. Default is "active" so
+  // completed + cancelled trips don't clutter the primary view.
+  const [tab, setTab] = useState<TripTab>(parseTab(searchParams.get("tab")));
 
   useEffect(() => {
     const q = query(collection(firestore, "trips"), orderBy("createdAt", "desc"));
@@ -44,64 +71,54 @@ function TripsPageInner() {
     return unsub;
   }, []);
 
-  function updateUrl(nextSearch: string, nextStatus: TripStatus | "all") {
+  function updateUrl(nextSearch: string, nextTab: TripTab) {
     const params = new URLSearchParams();
     if (nextSearch) params.set("search", nextSearch);
-    if (nextStatus !== "all") params.set("status", nextStatus);
+    // Default tab is "active"; omit it to keep URLs clean.
+    if (nextTab !== "active") params.set("tab", nextTab);
     const qs = params.toString();
     router.replace(`${pathname}${qs ? `?${qs}` : ""}`);
   }
 
   function handleSearchChange(value: string) {
     setSearch(value);
-    updateUrl(value, statusFilter);
+    updateUrl(value, tab);
   }
 
-  function handleStatusChange(value: TripStatus | "all") {
-    setStatusFilter(value);
-    updateUrl(search, value);
+  function handleTabChange(nextTab: TripTab) {
+    setTab(nextTab);
+    updateUrl(search, nextTab);
   }
 
   function clearSearch() {
     setSearch("");
-    updateUrl("", statusFilter);
-  }
-
-  function clearStatus() {
-    setStatusFilter("all");
-    updateUrl(search, "all");
-  }
-
-  function clearAll() {
-    setSearch("");
-    setStatusFilter("all");
-    updateUrl("", "all");
+    updateUrl("", tab);
   }
 
   const filteredTrips = useMemo(
     () =>
       trips
         .filter((trip) => {
-          const matchesStatus = statusFilter === "all" || trip.status === statusFilter;
+          if (!matchesTab(tab, trip.status)) return false;
           const term = search.trim().toLowerCase();
-          const matchesSearch =
-            term === "" ||
-            (trip.stops ?? []).some((s) =>
-              (s.address?.toLowerCase() ?? "").includes(term),
-            );
-          return matchesStatus && matchesSearch;
+          if (term === "") return true;
+          // Match against stop addresses (when available on the detail shape)
+          // and the trip id so dispatchers can deep-link by id fragment.
+          const matchesId = trip.id.toLowerCase().includes(term);
+          const matchesAddress = (trip.stops ?? []).some((s) =>
+            (s.address?.toLowerCase() ?? "").includes(term),
+          );
+          return matchesId || matchesAddress;
         })
         // Defensive newest-first sort. The Firestore query already orders by
         // createdAt desc, but we re-sort here so the UI is correct even if
         // the source data arrives in a different order (ISO 8601 sorts
         // lexicographically).
         .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")),
-    [trips, search, statusFilter],
+    [trips, search, tab],
   );
 
   const hasSearch = search.trim() !== "";
-  const hasStatusFilter = statusFilter !== "all";
-  const hasActiveFilters = hasSearch || hasStatusFilter;
 
   return (
     <div className="space-y-6">
@@ -118,85 +135,62 @@ function TripsPageInner() {
         </Link>
       </div>
 
-      {/* Search + filter toolbar */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Search input */}
-          <div className="relative min-w-[200px] flex-1">
-            <svg
-              className="absolute left-3 top-2.5 h-4 w-4 text-gray-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
-              />
-            </svg>
-            <input
-              type="text"
-              placeholder="Search by stop address..."
-              value={search}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-4 text-sm text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              aria-label="Search trips by stop address"
-            />
-          </div>
-
-          {/* Status dropdown */}
-          <select
-            value={statusFilter}
-            onChange={(e) => handleStatusChange(e.target.value as TripStatus | "all")}
-            className="rounded-lg border border-gray-200 py-2 pl-3 pr-8 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-            aria-label="Filter by status"
-          >
-            {statusOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Active filter chips */}
-        {hasActiveFilters && (
-          <div className="flex flex-wrap items-center gap-2">
-            {hasSearch && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
-                Search: &ldquo;{search}&rdquo;
-                <button
-                  onClick={clearSearch}
-                  aria-label="Clear search filter"
-                  className="ml-1 rounded-full hover:text-brand-900"
-                >
-                  &times;
-                </button>
-              </span>
-            )}
-            {hasStatusFilter && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
-                Status: {statusOptions.find((o) => o.value === statusFilter)?.label}
-                <button
-                  onClick={clearStatus}
-                  aria-label="Clear status filter"
-                  className="ml-1 rounded-full hover:text-brand-900"
-                >
-                  &times;
-                </button>
-              </span>
-            )}
-            {hasSearch && hasStatusFilter && (
+      {/* Tabs */}
+      <div className="border-b border-gray-200" role="tablist" aria-label="Trip status filter">
+        <nav className="-mb-px flex gap-6">
+          {TAB_ORDER.map((t) => {
+            const active = tab === t;
+            return (
               <button
-                onClick={clearAll}
-                className="text-xs text-gray-500 underline hover:text-gray-900"
+                key={t}
+                role="tab"
+                aria-selected={active}
+                onClick={() => handleTabChange(t)}
+                className={`border-b-2 px-1 pb-3 pt-1 text-sm font-medium transition-colors ${
+                  active
+                    ? "border-brand-600 text-brand-700"
+                    : "border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700"
+                }`}
               >
-                Clear all
+                {TAB_LABELS[t]}
               </button>
-            )}
-          </div>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* Search toolbar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative min-w-[200px] flex-1">
+          <svg
+            className="absolute left-3 top-2.5 h-4 w-4 text-gray-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
+            />
+          </svg>
+          <input
+            type="text"
+            placeholder="Search by trip id or stop address..."
+            value={search}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-4 text-sm text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            aria-label="Search trips by trip id or stop address"
+          />
+        </div>
+        {hasSearch && (
+          <button
+            onClick={clearSearch}
+            className="text-xs text-gray-500 underline hover:text-gray-900"
+          >
+            Clear search
+          </button>
         )}
       </div>
 
@@ -228,15 +222,20 @@ function TripsPageInner() {
       ) : filteredTrips.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center">
           <p className="text-sm font-medium text-gray-500">No trips found</p>
-          {hasActiveFilters && (
+          {(hasSearch || tab !== "active") && (
             <p className="mt-1 text-xs text-gray-400">
-              Try adjusting your search or filter.{" "}
-              <button
-                onClick={clearAll}
-                className="text-brand-600 hover:underline"
-              >
-                Clear filters
-              </button>
+              Try a different tab{hasSearch ? " or clear your search" : ""}.
+              {hasSearch && (
+                <>
+                  {" "}
+                  <button
+                    onClick={clearSearch}
+                    className="text-brand-600 hover:underline"
+                  >
+                    Clear search
+                  </button>
+                </>
+              )}
             </p>
           )}
         </div>
