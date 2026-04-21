@@ -40,7 +40,7 @@ function makeTripDoc(id: string, stops = 2, status = "assigned") {
 }
 
 describe("TripsPage", () => {
-  it("shows 5 skeleton rows while subscription has not fired", () => {
+  it("shows 5 skeleton cards while subscription has not fired", () => {
     mockOnSnapshot.mockImplementation(() => jest.fn() as any);
 
     const { container } = render(<TripsPage />);
@@ -48,13 +48,14 @@ describe("TripsPage", () => {
     const pulseEls = container.querySelectorAll(".animate-pulse");
     expect(pulseEls.length).toBeGreaterThan(0);
 
-    const list = container.querySelector(".divide-y");
-    expect(list?.children).toHaveLength(5);
+    const grid = container.querySelector('[data-testid="trip-card-grid"]');
+    expect(grid).not.toBeNull();
+    expect(grid?.children).toHaveLength(5);
 
     expect(screen.queryByText("No trips found")).not.toBeInTheDocument();
   });
 
-  it("shows trip rows after subscription fires", async () => {
+  it("shows trip cards with stop counts after subscription fires", async () => {
     mockOnSnapshot.mockImplementation((_: any, cb: any) => {
       cb({
         docs: [
@@ -66,7 +67,7 @@ describe("TripsPage", () => {
       return jest.fn() as any;
     });
 
-    render(<TripsPage />);
+    const { container } = render(<TripsPage />);
 
     await waitFor(() => {
       expect(screen.getByText("3 stops")).toBeInTheDocument();
@@ -75,6 +76,12 @@ describe("TripsPage", () => {
     expect(screen.getByText("2 stops")).toBeInTheDocument();
     expect(screen.getByText("1 stop")).toBeInTheDocument();
     expect(screen.queryByText("No trips found")).not.toBeInTheDocument();
+
+    // Cards render inside the responsive grid.
+    const grid = container.querySelector('[data-testid="trip-card-grid"]');
+    expect(grid).not.toBeNull();
+    const cardLinks = grid!.querySelectorAll('a[href^="/dashboard/trips/"]');
+    expect(cardLinks).toHaveLength(3);
   });
 
   it("shows empty state when subscription fires with no trips", async () => {
