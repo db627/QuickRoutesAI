@@ -267,6 +267,7 @@ describe("POST /trips/:id/status — predictive ETA accuracy tracking", () => {
       notes: null,
       route: { polyline: "abc", distanceMeters: 5000, durationSeconds: 600 },
       predictedEta: priorPrediction,
+      orgId: "org-test",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -299,7 +300,7 @@ describe("POST /trips/:id/status — predictive ETA accuracy tracking", () => {
       }
       return {
         doc: jest.fn().mockReturnThis(),
-        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "driver" }) }),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "driver", orgId: "org-test" }) }),
         set: jest.fn().mockResolvedValue(undefined),
       };
     });

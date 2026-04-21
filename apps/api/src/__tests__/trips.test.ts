@@ -60,7 +60,7 @@ describe("POST /trips", () => {
           doc: () => ({
             get: jest.fn().mockResolvedValue({
               exists: true,
-              data: () => ({ role: "dispatcher" }),
+              data: () => ({ role: "dispatcher", orgId: "org-test" }),
             }),
           }),
         };
@@ -70,7 +70,7 @@ describe("POST /trips", () => {
       }
       return {
         doc: jest.fn().mockReturnThis(),
-        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher" }) }),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "dispatcher", orgId: "org-test" }) }),
         set: jest.fn().mockResolvedValue(undefined),
       };
     });
