@@ -546,6 +546,159 @@ function ETAPanel({ tripId }: { tripId: string }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Status history timeline                                            */
+/* ------------------------------------------------------------------ */
+const STATUS_STEPS = ["draft", "assigned", "in_progress", "completed"] as const;
+
+const stepLabel: Record<string, string> = {
+  draft: "Draft",
+  assigned: "Assigned",
+  in_progress: "In Progress",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
+
+function StatusTimeline({ status }: { status: string }) {
+  if (status === "cancelled") {
+    return (
+      <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-3">
+        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white text-xs font-bold">✕</div>
+        <span className="text-sm font-medium text-red-700">Trip Cancelled</span>
+      </div>
+    );
+  }
+
+  const currentIdx = STATUS_STEPS.indexOf(status as typeof STATUS_STEPS[number]);
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white px-5 py-4">
+      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Status Timeline</p>
+      <div className="flex items-center gap-0">
+        {STATUS_STEPS.map((step, idx) => {
+          const done = idx < currentIdx;
+          const active = idx === currentIdx;
+          return (
+            <React.Fragment key={step}>
+              <div className="flex flex-col items-center gap-1">
+                <div
+                  className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold transition-colors ${
+                    done
+                      ? "bg-brand-600 text-white"
+                      : active
+                        ? "border-2 border-brand-600 bg-brand-50 text-brand-600"
+                        : "border-2 border-gray-200 bg-white text-gray-300"
+                  }`}
+                >
+                  {done ? "✓" : idx + 1}
+                </div>
+                <span
+                  className={`text-xs font-medium ${
+                    active ? "text-brand-600" : done ? "text-gray-700" : "text-gray-300"
+                  }`}
+                >
+                  {stepLabel[step]}
+                </span>
+              </div>
+              {idx < STATUS_STEPS.length - 1 && (
+                <div
+                  className={`mb-4 h-0.5 flex-1 ${idx < currentIdx ? "bg-brand-600" : "bg-gray-200"}`}
+                />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Assignment info panel                                              */
+/* ------------------------------------------------------------------ */
+function AssignmentInfoPanel({
+  driverId,
+  driverName,
+  driverPos,
+  tripStatus,
+}: {
+  driverId: string | null;
+  driverName: string | null;
+  driverPos: { lat: number; lng: number; speedMps: number; heading: number; updatedAt: string | null } | null;
+  tripStatus: string;
+}) {
+  if (!driverId) return null;
+
+  const isOnline = driverPos !== null;
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white">
+      <div className="border-b border-gray-200 px-5 py-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Assigned Driver</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-6 px-5 py-4">
+        {/* Avatar + name */}
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-sm font-bold text-brand-700">
+            {(driverName || driverId).slice(0, 2).toUpperCase()}
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-900">{driverName || driverId.slice(0, 12) + "..."}</p>
+            <p className="text-xs text-gray-400">UID: {driverId.slice(0, 10)}…</p>
+          </div>
+        </div>
+
+        {/* Online status */}
+        <div>
+          <p className="text-xs text-gray-400">Status</p>
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <div className={`h-2 w-2 rounded-full ${isOnline ? "animate-pulse bg-green-500" : "bg-gray-300"}`} />
+            <span className={`text-sm font-medium ${isOnline ? "text-green-600" : "text-gray-400"}`}>
+              {isOnline ? "Online" : "Offline"}
+            </span>
+          </div>
+        </div>
+
+        {/* Speed */}
+        {driverPos && (
+          <div>
+            <p className="text-xs text-gray-400">Speed</p>
+            <p className="mt-0.5 text-sm font-medium text-gray-900">
+              {(driverPos.speedMps * 2.237).toFixed(0)} mph
+            </p>
+          </div>
+        )}
+
+        {/* Heading */}
+        {driverPos && (
+          <div>
+            <p className="text-xs text-gray-400">Heading</p>
+            <p className="mt-0.5 text-sm font-medium text-gray-900">{driverPos.heading.toFixed(0)}°</p>
+          </div>
+        )}
+
+        {/* Trip status */}
+        <div>
+          <p className="text-xs text-gray-400">Trip Status</p>
+          <span className={`mt-0.5 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[tripStatus] || ""}`}>
+            {tripStatus.replace("_", " ")}
+          </span>
+        </div>
+
+        {/* Last update */}
+        {driverPos?.updatedAt && (
+          <div>
+            <p className="text-xs text-gray-400">Last Update</p>
+            <p className="mt-0.5 text-xs text-gray-500">
+              {new Date(driverPos.updatedAt).toLocaleTimeString()}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main page component                                                */
 /* ------------------------------------------------------------------ */
 export default function TripDetailPage() {
@@ -891,6 +1044,17 @@ export default function TripDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Status timeline */}
+      <StatusTimeline status={trip.status} />
+
+      {/* Assignment info panel */}
+      <AssignmentInfoPanel
+        driverId={trip.driverId}
+        driverName={driverName}
+        driverPos={driverPos}
+        tripStatus={trip.status}
+      />
 
       {/* AI Route Reasoning */}
       {trip.route?.reasoning && (
