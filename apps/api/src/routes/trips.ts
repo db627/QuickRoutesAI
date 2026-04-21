@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../config/firebase";
 import admin from "../config/firebase";
-import { requireRole } from "../middleware/auth";
+import { requireRole, requireOrg } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import {
   createTripSchema,
@@ -20,9 +20,26 @@ import { AppError } from "../utils/AppError";
 const router = Router();
 
 /**
+ * Ensures the given trip document belongs to the caller's organization.
+ * Throws AppError(FORBIDDEN, 403) if:
+ *   - the trip has no orgId (legacy, pre-isolation) — treat as invisible, or
+ *   - the trip's orgId doesn't match the caller's orgId.
+ * Call this after verifying the trip exists (404 first, then this check).
+ */
+function assertTripInOrg(
+  tripData: FirebaseFirestore.DocumentData | undefined,
+  orgId: string | undefined,
+): void {
+  const tripOrgId = tripData?.orgId;
+  if (!tripOrgId || !orgId || tripOrgId !== orgId) {
+    throw new AppError(ErrorCode.FORBIDDEN, 403, "Trip belongs to another organization");
+  }
+}
+
+/**
  * POST /trips — dispatcher creates a new trip with stops
  */
-router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema), async (req, res, next) => {
+router.post("/", requireRole("dispatcher", "admin"), requireOrg, validate(createTripSchema), async (req, res, next) => {
   const { stops } = req.body;
   const now = new Date().toISOString();
 
@@ -51,6 +68,7 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
     const tripData = {
       driverId: null,
       createdBy: req.uid,
+      orgId: req.orgId!,
       status: "draft" as const,
       route: null,
       notes: null,
@@ -87,9 +105,12 @@ router.post("/", requireRole("dispatcher", "admin"), validate(createTripSchema),
  *   page pagination: ?page=1&limit=20
  *   cursor pagination: ?cursor=...&limit=20
  */
-router.get("/", pagination, async (req, res, next) => {
+router.get("/", requireOrg, pagination, async (req, res, next) => {
   try {
-    let ref: admin.firestore.Query = db.collection("trips");
+    // Scope every query to the caller's organization. This is the primary
+    // tenancy boundary for trips. Combined with existing filters below, the
+    // composite query may require a Firestore index — see PR description.
+    let ref: admin.firestore.Query = db.collection("trips").where("orgId", "==", req.orgId!);
 
     // Drivers can only see their own trips
     if (req.userRole === "driver") {
@@ -122,17 +143,20 @@ router.get("/", pagination, async (req, res, next) => {
  * Uses simple count() queries to avoid composite index requirements.
  * Returns: { totalTrips, inProgressTrips, completedToday }
  */
-router.get("/stats", requireRole("dispatcher", "admin"), async (_req, res, next) => {
+router.get("/stats", requireRole("dispatcher", "admin"), requireOrg, async (req, res, next) => {
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
+    // Scope stats to caller's org so numbers don't leak across tenants.
+    const tripsRef = db.collection("trips").where("orgId", "==", req.orgId!);
+
     const [totalSnap, inProgressSnap, completedSnap] = await Promise.all([
-      db.collection("trips").count().get(),
-      db.collection("trips").where("status", "==", "in_progress").count().get(),
+      tripsRef.count().get(),
+      tripsRef.where("status", "==", "in_progress").count().get(),
       // Fetch completed trips and filter by date server-side to avoid a
-      // composite index on (status, updatedAt).
-      db.collection("trips").where("status", "==", "completed").get(),
+      // composite index on (orgId, status, updatedAt).
+      tripsRef.where("status", "==", "completed").get(),
     ]);
 
     const completedToday = completedSnap.docs.filter((doc) => {
@@ -153,7 +177,7 @@ router.get("/stats", requireRole("dispatcher", "admin"), async (_req, res, next)
 /**
  * POST /trips/:id/assign — dispatcher assigns a driver to this trip
  */
-router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTripSchema), tripTransitionGuard, async (req, res, next) => {
+router.post("/:id/assign", requireRole("dispatcher", "admin"), requireOrg, validate(assignTripSchema), tripTransitionGuard, async (req, res, next) => {
   const { driverId } = req.body;
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
@@ -164,6 +188,11 @@ router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTr
     }
 
     const trip = tripDoc.data();
+    try {
+      assertTripInOrg(trip, req.orgId);
+    } catch (err) {
+      return next(err);
+    }
     if (trip?.status !== "draft") {
       return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Trip can only be assigned from draft status"));
     }
@@ -183,7 +212,7 @@ router.post("/:id/assign", requireRole("dispatcher", "admin"), validate(assignTr
 /**
  * GET /trips/:id — get trip details
  */
-router.get("/:id",tripStopsValidationGuard, async (req, res, next) => {
+router.get("/:id", requireOrg, tripStopsValidationGuard, async (req, res, next) => {
   try {
     const tripDoc = await db.collection("trips").doc(req.params.id).get();
 
@@ -192,6 +221,14 @@ router.get("/:id",tripStopsValidationGuard, async (req, res, next) => {
     }
 
     const trip = tripDoc.data();
+
+    // Tenancy check: trip must belong to caller's org. Legacy trips with no
+    // orgId are intentionally invisible (403) — backfill required.
+    try {
+      assertTripInOrg(trip, req.orgId);
+    } catch (err) {
+      return next(err);
+    }
 
     // Drivers can only see trips assigned to them
     if (req.userRole === "driver" && trip?.driverId !== req.uid) {
@@ -207,7 +244,7 @@ router.get("/:id",tripStopsValidationGuard, async (req, res, next) => {
 /**
  * POST /trips/:id/duplicate — duplicate a completed trip into a new draft trip
  */
-router.post("/:id/duplicate", requireRole("dispatcher", "admin"), tripStopsValidationGuard,  async (req, res, next) => {
+router.post("/:id/duplicate", requireRole("dispatcher", "admin"), requireOrg, tripStopsValidationGuard,  async (req, res, next) => {
   try {
     const sourceTripDoc = await db.collection("trips").doc(req.params.id).get();
 
@@ -216,17 +253,23 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), tripStopsValid
     }
 
     const sourceTrip = sourceTripDoc.data();
+    try {
+      assertTripInOrg(sourceTrip, req.orgId);
+    } catch (err) {
+      return next(err);
+    }
     if (sourceTrip?.status !== "completed") {
       return next(new AppError(ErrorCode.CONFLICT, 409, "Only completed trips can be duplicated"));
     }
 
     const now = new Date().toISOString();
     const duplicatedStops = req!.stops || [];
-    
+
 
     const duplicatedTrip = {
       driverId: null,
       createdBy: req.uid,
+      orgId: req.orgId!,
       status: "draft" as const,
       route: null,
       notes: sourceTrip?.notes ?? null,
@@ -269,7 +312,7 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), tripStopsValid
  * PATCH /trips/:id -- update trip details
  */
 
-router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSchema.partial()), tripStopsValidationGuard, async (req, res, next) => {
+router.patch("/:id", requireRole("dispatcher", "admin"), requireOrg, validate(updateTripSchema.partial()), tripStopsValidationGuard, async (req, res, next) => {
   try {
     const { notes, stops } = req.body;
 
@@ -281,6 +324,12 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
     }
 
     const trip = tripDoc.data();
+
+    try {
+      assertTripInOrg(trip, req.orgId);
+    } catch (err) {
+      return next(err);
+    }
 
     // Allow editing draft, assigned, and in_progress trips (not completed/cancelled)
     if (trip?.status === "completed" || trip?.status === "cancelled") {
@@ -389,7 +438,7 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
 /**
  * DELETE /trips/:id — delete a trip (only if draft)
  */
-router.delete("/:id", requireRole("dispatcher", "admin"), async (req, res, next) => {
+router.delete("/:id", requireRole("dispatcher", "admin"), requireOrg, async (req, res, next) => {
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
@@ -397,6 +446,11 @@ router.delete("/:id", requireRole("dispatcher", "admin"), async (req, res, next)
       return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
     const trip = tripDoc.data();
+    try {
+      assertTripInOrg(trip, req.orgId);
+    } catch (err) {
+      return next(err);
+    }
     if (trip?.status !== "draft") {
       return next(new AppError(ErrorCode.CONFLICT, 409, "Only draft trips can be deleted"));
     }
@@ -417,7 +471,7 @@ router.delete("/:id", requireRole("dispatcher", "admin"), async (req, res, next)
 /**
  * POST /trips/:id/route — compute route using Google Directions API
  */
-router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidationGuard, async (req, res, next) => {
+router.post("/:id/route", requireRole("dispatcher", "admin"), requireOrg, tripStopsValidationGuard, async (req, res, next) => {
   try {
     const tripDoc = await db.collection("trips").doc(req.params.id).get();
 
@@ -426,6 +480,11 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidatio
     }
 
     const trip = tripDoc.data();
+    try {
+      assertTripInOrg(trip, req.orgId);
+    } catch (err) {
+      return next(err);
+    }
     const stops = req!.stops || [];
 
     if (stops.length < 2) {
@@ -472,7 +531,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidatio
  * Drivers can move to in_progress or completed (if assigned to them).
  * Dispatchers can set any status.
  */
-router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard, tripStopsValidationGuard, async (req, res, next) => {
+router.post("/:id/status", requireOrg, validate(updateTripStatusSchema), tripTransitionGuard, tripStopsValidationGuard, async (req, res, next) => {
   const { status, currentLocation } = req.body;
 
   try {
@@ -484,6 +543,12 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
     }
 
     const trip = tripDoc.data();
+
+    try {
+      assertTripInOrg(trip, req.orgId);
+    } catch (err) {
+      return next(err);
+    }
 
     // Drivers can only update their own assigned trips
     if (req.userRole === "driver") {
@@ -544,7 +609,7 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
  * POST /trips/:id/stops/:stopId/complete — driver marks a stop as completed
  * Sequential enforcement: all prior stops must be completed first.
  */
-router.post("/:id/stops/:stopId/complete", async (req, res) => {
+router.post("/:id/stops/:stopId/complete", requireOrg, async (req, res) => {
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
@@ -554,6 +619,11 @@ router.post("/:id/stops/:stopId/complete", async (req, res) => {
     }
 
     const trip = tripDoc.data();
+
+    // Tenancy: reject cross-org access (and legacy trips with no orgId).
+    if (!trip?.orgId || trip.orgId !== req.orgId) {
+      return res.status(403).json({ error: "Forbidden", message: "Trip belongs to another organization" });
+    }
 
     if (trip?.status !== "in_progress") {
       return res.status(400).json({ error: "Bad Request", message: "Trip must be in progress to complete stops" });
@@ -609,7 +679,7 @@ router.post("/:id/stops/:stopId/complete", async (req, res) => {
 /**
  * POST /trips/:id/cancel — dispatcher cancels a draft or assigned trip
  */
-router.post("/:id/cancel", requireRole("dispatcher", "admin"), async (req, res, next) => {
+router.post("/:id/cancel", requireRole("dispatcher", "admin"), requireOrg, async (req, res, next) => {
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
@@ -619,6 +689,11 @@ router.post("/:id/cancel", requireRole("dispatcher", "admin"), async (req, res, 
     }
 
     const trip = tripDoc.data();
+    try {
+      assertTripInOrg(trip, req.orgId);
+    } catch (err) {
+      return next(err);
+    }
     if (!["draft", "assigned"].includes(trip?.status)) {
       return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Only draft or assigned trips can be cancelled"));
     }
