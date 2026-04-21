@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import TripList from "@/components/TripList";
 import { onSnapshot } from "firebase/firestore";
+import { useAuth } from "@/lib/auth-context";
 
 jest.mock("@/lib/firebase", () => ({ firestore: {} }));
 
@@ -11,7 +12,12 @@ jest.mock("firebase/firestore", () => ({
   query: jest.fn(() => ({})),
   orderBy: jest.fn(() => ({})),
   limit: jest.fn(() => ({})),
+  where: jest.fn(() => ({})),
   onSnapshot: jest.fn(),
+}));
+
+jest.mock("@/lib/auth-context", () => ({
+  useAuth: jest.fn(),
 }));
 
 jest.mock("next/link", () => {
@@ -21,6 +27,7 @@ jest.mock("next/link", () => {
 });
 
 const mockOnSnapshot = onSnapshot as jest.MockedFunction<typeof onSnapshot>;
+const mockedUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
 
 function makeTripDoc(
   id: string,
@@ -46,6 +53,17 @@ function makeTripDoc(
 }
 
 describe("TripList", () => {
+  beforeEach(() => {
+    mockedUseAuth.mockReturnValue({
+      user: {} as any,
+      role: "dispatcher",
+      orgId: "org-test",
+      loading: false,
+      logout: jest.fn(),
+      refresh: jest.fn(),
+    });
+  });
+
   it("shows skeleton cards while subscription has not fired", () => {
     mockOnSnapshot.mockImplementation(() => jest.fn() as any);
 
@@ -130,5 +148,27 @@ describe("TripList", () => {
     await waitFor(() => {
       expect(screen.getByText("No trips yet")).toBeInTheDocument();
     });
+  });
+
+  it("renders empty state and does not subscribe when orgId is null", async () => {
+    mockedUseAuth.mockReturnValue({
+      user: {} as any,
+      role: "dispatcher",
+      orgId: null,
+      loading: false,
+      logout: jest.fn(),
+      refresh: jest.fn(),
+    });
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
+
+    render(<TripList />);
+
+    await waitFor(() => {
+      expect(screen.getByText("No trips yet")).toBeInTheDocument();
+    });
+
+    // The Firestore subscription must not fire without an orgId — otherwise
+    // the unscoped query would leak cross-org trips.
+    expect(mockOnSnapshot).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import TripsPage from "@/app/dashboard/trips/page";
 import { onSnapshot } from "firebase/firestore";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 
 jest.mock("@/lib/firebase", () => ({ firestore: {} }));
 
@@ -10,7 +11,12 @@ jest.mock("firebase/firestore", () => ({
   collection: jest.fn(() => ({})),
   query: jest.fn(() => ({})),
   orderBy: jest.fn(() => ({})),
+  where: jest.fn(() => ({})),
   onSnapshot: jest.fn(),
+}));
+
+jest.mock("@/lib/auth-context", () => ({
+  useAuth: jest.fn(),
 }));
 
 jest.mock("next/navigation", () => ({
@@ -28,6 +34,7 @@ jest.mock("next/link", () => {
 const mockOnSnapshot = onSnapshot as jest.MockedFunction<typeof onSnapshot>;
 const mockUseSearchParams = useSearchParams as jest.MockedFunction<typeof useSearchParams>;
 const mockUseRouter = useRouter as jest.MockedFunction<typeof useRouter>;
+const mockedUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
 
 function makeTripDoc(id: string, stops = 2, status = "assigned") {
   return {
@@ -53,6 +60,14 @@ describe("TripsPage", () => {
   beforeEach(() => {
     mockSearchParams();
     mockUseRouter.mockReturnValue({ replace: jest.fn() } as any);
+    mockedUseAuth.mockReturnValue({
+      user: {} as any,
+      role: "dispatcher",
+      orgId: "org-test",
+      loading: false,
+      logout: jest.fn(),
+      refresh: jest.fn(),
+    });
   });
 
   it("shows 5 skeleton cards while subscription has not fired", () => {

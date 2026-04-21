@@ -9,6 +9,7 @@ import {
   onSnapshot,
   collection,
   query,
+  where,
 } from "firebase/firestore";
 import {
   APIProvider,
@@ -115,6 +116,7 @@ function AssignDriverDropdown({
   onAssigned: () => void;
 }) {
   const { toast } = useToast();
+  const { orgId } = useAuth();
   const [drivers, setDrivers] = useState<DriverOption[]>([]);
   const [open, setOpen] = useState(false);
   const [assigning, setAssigning] = useState(false);
@@ -125,7 +127,16 @@ function AssignDriverDropdown({
     return apiFetch<{ data: DriverOption[] }>("/drivers")
       .then((res) => setDrivers(res.data))
       .catch(() => {
-        const q = query(collection(firestore, "drivers"));
+        // Fallback Firestore subscription: still scope by orgId so we don't
+        // leak drivers from other organizations.
+        if (!orgId) {
+          setDrivers([]);
+          return;
+        }
+        const q = query(
+          collection(firestore, "drivers"),
+          where("orgId", "==", orgId),
+        );
         const unsub = onSnapshot(q, (snap) => {
           setDrivers(
             snap.docs.map((d) => ({
@@ -136,7 +147,7 @@ function AssignDriverDropdown({
         });
         return unsub;
       });
-  }, []);
+  }, [orgId]);
 
   useEffect(() => {
     fetchDrivers();
@@ -855,7 +866,7 @@ export default function TripDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { toast } = useToast();
-  const { role } = useAuth();
+  const { role, orgId } = useAuth();
   const [rawTrip, setRawTrip] = useState<Trip | null>(null);
   const [stops, setStops] = useState<TripStop[]>([]);
   const [loading, setLoading] = useState(true);
@@ -890,6 +901,18 @@ export default function TripDetailPage() {
     });
     return unsub;
   }, [id]);
+
+  // Cross-org guard: if a user somehow navigates to a trip belonging to a
+  // different organization (or a legacy trip without an orgId), bounce them
+  // back to the trip list. The API already 403s on writes, but this prevents
+  // the direct Firestore read from leaking trip contents to the UI.
+  useEffect(() => {
+    if (!rawTrip || !orgId) return;
+    if (rawTrip.orgId !== orgId) {
+      toast.error("You don't have access to this trip.");
+      router.replace("/dashboard/trips");
+    }
+  }, [rawTrip, orgId, router, toast]);
 
   // Subscribe to stops subcollection in real-time
   useEffect(() => {

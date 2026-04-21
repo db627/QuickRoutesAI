@@ -3,11 +3,12 @@
 import { useEffect, useState, useMemo, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
-import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
+import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import type { Trip, TripStatus } from "@quickroutesai/shared";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { TripCard } from "@/components/TripCard";
+import { useAuth } from "@/lib/auth-context";
 
 type TripTab = "active" | "completed" | "cancelled" | "all";
 
@@ -49,6 +50,7 @@ function TripsPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  const { orgId } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -58,7 +60,18 @@ function TripsPageInner() {
   const [tab, setTab] = useState<TripTab>(parseTab(searchParams.get("tab")));
 
   useEffect(() => {
-    const q = query(collection(firestore, "trips"), orderBy("createdAt", "desc"));
+    // Without an orgId we have no scope to filter by — bail rather than
+    // subscribing to the entire cross-org trips collection.
+    if (!orgId) {
+      setTrips([]);
+      setLoading(false);
+      return;
+    }
+    const q = query(
+      collection(firestore, "trips"),
+      where("orgId", "==", orgId),
+      orderBy("createdAt", "desc"),
+    );
     const unsub = onSnapshot(q, (snapshot) => {
       setTrips(
         snapshot.docs.map((doc) => ({
@@ -69,7 +82,7 @@ function TripsPageInner() {
       setLoading(false);
     });
     return unsub;
-  }, []);
+  }, [orgId]);
 
   function updateUrl(nextSearch: string, nextTab: TripTab) {
     const params = new URLSearchParams();

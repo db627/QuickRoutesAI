@@ -2,20 +2,34 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { collection, doc, getDoc, onSnapshot, orderBy, query, limit } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, orderBy, query, limit, where } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import type { Trip } from "@quickroutesai/shared";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { TripCard } from "@/components/TripCard";
+import { useAuth } from "@/lib/auth-context";
 
 export default function TripList() {
+  const { orgId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [driverNames, setDriverNames] = useState<Record<string, string>>({});
   const requestedDriverIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
-    const q = query(collection(firestore, "trips"), orderBy("createdAt", "desc"), limit(20));
+    // Without an orgId we have no scope to filter by — bail rather than
+    // subscribing to the entire cross-org trips collection.
+    if (!orgId) {
+      setTrips([]);
+      setLoading(false);
+      return;
+    }
+    const q = query(
+      collection(firestore, "trips"),
+      where("orgId", "==", orgId),
+      orderBy("createdAt", "desc"),
+      limit(20),
+    );
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map((d) => ({
         id: d.id,
@@ -38,7 +52,7 @@ export default function TripList() {
       });
     });
     return unsub;
-  }, []);
+  }, [orgId]);
 
   // Defensive: API already sorts desc, but we guarantee newest-first here too.
   // ISO 8601 strings sort lexicographically in createdAt order.

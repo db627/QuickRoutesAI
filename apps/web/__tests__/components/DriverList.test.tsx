@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import DriverList from "@/components/DriverList";
 import { onSnapshot } from "firebase/firestore";
+import { useAuth } from "@/lib/auth-context";
 
 jest.mock("@/lib/firebase", () => ({ firestore: {} }));
 
@@ -11,7 +12,12 @@ jest.mock("firebase/firestore", () => ({
   onSnapshot: jest.fn(),
 }));
 
+jest.mock("@/lib/auth-context", () => ({
+  useAuth: jest.fn(),
+}));
+
 const mockOnSnapshot = onSnapshot as jest.MockedFunction<typeof onSnapshot>;
+const mockedUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
 
 function makeDriverDoc(uid: string, name?: string) {
   return {
@@ -27,6 +33,17 @@ function makeDriverDoc(uid: string, name?: string) {
 }
 
 describe("DriverList", () => {
+  beforeEach(() => {
+    mockedUseAuth.mockReturnValue({
+      user: {} as any,
+      role: "dispatcher",
+      orgId: "org-test",
+      loading: false,
+      logout: jest.fn(),
+      refresh: jest.fn(),
+    });
+  });
+
   it("shows 4 skeleton rows while drivers subscription has not fired", () => {
     mockOnSnapshot.mockImplementation(() => jest.fn() as any);
 

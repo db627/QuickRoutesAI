@@ -5,6 +5,7 @@ import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import { Users, Truck, Loader, CheckCircle } from "lucide-react";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+import { useAuth } from "@/lib/auth-context";
 
 interface Stats {
   activeDrivers: number;
@@ -14,6 +15,7 @@ interface Stats {
 }
 
 export default function StatsCards() {
+  const { orgId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<Stats>({
     activeDrivers: 0,
@@ -23,6 +25,19 @@ export default function StatsCards() {
   });
 
   useEffect(() => {
+    // Without an orgId we have no scope to filter by — show zeros instead of
+    // leaking cross-org counts via unscoped subscriptions.
+    if (!orgId) {
+      setStats({
+        activeDrivers: 0,
+        totalTrips: 0,
+        inProgressTrips: 0,
+        completedToday: 0,
+      });
+      setLoading(false);
+      return;
+    }
+
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const todayIso = startOfToday.toISOString();
@@ -40,7 +55,11 @@ export default function StatsCards() {
     }
 
     const unsubActiveDrivers = onSnapshot(
-      query(collection(firestore, "drivers"), where("isOnline", "==", true)),
+      query(
+        collection(firestore, "drivers"),
+        where("orgId", "==", orgId),
+        where("isOnline", "==", true),
+      ),
       (snap) => {
         if (resolved < 4) {
           merge({ activeDrivers: snap.size });
@@ -50,17 +69,21 @@ export default function StatsCards() {
       },
     );
 
-    const unsubTotalTrips = onSnapshot(collection(firestore, "trips"), (snap) => {
-      if (resolved < 4) {
-        merge({ totalTrips: snap.size });
-      } else {
-        setStats((prev) => ({ ...prev, totalTrips: snap.size }));
-      }
-    });
+    const unsubTotalTrips = onSnapshot(
+      query(collection(firestore, "trips"), where("orgId", "==", orgId)),
+      (snap) => {
+        if (resolved < 4) {
+          merge({ totalTrips: snap.size });
+        } else {
+          setStats((prev) => ({ ...prev, totalTrips: snap.size }));
+        }
+      },
+    );
 
     const unsubInProgress = onSnapshot(
       query(
         collection(firestore, "trips"),
+        where("orgId", "==", orgId),
         where("status", "in", ["assigned", "in_progress"]),
       ),
       (snap) => {
@@ -75,6 +98,7 @@ export default function StatsCards() {
     const unsubCompletedToday = onSnapshot(
       query(
         collection(firestore, "trips"),
+        where("orgId", "==", orgId),
         where("status", "==", "completed"),
         where("updatedAt", ">=", todayIso),
       ),
@@ -93,7 +117,7 @@ export default function StatsCards() {
       unsubInProgress();
       unsubCompletedToday();
     };
-  }, []);
+  }, [orgId]);
 
   const cards = [
     { label: "Active Drivers", value: stats.activeDrivers, color: "text-green-600", icon: Users },
