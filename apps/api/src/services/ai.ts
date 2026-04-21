@@ -285,6 +285,89 @@ Return ONLY a JSON array of anomalies found (empty array if none):
   return aiJson<Anomaly[]>(prompt, 800);
 }
 
+// ─── Feature: Multi-Driver Stop Distribution ─────────────────────────
+
+interface MultiAssignDriver {
+  uid: string;
+  name: string;
+  lat: number;
+  lng: number;
+}
+
+interface MultiAssignStop {
+  address: string;
+  lat: number;
+  lng: number;
+  timeWindow?: { start: string; end: string };
+  notes?: string;
+}
+
+interface MultiAssignResult {
+  assignments: { driverIndex: number; stopIndices: number[] }[];
+  reasoning: string;
+}
+
+export async function distributeStopsAcrossDrivers(
+  drivers: MultiAssignDriver[],
+  stops: MultiAssignStop[],
+): Promise<MultiAssignResult> {
+  if (drivers.length === 1) {
+    return {
+      assignments: [{ driverIndex: 0, stopIndices: stops.map((_, i) => i) }],
+      reasoning: "All stops assigned to the only available driver.",
+    };
+  }
+
+  const driverList = drivers
+    .map((d, i) => `  ${i}: "${d.name}" (uid: ${d.uid}, location: ${d.lat.toFixed(5)},${d.lng.toFixed(5)})`)
+    .join("\n");
+
+  const stopList = stops
+    .map((s, i) => {
+      let line = `  ${i}: "${s.address}" (lat: ${s.lat.toFixed(5)}, lng: ${s.lng.toFixed(5)})`;
+      if (s.timeWindow) line += ` [DELIVER BETWEEN ${s.timeWindow.start}–${s.timeWindow.end}]`;
+      return line;
+    })
+    .join("\n");
+
+  const prompt = `You are a multi-driver delivery dispatch optimizer. Distribute the following stops across available drivers for maximum efficiency.
+
+Optimization goals (in order of priority):
+1. Geographic clustering — assign nearby stops to the same driver to minimize driving
+2. Load balancing — distribute stops roughly evenly unless geography strongly dictates otherwise
+3. Time window compliance — stops with overlapping time windows should go to the same driver when possible
+4. Driver proximity — prefer assigning stops near each driver's current location
+
+Available drivers:
+${driverList}
+
+Stops to distribute (${stops.length} total):
+${stopList}
+
+Return ONLY a JSON object:
+{
+  "assignments": [
+    { "driverIndex": <0-based driver index>, "stopIndices": [<0-based stop indices assigned to this driver>] }
+  ],
+  "reasoning": "<2-3 sentences explaining the distribution strategy>"
+}
+Rules: every stop index must appear exactly once across all assignments. Only include drivers that receive at least one stop.`;
+
+  const result = await aiJson<MultiAssignResult>(prompt, 800);
+
+  // Validate every stop is assigned exactly once
+  const assigned = result.assignments.flatMap((a) => a.stopIndices).sort((a, b) => a - b);
+  if (assigned.length !== stops.length) {
+    throw new Error(`AI assigned ${assigned.length} stops but expected ${stops.length}`);
+  }
+  const uniqueAssigned = new Set(assigned);
+  if (uniqueAssigned.size !== stops.length || assigned.some((i) => i < 0 || i >= stops.length)) {
+    throw new Error(`AI produced invalid stop indices: ${JSON.stringify(assigned)}`);
+  }
+
+  return result;
+}
+
 // ─── Feature: Smart ETA Prediction ───────────────────────────────────
 
 interface ETAInput {

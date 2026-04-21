@@ -121,6 +121,18 @@ export interface Trip {
   predictedEta?: PredictedEta;
 }
 
+// ── Notification ──
+export type NotificationType = "trip_assigned" | "trip_completed" | "driver_offline";
+
+export interface Notification {
+  id: string;
+  type: NotificationType;
+  message: string;
+  read: boolean;
+  userId: string; // recipient uid
+  createdAt: string; // ISO 8601
+}
+
 // ── Event ──
 export type EventType = "location_ping" | "status_change";
 
@@ -134,11 +146,11 @@ export interface DriverEvent {
 
 // ── Insights ──
 export interface DailyInsights {
-  date: string;              // YYYY-MM-DD (date-only; what day the insights cover)
-  highlights: string[];      // 1-5 bullet points
-  concerns: string[];        // 1-5 bullet points
-  recommendations: string[]; // 1-5 bullet points
-  generatedAt: string;       // ISO timestamp when AI call was made
+  date: string;
+  highlights: string[];
+  concerns: string[];
+  recommendations: string[];
+  generatedAt: string;
   stats: {
     tripsCompleted: number;
     tripsCancelled: number;
@@ -146,6 +158,20 @@ export interface DailyInsights {
     avgDurationSeconds?: number;
     avgEtaErrorMinutes?: number;
   };
+}
+
+// ── Multi-driver optimization ──
+export interface MultiDriverPlan {
+  driverId: string;
+  driverName: string;
+  tripId: string;
+  stops: TripStop[];
+  reasoning: string;
+}
+
+export interface MultiDriverOptimizationResult {
+  plans: MultiDriverPlan[];
+  overallReasoning: string;
 }
 
 // ── API Responses ──

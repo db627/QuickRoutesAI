@@ -10,6 +10,7 @@ jest.mock("firebase/firestore", () => ({
   where: jest.fn(() => ({})),
   doc: jest.fn(() => ({})),
   onSnapshot: jest.fn(),
+  getDoc: jest.fn(() => Promise.resolve({ exists: () => false })),
 }));
 
 jest.mock("next/navigation", () => ({
@@ -200,5 +201,66 @@ describe("TripDetailPage", () => {
     });
 
     expect(screen.queryByText("AI Route Reasoning")).not.toBeInTheDocument();
+  });
+
+  // ── StatusTimeline ─────────────────────────────────────────────────────────
+
+  it("renders all 4 timeline steps", async () => {
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeTripDoc({ status: "draft" }));
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
+
+    render(<TripDetailPage />);
+
+    await waitFor(() => expect(screen.getByText("Trip Detail")).toBeInTheDocument());
+
+    expect(screen.getByText("Draft")).toBeInTheDocument();
+    expect(screen.getByText("Assigned")).toBeInTheDocument();
+    expect(screen.getByText("In Progress")).toBeInTheDocument();
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+  });
+
+  it("shows cancelled state instead of stepper when trip is cancelled", async () => {
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeTripDoc({ status: "cancelled" }));
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
+
+    render(<TripDetailPage />);
+
+    await waitFor(() => expect(screen.getByText("Trip Cancelled")).toBeInTheDocument());
+
+    expect(screen.queryByText("In Progress")).not.toBeInTheDocument();
+  });
+
+  // ── AssignmentInfoPanel ────────────────────────────────────────────────────
+
+  it("does not render assignment panel when no driver is assigned", async () => {
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeTripDoc({ driverId: null }));
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
+
+    render(<TripDetailPage />);
+
+    await waitFor(() => expect(screen.getByText("Trip Detail")).toBeInTheDocument());
+
+    expect(screen.queryByText("Assigned Driver")).not.toBeInTheDocument();
+  });
+
+  it("renders assignment panel with driver info when driver is assigned", async () => {
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeTripDoc({ driverId: "driver-99", status: "assigned" }));
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
+
+    render(<TripDetailPage />);
+
+    await waitFor(() => expect(screen.getByText("Assigned Driver")).toBeInTheDocument());
   });
 });
