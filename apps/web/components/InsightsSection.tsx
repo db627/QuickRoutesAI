@@ -124,8 +124,7 @@ export default function InsightsSection() {
     } finally {
       setLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     fetchInsights(date);
