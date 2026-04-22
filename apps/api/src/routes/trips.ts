@@ -19,7 +19,7 @@ import { paginateFirestore } from "../utils/paginateFirestore";
 import { tripStopsValidationGuard, tripTransitionGuard } from "../middleware/trips";
 import { AppError } from "../utils/AppError";
 import fs from "fs";
-import { postTripAnalytics } from "../services/ai";
+import { delayTripAnalytics } from "../services/ai";
 import { computeHistoricalWeather, computeWeather } from "../services/weather";
 const router = Router();
 
@@ -535,7 +535,7 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
 
     if (status === "completed") {
       try {
-        const delayAnalysis = await postTripAnalytics(req.params.id, req.stops || []);
+        const delayAnalysis = await delayTripAnalytics(req.params.id, req.stops || []);
         console.log("Delay analysis result:", delayAnalysis);
         await db.collection("trips").doc(req.params.id).update({
           delayAnalysis: delayAnalysis,

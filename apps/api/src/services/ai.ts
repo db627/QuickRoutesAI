@@ -877,7 +877,7 @@ async function buildLegAnalytics(params: {
   };
 }
 
-export async function postTripAnalytics(
+export async function delayTripAnalytics(
   tripId: string,
   stops: any[]
 ): Promise<DelayAnalysisResult[]> {
