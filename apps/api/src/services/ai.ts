@@ -1138,3 +1138,30 @@ export async function postTripAnalytic(
 
   return feedback;
 }
+
+
+export async function retrieveRouteFeedback(todaysDate: Timestamp, driverId: string): Promise<RouteAccuracyFeedback[]> {
+  
+  const endDate = todaysDate.toDate();
+
+  const startDate = new Date(endDate);
+  startDate.setDate(startDate.getDate() - 30);
+
+  const trips = await db
+    .collection("trips")
+    .where("status", "==", "completed")
+    .where("createdAt", ">=", Timestamp.fromDate(startDate))
+    .where("createdAt", "<=", Timestamp.fromDate(endDate))
+    .where("driverId", "==", driverId)
+    .get();
+
+  const feedbacks: RouteAccuracyFeedback[] = [];
+  for (const trip of trips.docs) {
+    const tripData = trip.data();
+    if (tripData.routeFeedback) {
+      feedbacks.push(tripData.routeFeedback);
+    }
+  }
+
+  return feedbacks;
+}

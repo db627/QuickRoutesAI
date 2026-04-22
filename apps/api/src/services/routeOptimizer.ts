@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 import type { TripStop } from "@quickroutesai/shared";
+import { retrieveRouteFeedback } from "./ai";
+import { Timestamp } from "firebase-admin/firestore";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -8,13 +10,14 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
  * total driving distance/time while respecting delivery time windows.
  * The first stop (origin) stays fixed; all other stops are reordered.
  */
-export async function optimizeStopOrder(stops: TripStop[], weatherInfo?: any): Promise<{ stops: TripStop[]; reasoning: string }> {
+export async function optimizeStopOrder(stops: TripStop[], weatherInfo?: any, driverId?: string): Promise<{ stops: TripStop[]; reasoning: string }> {
   if (stops.length <= 2) return { stops, reasoning: "" };
 
   const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
   const origin = sorted[0];
   const rest = sorted.slice(1);
-
+  
+  const retrievedRouteFeedback = await retrieveRouteFeedback(Timestamp.now(), driverId || ""); 
   const stopList = rest
     .map((s, i) => {
       let line = `  ${i}: "${s.address}" (lat: ${s.lat}, lng: ${s.lng})`;
