@@ -211,6 +211,30 @@ export interface Org {
   updatedAt: string;
 }
 
+// ── Analytics ──
+export interface AnalyticsTripsByDay {
+  date: string; // YYYY-MM-DD
+  count: number;
+}
+
+export interface AnalyticsAvgDeliveryByDay {
+  date: string; // YYYY-MM-DD
+  avgMinutes: number;
+}
+
+export interface AnalyticsSummary {
+  totalTrips: number;
+  totalStops: number;
+  onTimePercentage: number | null; // null when no ETA data exists in range
+  tripsWithEta: number;
+}
+
+export interface AnalyticsResponse {
+  tripsByDay: AnalyticsTripsByDay[];
+  avgDeliveryByDay: AnalyticsAvgDeliveryByDay[];
+  summary: AnalyticsSummary;
+}
+
 // ── Wizard ──
 export interface WizardProgress {
   currentStep: 1 | 2 | 3;
