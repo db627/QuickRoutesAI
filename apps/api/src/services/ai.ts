@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import { db } from "../config/firebase";
 import { Timestamp } from "firebase-admin/firestore";
 import { decodePolyline } from "./directions";
+import { computeHistoricalWeather } from "./weather";
+import { start } from "repl";
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /**
@@ -376,8 +378,30 @@ Return ONLY a JSON object:
   return aiJson<ETAPrediction>(prompt, 600);
 }
 
+type PrimaryDelayCause =
+  | "traffic"
+  | "weather"
+  | "dwell_time"
+  | "route_inefficiency"
+  | "normal_operations";
 
-export async function postTripAnalytics(tripId: string, stops: any[]): Promise<void> {
+interface DelayAnalysisResult {
+  delayCause: PrimaryDelayCause;
+  confidence: number; // 0.0 - 1.0
+  summary: string;
+  factors: string[];
+  estimatedDelayMinutes: number;
+  recommendations: string[];
+}
+interface RouteLeg {
+  fromStopId: string;
+  toStopId: string;
+  distanceMeters: number;
+  durationSeconds: number;
+  polyline?: string;
+}
+export async function postTripAnalytics(tripId: string, stops: any[]): Promise<DelayAnalysisResult[]> {
+
   const trip = await db.collection("trips").doc(tripId).get();
   
   const sortedStops = [...stops].sort((a, b) => a.sequence - b.sequence);
@@ -388,7 +412,14 @@ export async function postTripAnalytics(tripId: string, stops: any[]): Promise<v
 
   if (!driverId || !rawStart || !rawEnd) {
     console.error("Missing driverId, start_time, or end_time");
-    return;
+    return [{
+      delayCause: "normal_operations",
+      confidence: -1,
+      summary: "-1",
+      factors: [],
+      estimatedDelayMinutes: -1,
+      recommendations: ["-1"],
+    }];
   }
 
   const start_time =
@@ -447,18 +478,29 @@ export async function postTripAnalytics(tripId: string, stops: any[]): Promise<v
       const legEndTime = leg_end instanceof Timestamp ? leg_end.toDate().getTime() : new Date(leg_end).getTime();
       return pointTime >= legStartTime && pointTime <= legEndTime;
     });
-    if (index < stops.length - 1) {
+    if (index < stops.length) {
       let avglegSpeedMps = legGpsPoints.reduce((sum, p) => sum + p.speedMps, 0) / (legGpsPoints.length || 1);
       if (avglegSpeedMps < 0.1) {
         avglegSpeedMps = 20; // prevent zero or near-zero speed which can break ETA prediction
       }
       if (leg.fromStopId === "__driver_origin__") {
-        index = -1;
+
+        sortedStops.unshift({
+          stopId: "__driver_origin__",
+          address: "Driver's starting location",
+          lat: legGpsPoints[0]?.lat || gpsData[0]?.lat || 0,
+          lng: legGpsPoints[0]?.lng || gpsData[0]?.lng || 0,
+          sequence: -1,
+        });
+
       }
+
+      const fromStop = sortedStops.find(s => s.stopId === leg.fromStopId);
+
       const etaLegInput = {
         tripId,
-        currentLat: legGpsPoints[0]?.lat || gpsData[0]?.lat || 0,
-        currentLng: legGpsPoints[0]?.lng || gpsData[0]?.lng || 0,
+        currentLat: legGpsPoints[0]?.lat || fromStop?.lat || 0,
+        currentLng: legGpsPoints[0]?.lng || fromStop?.lng || 0,
         remainingStops: [{address: sortedStops[index+1]?.address || "", lat: sortedStops[index+1]?.lat || 0, lng: sortedStops[index+1]?.lng || 0, sequence: sortedStops[index+1]?.sequence || 0}],
         currentSpeedMps: avglegSpeedMps,
         routeDistanceMeters: leg.distanceMeters,
@@ -467,8 +509,10 @@ export async function postTripAnalytics(tripId: string, stops: any[]): Promise<v
         dayOfWeek: legStart instanceof Timestamp ? legStart.toDate().toLocaleDateString([], { weekday: 'long' }) : "",
       }
 
+      console.log("test remaining stops:",etaLegInput.remainingStops);
+
       const etaPrediction = await predictETA(etaLegInput);
-      etaInputs.push({startLat: etaLegInput.currentLat, startLng: etaLegInput.currentLng, avgSpeed: etaLegInput.currentSpeedMps, ...etaPrediction});
+      etaInputs.push({startLat: etaLegInput.currentLat, startLng: etaLegInput.currentLng, avgSpeed: etaLegInput.currentSpeedMps, stopSequence: etaLegInput.remainingStops[0]?.sequence || 0, ...etaPrediction});
 
       const legDriverActivity: DriverActivity = {
         driverId,
@@ -483,14 +527,14 @@ export async function postTripAnalytics(tripId: string, stops: any[]): Promise<v
       };
 
       const legAnomalies = await detectAnomalies([legDriverActivity]);
-      anomaliesPerLeg.push({ legIndex: index + 1, anomalies: legAnomalies });
+      anomaliesPerLeg.push({ legIndex: index, anomalies: legAnomalies });
 
     }
 
     const distance = totalDistanceMeters(legGpsPoints);
-    legDistances.push({legIndex: index + 1, distance});
+    legDistances.push({legIndex: index, distance});
 
-    legPoints.push({legIndex: index + 1, points: legGpsPoints, decodedRoute: decodedLegPolyline});
+    legPoints.push({legIndex: index, points: legGpsPoints, decodedRoute: decodedLegPolyline});
     console.log(distance);
     console.log({...decodedLegPolyline});
     index++;
@@ -500,39 +544,98 @@ export async function postTripAnalytics(tripId: string, stops: any[]): Promise<v
   console.log(anomaliesPerLeg);
   console.log(legDistances);
   
-  const stopsTimeToComplete = sortedStops.map(s => ({
+  const legsTimeToComplete = sortedStops.map(s => ({
     stopIndex: s.sequence,
     address: s.address,
     etaMinutes: s.end_time ? (s.end_time.seconds - s.start_time.seconds) / 60 : 0
   }));
-  console.log("Time to complete each stop:", stopsTimeToComplete);
 
-  const prompt = `Trip Analytics for Trip ID: ${tripId}
+  legsTimeToComplete.sort((a, b) => a.stopIndex - b.stopIndex);
+  legsTimeToComplete.shift(); // remove the first stop which is the origin and not an actual delivery stop
+  console.log("Time to complete each stop:", legsTimeToComplete);
 
-1. ETA Predictions per Leg:
-${etaInputs.map((input, i) => `Leg ${i} starting at (${input.startLat.toFixed(5)}, ${input.startLng.toFixed(5)}) to ${input.perStopETA[0].address}, with avg speed ${(input.avgSpeed * 2.237).toFixed(0)} mph -- Estimated arrival in ${input.perStopETA[0].etaMinutes} min (confidence: ${(input.confidence * 100).toFixed(1)}%) -- Factors: ${input.factors.join(", ")}`).join("\n")}
+  
+  const timestampSeconds =
+        start_time instanceof Timestamp
+          ? start_time.seconds
+          : Math.floor(new Date(start_time).getTime() / 1000);
+  const timestampSeconds2 = end_time instanceof Timestamp
+          ? end_time.seconds
+          : Math.floor(new Date(end_time).getTime() / 1000);
+      
+      
+  const weatheratStops = await computeHistoricalWeather(stops || [], timestampSeconds, timestampSeconds2);
 
-2. Anomalies Detected:
-${anomaliesPerLeg.map(a => `Leg ${a.legIndex}: ${a.anomalies.length > 0 ? a.anomalies.map(anomaly => `- ${anomaly.type} (${anomaly.severity}): ${anomaly.description}`).join("\n") : "No anomalies detected"}`).join("\n")}
+  const prompt = `You are a fleet operations delay analysis engine.
 
-3. Actual time to complete each stop:
-${stopsTimeToComplete.map(s => `Stop ${s.stopIndex} at "${s.address}": ${s.etaMinutes.toFixed(1)} min`).join("\n")}
+Analyze this completed delivery trip and identify the most likely causes of delay compared to the planned route.
 
-4. Route distance vs actual distance driven per leg:
-${legDistances.map(d => `Leg ${d.legIndex}: ${d.distance.toFixed(1)} meters driven`).join("\n")}
+Important definitions:
+- Leg travel time = time spent driving between stops.
+- Dwell time = time spent stationary at or very near a stop location after arrival.
+- Do NOT treat long leg travel time between stops as dwell time.
+- Only classify a delay as dwell_time if there is evidence the driver remained stationary near the stop itself.
+- If there is no clear evidence of stationary time at the stop, prefer traffic, weather, route_inefficiency, or normal_operations instead.
 
-5. Route adherence:
-${legPoints.map(lp => `Leg ${lp.legIndex}: ${lp.points.length} GPS points recorded, route deviation of ${totalDistanceMeters(lp.points) - totalDistanceMeters(lp.decodedRoute)} meters`).join("\n")}
-Analyze the above data and provide insights on:
-- How accurate were the ETA predictions? Were there any legs with low confidence that had significant anomalies?
-- Were there any patterns in the anomalies detected (e.g. consistent off-route behavior, speeding)?
-- How did the actual time to complete stops compare to typical expectations (e.g. 3-5 min per stop)?
+Trip Context:
+- Planned route distance: ${currRoute.distanceMeters ? (currRoute.distanceMeters / 1609.344).toFixed(1) + " mi" : "unknown"}
+- Planned route duration: ${currRoute.durationSeconds ? Math.round(currRoute.durationSeconds / 60) + " min" : "unknown"}
+- Actual average speed: ${gpsData.length > 0 ? (gpsData.reduce((sum, p) => sum + p.speedMps, 0) / gpsData.length * 2.237).toFixed(1) + " mph" : "unknown"}
+- Trip time window: ${start_time.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} to ${end_time.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} on ${start_time.toDate().toLocaleDateString([], { weekday: "long" })}
 
-Provide a concise analysis of the trip performance based on the ETA predictions, anomalies, and stop completion times.
+Stops:
+${sortedStops.map(s => `  ${s.sequence}: "${s.address}" (${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}) - StopId: ${s.stopId}`).join("\n")}
 
+Legs:
+${legs.map((leg:RouteLeg, i:number) => `  Leg ${i}: from ${leg.fromStopId} to ${leg.toStopId}, planned distance: ${leg.distanceMeters ? (leg.distanceMeters / 1609.344).toFixed(3) + " mi" : "unknown"}, planned duration: ${leg.durationSeconds ? (leg.durationSeconds / 60.0).toFixed(2) + " min" : "unknown"}`).join("\n")}
 
-`;
+Observed GPS and route evidence:
+${legPoints.map(lp => `  Leg ${lp.legIndex}:
+    GPS points:
+${lp.points.map(p => `      (${p.lat.toFixed(4)},${p.lng.toFixed(4)}) speed: ${(p.speedMps * 2.237).toFixed(0)} mph timestamp: ${new Date(p.timestamp).toLocaleTimeString()}`).join("\n")}
+    Expected route points:
+${lp.decodedRoute.map(p => `      (${p.lat.toFixed(4)},${p.lng.toFixed(4)})`).join("\n")}`).join("\n\n")}
 
-console.log(prompt);
+Anomalies:
+${anomaliesPerLeg.map(ap => `  Leg ${ap.legIndex}:
+    ${ap.anomalies.length > 0 ? ap.anomalies.map(a => `- ${a.type} (${a.severity}): ${a.description}`).join("\n    ") : "No anomalies detected"}`).join("\n\n")}
 
+ETA predictions:
+${etaInputs.map((eta, i) => `  Leg ${i}: ETA to ${eta.perStopETA[0]?.address}: ${eta.perStopETA[0]?.etaMinutes} min; confidence ${eta.confidence}; factors: ${eta.factors.join(", ")}`).join("\n")}
+
+Actual Leg Completion Times:
+${legsTimeToComplete.map(s => `  Leg ${s.stopIndex}: ${s.etaMinutes} mins`).join("\n")}
+
+Weather during trip:
+${weatheratStops.stops.map(s => `  Stop ${s.stopId} (${s.address}):
+${s.forecast.map(f => `      At ${f.actualTime}: ${f.main}, ${f.description}, temp: ${f.temperatureF}F, precip chance: ${f.precipitationChance}%, visibility: ${f.visibilityMiles} mi, wind: ${f.windSpeedMph} mph`).join("\n")}`).join("\n\n")}
+
+Select from:
+1. traffic
+2. weather
+3. dwell_time
+4. route_inefficiency
+5. normal_operations
+
+Decision rules:
+- Use traffic when travel time is longer than planned and speeds are low while driving.
+- Use weather when poor weather likely explains slower movement or reduced visibility.
+- Use dwell_time only when there is evidence of time spent stationary at/near a stop.
+- Use route_inefficiency when there is off-route movement, backtracking, or extra travel distance.
+- Use normal_operations when there is no meaningful abnormal delay.
+- Do NOT use dwell_time based only on long leg travel time.
+
+Return ONLY a JSON array:
+[
+  {
+    "delayCause": "traffic|weather|dwell_time|route_inefficiency|normal_operations",
+    "confidence": <0.0-1.0>,
+    "summary": "<1-2 sentence explanation>",
+    "factors": ["<supporting observation>", "<supporting observation>"],
+    "estimatedDelayMinutes": <number>,
+    "recommendations": ["<operational improvement>", "<operational improvement>"]
+  }
+]`;
+  console.log(prompt);
+  return aiJson<DelayAnalysisResult[]>(prompt, 800);
 }

@@ -12,6 +12,7 @@ export interface WeatherCurrent {
   precipitationChance: number; 
   visibilityMiles: number;
   windSpeedMph: number;
+  actualTime: string; // human-readable time for easier logging
 }
 
 export interface WeatherForecastHour {
@@ -26,6 +27,7 @@ export interface WeatherForecastHour {
 }
 
 export interface StopWeather {
+  stopId: string;
   address: string;
   lat: number;
   lng: number;
@@ -99,6 +101,7 @@ function mapCurrentWeather(current: OpenWeatherCurrent): WeatherCurrent {
 
   return {
     timestamp: current.dt,
+    actualTime: new Date(current.dt * 1000).toLocaleString(),
     main: condition.main,
     description: condition.description,
     icon: condition.icon,
@@ -177,6 +180,7 @@ export async function computeWeather(stops: TripStop[], forecastHours = 6): Prom
         }
 
         return {
+        stopId: stop.stopId,
         address: stop.address,
         lat: stop.lat,
         lng: stop.lng,
@@ -189,4 +193,121 @@ export async function computeWeather(stops: TripStop[], forecastHours = 6): Prom
     );
 
     return { stops: results };
+}
+
+function getHourlyTimestampsInclusive(
+  startTimestampSeconds: number,
+  endTimestampSeconds?: number
+): number[] {
+  const end = endTimestampSeconds ?? startTimestampSeconds;
+
+  if (end < startTimestampSeconds) {
+    throw new Error("endTimestampSeconds cannot be before startTimestampSeconds");
+  }
+
+  const HOUR_SECONDS = 3600;
+
+  // Round start down to the hour
+  const startHour = Math.floor(startTimestampSeconds / HOUR_SECONDS) * HOUR_SECONDS;
+
+  // Round end up to the hour
+  const endHour =
+    end % HOUR_SECONDS === 0
+      ? end
+      : Math.ceil(end / HOUR_SECONDS) * HOUR_SECONDS;
+
+  const timestamps: number[] = [];
+
+  for (let ts = startHour; ts <= endHour; ts += HOUR_SECONDS) {
+    timestamps.push(ts);
+  }
+
+  return timestamps;
+}
+
+interface OpenWeatherTimeMachineResponse {
+  lat: number;
+  lon: number;
+  timezone?: string;
+  timezone_offset?: number;
+  data?: OpenWeatherHourly[];
+  current?: OpenWeatherCurrent;
+  hourly?: OpenWeatherHourly[];
+}
+
+export async function computeHistoricalWeather(
+  stops: TripStop[],
+  startTimestampSeconds: number,
+  endTimestampSeconds?: number
+) {
+  if (!isWeatherConfigured) {
+    throw new Error("Weather API is not configured — set WEATHER_API_KEY");
+  }
+
+  const apiKey = env.WEATHER_API_KEY!;
+  const hourlyTimestamps = getHourlyTimestampsInclusive(
+    startTimestampSeconds,
+    endTimestampSeconds
+  );
+
+  const results = await Promise.all(
+    stops.map(async (stop) => {
+      if (
+        typeof stop.lat !== "number" ||
+        typeof stop.lng !== "number" ||
+        Number.isNaN(stop.lat) ||
+        Number.isNaN(stop.lng)
+      ) {
+        throw new Error(
+          `Invalid coordinates for stop ${stop.stopId ?? "(missing stopId)"}`
+        );
+      }
+
+      const hourlyWeather = await Promise.all(
+        hourlyTimestamps.map(async (timestampSeconds) => {
+          const params = new URLSearchParams({
+            lat: String(stop.lat),
+            lon: String(stop.lng),
+            dt: String(timestampSeconds),
+            appid: apiKey,
+            units: "imperial",
+          });
+
+          const response = await fetch(
+            `https://api.openweathermap.org/data/3.0/onecall/timemachine?${params.toString()}`
+          );
+
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(
+              `Historical weather API error for stop ${stop.stopId} at ${timestampSeconds}: ${response.status} ${body}`
+            );
+          }
+
+          const data = (await response.json()) as OpenWeatherTimeMachineResponse;
+          
+          const currentLike = data.data?.[0] ?? data.current ?? data.hourly?.[0];
+
+          if (!currentLike) {
+            throw new Error(
+              `No historical weather returned for stop ${stop.stopId} at ${timestampSeconds}`
+            );
+          }
+
+          return mapCurrentWeather(currentLike);
+        })
+      );
+
+      return {
+        stopId: stop.stopId,
+        address: stop.address,
+        lat: stop.lat,
+        lng: stop.lng,
+        current: hourlyWeather[0],
+        forecast: hourlyWeather, 
+      };
+    })
+  );
+
+  return { stops: results };
 }

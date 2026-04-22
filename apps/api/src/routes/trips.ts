@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { db } from "../config/firebase";
+import { Timestamp } from "firebase-admin/firestore";
 import admin from "../config/firebase";
 import { requireRole } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -19,6 +20,7 @@ import { tripStopsValidationGuard, tripTransitionGuard } from "../middleware/tri
 import { AppError } from "../utils/AppError";
 import fs from "fs";
 import { postTripAnalytics } from "../services/ai";
+import { computeHistoricalWeather, computeWeather } from "../services/weather";
 const router = Router();
 
 /**
@@ -204,9 +206,10 @@ router.get("/:id",tripStopsValidationGuard, async (req, res, next) => {
     const decoded = decodePolyline(trip?.route[0].polyline || "");
     const decoded2 = decodePolyline(trip?.route[0].legs[1].polyline || "");
     
-    postTripAnalytics(req.params.id, req.stops  || []).catch((err) => {
-      console.error("Error posting trip analytics:", err);
-    });
+
+    const delayAnalysis = await postTripAnalytics(req.params.id, req.stops  || [])
+
+    console.log("Delay analysis result:", delayAnalysis);
     
     res.json({ id: tripDoc.id, ...trip, stops: req.stops });
   } catch (err) {

@@ -156,6 +156,7 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
     
     if (originOverride) {
       const syntheticOrigin: TripStop = {
+        contactName: "Driver Current Location",
         stopId: "__driver_origin__",
         address: "Driver Current Location",
         lat: originOverride.lat,
