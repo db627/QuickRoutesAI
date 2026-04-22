@@ -27,17 +27,49 @@ function mockInProgressTrip(stopOverrides: object[] = [STOP_A, STOP_B]) {
   };
 }
 
-function setupTripMock(tripData: object | null, updateMock = jest.fn().mockResolvedValue(undefined), addEventMock = jest.fn().mockResolvedValue(undefined)) {
+function setupTripMock(
+  tripData: object | null,
+  tripUpdateMock = jest.fn().mockResolvedValue(undefined),
+  stopUpdateMock = jest.fn().mockResolvedValue(undefined),
+  addEventMock = jest.fn().mockResolvedValue(undefined),
+) {
+  // Derive the per-stop docs from tripData.stops (if provided) so each
+  // trips/{id}/stops/{stopId} doc read returns the expected shape.
+  const stopsArray: any[] = (tripData as any)?.stops ?? [];
+
   db.collection.mockImplementation((col: string) => {
     if (col === "trips") {
       return {
-        doc: () => ({
+        doc: (_tripId: string) => ({
           get: jest.fn().mockResolvedValue(
             tripData
               ? { exists: true, data: () => tripData }
               : { exists: false },
           ),
-          update: updateMock,
+          update: tripUpdateMock,
+          collection: (subCol: string) => {
+            if (subCol !== "stops") {
+              return { doc: jest.fn().mockReturnThis(), get: jest.fn().mockResolvedValue({ exists: false }) };
+            }
+            return {
+              // tripRef.collection("stops").doc(stopId) — used for both .get and .update
+              doc: (stopId: string) => {
+                const found = stopsArray.find((s) => s.stopId === stopId);
+                return {
+                  get: jest.fn().mockResolvedValue(
+                    found
+                      ? { exists: true, data: () => found }
+                      : { exists: false },
+                  ),
+                  update: stopUpdateMock,
+                };
+              },
+              // tripRef.collection("stops").get() — full subcollection for sequential check
+              get: jest.fn().mockResolvedValue({
+                docs: stopsArray.map((s) => ({ id: s.stopId, data: () => s })),
+              }),
+            };
+          },
         }),
       };
     }
@@ -50,13 +82,13 @@ function setupTripMock(tripData: object | null, updateMock = jest.fn().mockResol
       set: jest.fn().mockResolvedValue(undefined),
     };
   });
-  return { updateMock, addEventMock };
+  return { tripUpdateMock, stopUpdateMock, addEventMock };
 }
 
 describe("POST /trips/:id/stops/:stopId/complete", () => {
   it("marks the first stop as completed with a timestamp", async () => {
     setupMockUser(DRIVER_UID, "driver");
-    const { updateMock, addEventMock } = setupTripMock(mockInProgressTrip());
+    const { stopUpdateMock, addEventMock } = setupTripMock(mockInProgressTrip());
 
     const res = await request(app)
       .post(`/trips/${TRIP_ID}/stops/${STOP_A.stopId}/complete`)
@@ -66,12 +98,8 @@ describe("POST /trips/:id/stops/:stopId/complete", () => {
     expect(res.body.ok).toBe(true);
     expect(res.body.stopId).toBe(STOP_A.stopId);
     expect(res.body.completedAt).toBeDefined();
-    expect(updateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        stops: expect.arrayContaining([
-          expect.objectContaining({ stopId: STOP_A.stopId, status: "completed" }),
-        ]),
-      }),
+    expect(stopUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "completed", completedAt: expect.any(String) }),
     );
     expect(addEventMock).toHaveBeenCalledWith(
       expect.objectContaining({ type: "stop_completed" }),
