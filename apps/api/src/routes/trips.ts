@@ -836,23 +836,27 @@ router.post("/:id/stops/:stopId/complete", requireOrg, async (req, res) => {
       return res.status(403).json({ error: "Forbidden", message: "Not your trip" });
     }
 
-    const stops: any[] = trip?.stops || [];
-    const stopIndex = stops.findIndex((s) => s.stopId === req.params.stopId);
+    // Stops live in the trips/{id}/stops subcollection (not on the trip doc).
+    const stopRef = tripRef.collection("stops").doc(req.params.stopId);
+    const stopDoc = await stopRef.get();
 
-    if (stopIndex === -1) {
+    if (!stopDoc.exists) {
       return res.status(404).json({ error: "Not Found", message: "Stop not found" });
     }
 
-    const stop = stops[stopIndex];
+    const stop = stopDoc.data() as { sequence: number; status?: string };
     if (stop.status === "completed") {
       return res.status(409).json({ error: "Conflict", message: "Stop already completed" });
     }
 
-    // Sequential enforcement: all stops with lower sequence must be completed
-    const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
-    const stopSequence = stop.sequence;
-    const blockedBy = sorted.find(
-      (s) => s.sequence < stopSequence && s.status !== "completed",
+    // Sequential enforcement: fetch siblings and confirm all earlier stops are completed.
+    const allStopsSnap = await tripRef.collection("stops").get();
+    const allStops = allStopsSnap.docs.map((d) => ({
+      stopId: d.id,
+      ...(d.data() as { sequence: number; status?: string }),
+    }));
+    const blockedBy = allStops.find(
+      (s) => s.sequence < stop.sequence && s.status !== "completed",
     );
     if (blockedBy) {
       return res.status(400).json({
@@ -862,9 +866,8 @@ router.post("/:id/stops/:stopId/complete", requireOrg, async (req, res) => {
     }
 
     const completedAt = new Date().toISOString();
-    stops[stopIndex] = { ...stop, status: "completed", completedAt };
-
-    await tripRef.update({ stops, updatedAt: completedAt });
+    await stopRef.update({ status: "completed", completedAt });
+    await tripRef.update({ updatedAt: completedAt });
 
     await db.collection("events").add({
       type: "stop_completed",
