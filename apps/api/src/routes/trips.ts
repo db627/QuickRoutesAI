@@ -19,7 +19,7 @@ import { paginateFirestore } from "../utils/paginateFirestore";
 import { tripStopsValidationGuard, tripTransitionGuard } from "../middleware/trips";
 import { AppError } from "../utils/AppError";
 import fs from "fs";
-import { delayTripAnalytics } from "../services/ai";
+import { delayTripAnalytics, postTripAnalytic } from "../services/ai";
 import { computeHistoricalWeather, computeWeather } from "../services/weather";
 const router = Router();
 
@@ -532,7 +532,13 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
         console.error("Failed to reroute trip from driver location:", rerouteMessage);
       }
     }
+    if (status === "in_progress") {
+        const firstStop = await tripRef.collection("stops").orderBy("sequence").limit(1).get().then((snap) => snap.docs[0]?.data());
 
+        await db.collection("trips").doc(req.params.id).collection("stops").doc(firstStop.stopId).update({
+        start_time: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    }
     if (status === "completed") {
       try {
         const delayAnalysis = await delayTripAnalytics(req.params.id, req.stops || []);
@@ -540,17 +546,18 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
         await db.collection("trips").doc(req.params.id).update({
           delayAnalysis: delayAnalysis,
         });
+        
+        const feedbackAnalysis = await postTripAnalytic(req.params.id, req.stops || []);
+        console.log("Feedback analysis result:", feedbackAnalysis);
+        
+        await db.collection("trips").doc(req.params.id).update({
+          feedbackAnalysis: feedbackAnalysis,
+        });
+        
       } catch (err) {
         console.error("Failed to post trip analytics:", err);
       }
     }
-
-
-    const firstStop = await tripRef.collection("stops").orderBy("sequence").limit(1).get().then((snap) => snap.docs[0]?.data());
-
-    await db.collection("trips").doc(req.params.id).collection("stops").doc(firstStop.stopId).update({
-      start_time: admin.firestore.FieldValue.serverTimestamp(),
-    });
 
     await tripRef.update(updateData);
 

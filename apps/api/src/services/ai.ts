@@ -936,3 +936,205 @@ export async function delayTripAnalytics(
   console.log(prompt);
   return aiJson<DelayAnalysisResult[]>(prompt, 800);
 }
+
+// ───  AI-powered Routing Feedback Loop ─────────────────────────
+
+interface LegPredictionFeedback {
+  legIndex: number;
+  fromStopId: string;
+  toStopId: string;
+  predictedMinutes: number;
+  actualMinutes: number;
+  absoluteErrorMinutes: number;
+  errorPercent: number;
+  accuracyPercent: number;
+}
+
+interface RouteAccuracyFeedback {
+  tripId: string;
+  driverId: string;
+  createdAt: string;
+  plannedRouteId?: string;
+  overallPredictedMinutes: number;
+  overallActualMinutes: number;
+  overallAbsoluteErrorMinutes: number;
+  routeAccuracyPercent: number;
+  legFeedback: LegPredictionFeedback[];
+  promptContextFeedback: {
+    avgLegErrorMinutes: number;
+    underPredictedLegs: number;
+    overPredictedLegs: number;
+    likelyBias: "optimistic" | "pessimistic" | "balanced";
+  };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function computeLegAccuracyPercent(predictedMinutes: number, actualMinutes: number): number {
+  const errorPercent =
+    Math.abs(predictedMinutes - actualMinutes) / Math.max(actualMinutes, 1) * 100;
+  return Math.max(0, round2(100 - errorPercent));
+}
+
+function buildLegFeedback(params: {
+  legs: RouteLeg[];
+  legCompletionTimes: LegTimingSummary[];
+  etaInputs: EtaInputSummary[];
+}): LegPredictionFeedback[] {
+  const { legs, legCompletionTimes, etaInputs } = params;
+
+  return legs.map((leg, index) => {
+    const predictedMinutes =
+      etaInputs[index]?.perStopETA?.[0]?.etaMinutes ??
+      etaInputs[index]?.estimatedArrivalMinutes ??
+      0;
+
+    const actualMinutes =
+      legCompletionTimes.find((t) => t.legIndex === index)?.minutes ?? 0;
+
+    const absoluteErrorMinutes = round2(Math.abs(predictedMinutes - actualMinutes));
+    const errorPercent = round2(
+      (absoluteErrorMinutes / Math.max(actualMinutes, 1)) * 100
+    );
+    const accuracyPercent = computeLegAccuracyPercent(
+      predictedMinutes,
+      actualMinutes
+    );
+
+    return {
+      legIndex: index,
+      fromStopId: leg.fromStopId,
+      toStopId: leg.toStopId,
+      predictedMinutes: round2(predictedMinutes),
+      actualMinutes: round2(actualMinutes),
+      absoluteErrorMinutes,
+      errorPercent,
+      accuracyPercent,
+    };
+  });
+}
+
+function buildPromptContextFeedback(
+  legFeedback: LegPredictionFeedback[]
+): RouteAccuracyFeedback["promptContextFeedback"] {
+  const avgLegErrorMinutes = round2(
+    legFeedback.reduce((sum, leg) => sum + leg.absoluteErrorMinutes, 0) /
+      Math.max(legFeedback.length, 1)
+  );
+
+  const underPredictedLegs = legFeedback.filter(
+    (l) => l.predictedMinutes < l.actualMinutes
+  ).length;
+
+  const overPredictedLegs = legFeedback.filter(
+    (l) => l.predictedMinutes > l.actualMinutes
+  ).length;
+
+  let likelyBias: "optimistic" | "pessimistic" | "balanced" = "balanced";
+  if (underPredictedLegs > overPredictedLegs) likelyBias = "optimistic";
+  if (overPredictedLegs > underPredictedLegs) likelyBias = "pessimistic";
+
+  return {
+    avgLegErrorMinutes,
+    underPredictedLegs,
+    overPredictedLegs,
+    likelyBias,
+  };
+}
+
+function buildRouteAccuracyFeedback(params: {
+  tripId: string;
+  driverId: string;
+  currentRoute: any;
+  legs: RouteLeg[];
+  legCompletionTimes: LegTimingSummary[];
+  etaInputs: EtaInputSummary[];
+}): RouteAccuracyFeedback {
+  const { tripId, driverId, currentRoute, legs, legCompletionTimes, etaInputs } =
+    params;
+
+  const legFeedback = buildLegFeedback({
+    legs,
+    legCompletionTimes,
+    etaInputs,
+  });
+
+  const overallPredictedMinutes = round2(
+    legFeedback.reduce((sum, leg) => sum + leg.predictedMinutes, 0)
+  );
+
+  const overallActualMinutes = round2(
+    legFeedback.reduce((sum, leg) => sum + leg.actualMinutes, 0)
+  );
+
+  const overallAbsoluteErrorMinutes = round2(
+    Math.abs(overallPredictedMinutes - overallActualMinutes)
+  );
+
+  const routeAccuracyPercent = computeLegAccuracyPercent(
+    overallPredictedMinutes,
+    overallActualMinutes
+  );
+
+  return {
+    tripId,
+    driverId,
+    createdAt: new Date().toISOString(),
+    plannedRouteId: currentRoute?.createdAt,
+    overallPredictedMinutes,
+    overallActualMinutes,
+    overallAbsoluteErrorMinutes,
+    routeAccuracyPercent,
+    legFeedback,
+    promptContextFeedback: buildPromptContextFeedback(legFeedback),
+  };
+}
+
+export async function postTripAnalytic(
+  tripId: string,
+  stops: any[]
+): Promise<RouteAccuracyFeedback | null> {
+  const trip = await fetchTripDoc(tripId);
+  const tripData = trip.data();
+
+  if (!trip.exists || !tripData) {
+    console.error(`Trip not found: ${tripId}`);
+    return null;
+  }
+
+  const sortedStops = sortStops(stops);
+  const driverId = tripData?.driverId;
+  const timeWindow = getTripTimeWindow(sortedStops);
+
+  if (!driverId || !timeWindow) {
+    console.error("Missing driverId, start_time, or end_time");
+    return null;
+  }
+
+  const gpsData = await fetchGpsData(driverId, timeWindow);
+  const routeContext = buildRouteContext(tripData, sortedStops, gpsData);
+
+  const { etaInputs } = await buildLegAnalytics({
+    tripId,
+    driverId,
+    routeStops: routeContext.routeStops,
+    legs: routeContext.legs,
+    gpsData,
+  });
+
+  const legCompletionTimes = buildLegCompletionTimes(routeContext.routeStops);
+
+  const feedback = buildRouteAccuracyFeedback({
+    tripId,
+    driverId,
+    currentRoute: routeContext.currentRoute,
+    legs: routeContext.legs,
+    legCompletionTimes,
+    etaInputs,
+  });
+
+
+  return feedback;
+}
