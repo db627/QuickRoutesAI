@@ -378,6 +378,8 @@ Return ONLY a JSON object:
   return aiJson<ETAPrediction>(prompt, 600);
 }
 
+// ─── Feature: AI-Powered Route Optimization ─────────────────────────
+
 type PrimaryDelayCause =
   | "traffic"
   | "weather"
@@ -387,12 +389,13 @@ type PrimaryDelayCause =
 
 interface DelayAnalysisResult {
   delayCause: PrimaryDelayCause;
-  confidence: number; // 0.0 - 1.0
+  confidence: number;
   summary: string;
   factors: string[];
   estimatedDelayMinutes: number;
   recommendations: string[];
 }
+
 interface RouteLeg {
   fromStopId: string;
   toStopId: string;
@@ -400,173 +403,361 @@ interface RouteLeg {
   durationSeconds: number;
   polyline?: string;
 }
-export async function postTripAnalytics(tripId: string, stops: any[]): Promise<DelayAnalysisResult[]> {
 
-  const trip = await db.collection("trips").doc(tripId).get();
-  
-  const sortedStops = [...stops].sort((a, b) => a.sequence - b.sequence);
+interface GpsPoint {
+  lat: number;
+  lng: number;
+  timestamp: number; // ms
+  speedMps: number;
+}
 
-  const driverId = trip.data()?.driverId;
-  const rawStart = sortedStops[0]?.start_time;
-  const rawEnd = sortedStops[sortedStops.length - 1]?.end_time;
+interface TripTimeWindow {
+  startTime: Timestamp;
+  endTime: Timestamp;
+}
 
-  if (!driverId || !rawStart || !rawEnd) {
-    console.error("Missing driverId, start_time, or end_time");
-    return [{
+interface RouteStopLike {
+  stopId: string;
+  address: string;
+  lat: number;
+  lng: number;
+  sequence: number;
+  start_time?: Timestamp | string | Date;
+  end_time?: Timestamp | string | Date;
+}
+
+interface EtaInputSummary {
+  startLat: number;
+  startLng: number;
+  avgSpeed: number;
+  stopSequence: number;
+  estimatedArrivalMinutes: number;
+  confidence: number;
+  factors: string[];
+  perStopETA: { stopIndex: number; address: string; etaMinutes: number }[];
+}
+
+interface LegAnomalySummary {
+  legIndex: number;
+  anomalies: Anomaly[];
+}
+
+interface LegDistanceSummary {
+  legIndex: number;
+  distance: number;
+}
+
+interface LegPointSummary {
+  legIndex: number;
+  points: GpsPoint[];
+  decodedRoute: { lat: number; lng: number }[];
+}
+
+interface LegTimingSummary {
+  legIndex: number;
+  minutes: number;
+}
+
+interface BuiltRouteContext {
+  routeStops: RouteStopLike[];
+  route: any;
+  currentRoute: any;
+  legs: RouteLeg[];
+}
+
+function fallbackDelayResult(): DelayAnalysisResult[] {
+  return [
+    {
       delayCause: "normal_operations",
       confidence: -1,
       summary: "-1",
       factors: [],
       estimatedDelayMinutes: -1,
       recommendations: ["-1"],
-    }];
-  }
+    },
+  ];
+}
 
-  const start_time =
-    rawStart instanceof Timestamp ? rawStart : Timestamp.fromDate(new Date(rawStart));
+function toTimestamp(value: Timestamp | string | Date): Timestamp {
+  return value instanceof Timestamp
+    ? value
+    : Timestamp.fromDate(new Date(value));
+}
 
-  const end_time =
-    rawEnd instanceof Timestamp ? rawEnd : Timestamp.fromDate(new Date(rawEnd));
+function toUnixSeconds(value: Timestamp | string | Date): number {
+  return value instanceof Timestamp
+    ? value.seconds
+    : Math.floor(new Date(value).getTime() / 1000);
+}
 
+function sortStops(stops: any[]): RouteStopLike[] {
+  return [...stops].sort((a, b) => a.sequence - b.sequence);
+}
+
+function getTripTimeWindow(sortedStops: RouteStopLike[]): TripTimeWindow | null {
+  const rawStart = sortedStops[0]?.start_time;
+  const rawEnd = sortedStops[sortedStops.length - 1]?.end_time;
+
+  if (!rawStart || !rawEnd) return null;
+
+  return {
+    startTime: toTimestamp(rawStart),
+    endTime: toTimestamp(rawEnd),
+  };
+}
+
+async function fetchTripDoc(tripId: string) {
+  return db.collection("trips").doc(tripId).get();
+}
+
+async function fetchGpsData(
+  driverId: string,
+  window: TripTimeWindow
+): Promise<GpsPoint[]> {
   const geopointData = await db
     .collection("events")
     .where("type", "==", "location_ping")
     .where("driverId", "==", driverId)
-    .where("createdAt", ">=", start_time)
-    .where("createdAt", "<=", end_time)
+    .where("createdAt", ">=", window.startTime)
+    .where("createdAt", "<=", window.endTime)
     .orderBy("createdAt")
     .get();
 
-  const gpsData = geopointData.docs.map(doc => {
+  return geopointData.docs.map((doc) => {
     const data = doc.data();
     return {
       lat: data.payload.lat,
       lng: data.payload.lng,
       timestamp: data.createdAt.toDate().getTime(),
       speedMps: data.payload.speedMps,
-    };
+    } satisfies GpsPoint;
   });
+}
 
-  const route = trip.data()?.route || {};
-  const currRoute = route[route.length - 1] || {};
-  const legs = currRoute.legs || [];
-  let index = 0;
+function buildRouteContext(
+  tripData: any,
+  sortedStops: RouteStopLike[],
+  gpsData: GpsPoint[]
+): BuiltRouteContext {
+  const route = tripData?.route || [];
+  const currentRoute = route[route.length - 1] || {};
+  const legs: RouteLeg[] = currentRoute.legs ?? [];
 
-  const etaInputs= [];
-  const anomaliesPerLeg = [];
-  const legDistances = [];
-  const legPoints = [];
-  for(const leg of legs) {
-    let legStart, legEnd;
-    if (leg.fromStopId == "__driver_origin__"){
-      legStart = sortedStops[0]?.start_time;
-      legEnd = sortedStops[0]?.end_time;
+  const needsDriverOrigin =
+    legs.length > 0 && legs[0]?.fromStopId === "__driver_origin__";
 
-    }else {
-      legStart = leg.fromStopId ? sortedStops.find(s => s.stopId === leg.toStopId)?.start_time : null;
-      legEnd = leg.toStopId ? sortedStops.find(s => s.stopId === leg.toStopId)?.end_time : null;
-    }
-    const leg_start =
-    rawStart instanceof Timestamp ? legStart : Timestamp.fromDate(new Date(legStart));
-    const leg_end =
-    rawEnd instanceof Timestamp ? legEnd : Timestamp.fromDate(new Date(legEnd));
-
-    const decodedLegPolyline = decodePolyline(leg.polyline || "");
-    const legGpsPoints = gpsData.filter(point => {
-      const pointTime = point.timestamp;
-      const legStartTime = leg_start instanceof Timestamp ? leg_start.toDate().getTime() : new Date(leg_start).getTime();
-      const legEndTime = leg_end instanceof Timestamp ? leg_end.toDate().getTime() : new Date(leg_end).getTime();
-      return pointTime >= legStartTime && pointTime <= legEndTime;
-    });
-    if (index < stops.length) {
-      let avglegSpeedMps = legGpsPoints.reduce((sum, p) => sum + p.speedMps, 0) / (legGpsPoints.length || 1);
-      if (avglegSpeedMps < 0.1) {
-        avglegSpeedMps = 20; // prevent zero or near-zero speed which can break ETA prediction
-      }
-      if (leg.fromStopId === "__driver_origin__") {
-
-        sortedStops.unshift({
+  const routeStops: RouteStopLike[] = needsDriverOrigin
+    ? [
+        {
           stopId: "__driver_origin__",
           address: "Driver's starting location",
-          lat: legGpsPoints[0]?.lat || gpsData[0]?.lat || 0,
-          lng: legGpsPoints[0]?.lng || gpsData[0]?.lng || 0,
+          lat: gpsData[0]?.lat || 0,
+          lng: gpsData[0]?.lng || 0,
           sequence: -1,
-        });
+        },
+        ...sortedStops,
+      ]
+    : sortedStops;
 
-      }
+  return {
+    routeStops,
+    route,
+    currentRoute,
+    legs,
+  };
+}
 
-      const fromStop = sortedStops.find(s => s.stopId === leg.fromStopId);
+function getStopById(routeStops: RouteStopLike[], stopId?: string | null) {
+  if (!stopId) return undefined;
+  return routeStops.find((s) => s.stopId === stopId);
+}
 
-      const etaLegInput = {
-        tripId,
-        currentLat: legGpsPoints[0]?.lat || fromStop?.lat || 0,
-        currentLng: legGpsPoints[0]?.lng || fromStop?.lng || 0,
-        remainingStops: [{address: sortedStops[index+1]?.address || "", lat: sortedStops[index+1]?.lat || 0, lng: sortedStops[index+1]?.lng || 0, sequence: sortedStops[index+1]?.sequence || 0}],
-        currentSpeedMps: avglegSpeedMps,
-        routeDistanceMeters: leg.distanceMeters,
-        routeDurationSeconds: leg.durationSeconds,
-        timeOfDay: legStart instanceof Timestamp ? legStart.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "",
-        dayOfWeek: legStart instanceof Timestamp ? legStart.toDate().toLocaleDateString([], { weekday: 'long' }) : "",
-      }
+function getLegTimeWindow(
+  leg: RouteLeg,
+  routeStops: RouteStopLike[]
+): TripTimeWindow | null {
+  const toStop = getStopById(routeStops, leg.toStopId);
 
-      console.log("test remaining stops:",etaLegInput.remainingStops);
+  if (!toStop?.start_time || !toStop?.end_time) return null;
 
-      const etaPrediction = await predictETA(etaLegInput);
-      etaInputs.push({startLat: etaLegInput.currentLat, startLng: etaLegInput.currentLng, avgSpeed: etaLegInput.currentSpeedMps, stopSequence: etaLegInput.remainingStops[0]?.sequence || 0, ...etaPrediction});
+  return {
+    startTime: toTimestamp(toStop.start_time),
+    endTime: toTimestamp(toStop.end_time),
+  };
+}
 
-      const legDriverActivity: DriverActivity = {
-        driverId,
-        driverName: "",
-        events: legGpsPoints.map(p => ({
-          type: "location_ping",
-          lat: p.lat,
-          lng: p.lng,
-          speedMps: p.speedMps,
-          timestamp: new Date(p.timestamp).toISOString()
-        })),
+function getGpsPointsForLeg(
+  gpsData: GpsPoint[],
+  legWindow: TripTimeWindow
+): GpsPoint[] {
+  const startMs = legWindow.startTime.toDate().getTime();
+  const endMs = legWindow.endTime.toDate().getTime();
+
+  return gpsData.filter((point) => {
+    return point.timestamp >= startMs && point.timestamp <= endMs;
+  });
+}
+
+function averageLegSpeedMps(points: GpsPoint[]): number {
+  const avg = points.reduce((sum, p) => sum + p.speedMps, 0) / (points.length || 1);
+  return avg < 0.1 ? 20 : avg;
+}
+
+async function buildEtaSummaryForLeg(
+  tripId: string,
+  leg: RouteLeg,
+  routeStops: RouteStopLike[],
+  legGpsPoints: GpsPoint[]
+): Promise<EtaInputSummary | null> {
+  const toStop = getStopById(routeStops, leg.toStopId);
+  const fromStop = getStopById(routeStops, leg.fromStopId);
+
+  if (!toStop) return null;
+
+  const currentLat = legGpsPoints[0]?.lat ?? fromStop?.lat ?? 0;
+  const currentLng = legGpsPoints[0]?.lng ?? fromStop?.lng ?? 0;
+  const avgSpeed = averageLegSpeedMps(legGpsPoints);
+
+  const legStartRaw = toStop.start_time;
+  const legStartTs =
+    legStartRaw instanceof Timestamp ? legStartRaw : legStartRaw ? toTimestamp(legStartRaw) : null;
+
+  const etaLegInput = {
+    tripId,
+    currentLat,
+    currentLng,
+    remainingStops: [
+      {
+        address: toStop.address,
+        lat: toStop.lat,
+        lng: toStop.lng,
+        sequence: toStop.sequence,
+      },
+    ],
+    currentSpeedMps: avgSpeed,
+    routeDistanceMeters: leg.distanceMeters,
+    routeDurationSeconds: leg.durationSeconds,
+    timeOfDay: legStartTs
+      ? legStartTs.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "",
+    dayOfWeek: legStartTs
+      ? legStartTs.toDate().toLocaleDateString([], { weekday: "long" })
+      : "",
+  };
+
+  const etaPrediction = await predictETA(etaLegInput);
+
+  return {
+    startLat: etaLegInput.currentLat,
+    startLng: etaLegInput.currentLng,
+    avgSpeed: etaLegInput.currentSpeedMps,
+    stopSequence: toStop.sequence,
+    estimatedArrivalMinutes: etaPrediction.estimatedArrivalMinutes,
+    confidence: etaPrediction.confidence,
+    factors: etaPrediction.factors,
+    perStopETA: etaPrediction.perStopETA,
+  };
+}
+
+async function buildLegAnomalies(
+  driverId: string,
+  legIndex: number,
+  legGpsPoints: GpsPoint[]
+): Promise<LegAnomalySummary> {
+  const legDriverActivity: DriverActivity = {
+    driverId,
+    driverName: "",
+    events: legGpsPoints.map((p) => ({
+      type: "location_ping",
+      lat: p.lat,
+      lng: p.lng,
+      speedMps: p.speedMps,
+      timestamp: new Date(p.timestamp).toISOString(),
+    })),
+  };
+
+  const anomalies = await detectAnomalies([legDriverActivity]);
+
+  return {
+    legIndex,
+    anomalies,
+  };
+}
+
+function buildLegDistanceSummary(
+  legIndex: number,
+  legGpsPoints: GpsPoint[]
+): LegDistanceSummary {
+  return {
+    legIndex,
+    distance: totalDistanceMeters(legGpsPoints),
+  };
+}
+
+function buildLegPointSummary(
+  legIndex: number,
+  leg: RouteLeg,
+  legGpsPoints: GpsPoint[]
+): LegPointSummary {
+  return {
+    legIndex,
+    points: legGpsPoints,
+    decodedRoute: decodePolyline(leg.polyline || ""),
+  };
+}
+
+function buildLegCompletionTimes(routeStops: RouteStopLike[]): LegTimingSummary[] {
+  return routeStops
+    .filter((s) => s.stopId !== "__driver_origin__")
+    .map((s) => {
+      const start = s.start_time instanceof Timestamp ? s.start_time : s.start_time ? toTimestamp(s.start_time) : null;
+      const end = s.end_time instanceof Timestamp ? s.end_time : s.end_time ? toTimestamp(s.end_time) : null;
+
+      return {
+        legIndex: s.sequence,
+        minutes: start && end ? (end.seconds - start.seconds) / 60 : 0,
       };
+    })
+    .sort((a, b) => a.legIndex - b.legIndex);
+}
 
-      const legAnomalies = await detectAnomalies([legDriverActivity]);
-      anomaliesPerLeg.push({ legIndex: index, anomalies: legAnomalies });
+async function fetchHistoricalWeatherForTrip(
+  stops: RouteStopLike[],
+  window: TripTimeWindow
+) {
+  return computeHistoricalWeather(
+    stops as any[],
+    window.startTime.seconds,
+    window.endTime.seconds
+  );
+}
 
-    }
+function buildDelayAnalysisPrompt(input: {
+  currentRoute: any;
+  gpsData: GpsPoint[];
+  timeWindow: TripTimeWindow;
+  routeStops: RouteStopLike[];
+  legs: RouteLeg[];
+  legPoints: LegPointSummary[];
+  anomaliesPerLeg: LegAnomalySummary[];
+  etaInputs: EtaInputSummary[];
+  legCompletionTimes: LegTimingSummary[];
+  weatherAtStops: any;
+}): string {
+  const {
+    currentRoute,
+    gpsData,
+    timeWindow,
+    routeStops,
+    legs,
+    legPoints,
+    anomaliesPerLeg,
+    etaInputs,
+    legCompletionTimes,
+    weatherAtStops,
+  } = input;
 
-    const distance = totalDistanceMeters(legGpsPoints);
-    legDistances.push({legIndex: index, distance});
-
-    legPoints.push({legIndex: index, points: legGpsPoints, decodedRoute: decodedLegPolyline});
-    console.log(distance);
-    console.log({...decodedLegPolyline});
-    index++;
-  }
-
-
-  console.log(anomaliesPerLeg);
-  console.log(legDistances);
-  
-  const legsTimeToComplete = sortedStops.map(s => ({
-    stopIndex: s.sequence,
-    address: s.address,
-    etaMinutes: s.end_time ? (s.end_time.seconds - s.start_time.seconds) / 60 : 0
-  }));
-
-  legsTimeToComplete.sort((a, b) => a.stopIndex - b.stopIndex);
-  legsTimeToComplete.shift(); // remove the first stop which is the origin and not an actual delivery stop
-  console.log("Time to complete each stop:", legsTimeToComplete);
-
-  
-  const timestampSeconds =
-        start_time instanceof Timestamp
-          ? start_time.seconds
-          : Math.floor(new Date(start_time).getTime() / 1000);
-  const timestampSeconds2 = end_time instanceof Timestamp
-          ? end_time.seconds
-          : Math.floor(new Date(end_time).getTime() / 1000);
-      
-      
-  const weatheratStops = await computeHistoricalWeather(stops || [], timestampSeconds, timestampSeconds2);
-
-  const prompt = `You are a fleet operations delay analysis engine.
+  return `You are a fleet operations delay analysis engine.
 
 Analyze this completed delivery trip and identify the most likely causes of delay compared to the planned route.
 
@@ -578,16 +769,16 @@ Important definitions:
 - If there is no clear evidence of stationary time at the stop, prefer traffic, weather, route_inefficiency, or normal_operations instead.
 
 Trip Context:
-- Planned route distance: ${currRoute.distanceMeters ? (currRoute.distanceMeters / 1609.344).toFixed(1) + " mi" : "unknown"}
-- Planned route duration: ${currRoute.durationSeconds ? Math.round(currRoute.durationSeconds / 60) + " min" : "unknown"}
+- Planned route distance: ${currentRoute.distanceMeters ? (currentRoute.distanceMeters / 1609.344).toFixed(1) + " mi" : "unknown"}
+- Planned route duration: ${currentRoute.durationSeconds ? Math.round(currentRoute.durationSeconds / 60) + " min" : "unknown"}
 - Actual average speed: ${gpsData.length > 0 ? (gpsData.reduce((sum, p) => sum + p.speedMps, 0) / gpsData.length * 2.237).toFixed(1) + " mph" : "unknown"}
-- Trip time window: ${start_time.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} to ${end_time.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} on ${start_time.toDate().toLocaleDateString([], { weekday: "long" })}
+- Trip time window: ${timeWindow.startTime.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} to ${timeWindow.endTime.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} on ${timeWindow.startTime.toDate().toLocaleDateString([], { weekday: "long" })}
 
 Stops:
-${sortedStops.map(s => `  ${s.sequence}: "${s.address}" (${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}) - StopId: ${s.stopId}`).join("\n")}
+${routeStops.map(s => `  ${s.sequence}: "${s.address}" (${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}) - StopId: ${s.stopId}`).join("\n")}
 
 Legs:
-${legs.map((leg:RouteLeg, i:number) => `  Leg ${i}: from ${leg.fromStopId} to ${leg.toStopId}, planned distance: ${leg.distanceMeters ? (leg.distanceMeters / 1609.344).toFixed(3) + " mi" : "unknown"}, planned duration: ${leg.durationSeconds ? (leg.durationSeconds / 60.0).toFixed(2) + " min" : "unknown"}`).join("\n")}
+${legs.map((leg, i) => `  Leg ${i}: from ${leg.fromStopId} to ${leg.toStopId}, planned distance: ${leg.distanceMeters ? (leg.distanceMeters / 1609.344).toFixed(3) + " mi" : "unknown"}, planned duration: ${leg.durationSeconds ? (leg.durationSeconds / 60.0).toFixed(2) + " min" : "unknown"}`).join("\n")}
 
 Observed GPS and route evidence:
 ${legPoints.map(lp => `  Leg ${lp.legIndex}:
@@ -604,11 +795,11 @@ ETA predictions:
 ${etaInputs.map((eta, i) => `  Leg ${i}: ETA to ${eta.perStopETA[0]?.address}: ${eta.perStopETA[0]?.etaMinutes} min; confidence ${eta.confidence}; factors: ${eta.factors.join(", ")}`).join("\n")}
 
 Actual Leg Completion Times:
-${legsTimeToComplete.map(s => `  Leg ${s.stopIndex}: ${s.etaMinutes} mins`).join("\n")}
+${legCompletionTimes.map(s => `  Leg ${s.legIndex}: ${s.minutes} mins`).join("\n")}
 
 Weather during trip:
-${weatheratStops.stops.map(s => `  Stop ${s.stopId} (${s.address}):
-${s.forecast.map(f => `      At ${f.actualTime}: ${f.main}, ${f.description}, temp: ${f.temperatureF}F, precip chance: ${f.precipitationChance}%, visibility: ${f.visibilityMiles} mi, wind: ${f.windSpeedMph} mph`).join("\n")}`).join("\n\n")}
+${weatherAtStops.stops.map((s: any) => `  Stop ${s.stopId} (${s.address}):
+${s.forecast.map((f: any) => `      At ${f.actualTime}: ${f.main}, ${f.description}, temp: ${f.temperatureF}F, precip chance: ${f.precipitationChance}%, visibility: ${f.visibilityMiles} mi, wind: ${f.windSpeedMph} mph`).join("\n")}`).join("\n\n")}
 
 Select from:
 1. traffic
@@ -636,6 +827,112 @@ Return ONLY a JSON array:
     "recommendations": ["<operational improvement>", "<operational improvement>"]
   }
 ]`;
+}
+
+async function buildLegAnalytics(params: {
+  tripId: string;
+  driverId: string;
+  routeStops: RouteStopLike[];
+  legs: RouteLeg[];
+  gpsData: GpsPoint[];
+}) {
+  const { tripId, driverId, routeStops, legs, gpsData } = params;
+
+  const etaInputs: EtaInputSummary[] = [];
+  const anomaliesPerLeg: LegAnomalySummary[] = [];
+  const legDistances: LegDistanceSummary[] = [];
+  const legPoints: LegPointSummary[] = [];
+
+  for (let index = 0; index < legs.length; index++) {
+    const leg = legs[index];
+    const legWindow = getLegTimeWindow(leg, routeStops);
+    if (!legWindow) continue;
+
+    const legGpsPoints = getGpsPointsForLeg(gpsData, legWindow);
+
+    const etaSummary = await buildEtaSummaryForLeg(
+      tripId,
+      leg,
+      routeStops,
+      legGpsPoints
+    );
+    if (etaSummary) etaInputs.push(etaSummary);
+
+    const anomalySummary = await buildLegAnomalies(
+      driverId,
+      index,
+      legGpsPoints
+    );
+    anomaliesPerLeg.push(anomalySummary);
+
+    legDistances.push(buildLegDistanceSummary(index, legGpsPoints));
+    legPoints.push(buildLegPointSummary(index, leg, legGpsPoints));
+  }
+
+  return {
+    etaInputs,
+    anomaliesPerLeg,
+    legDistances,
+    legPoints,
+  };
+}
+
+export async function postTripAnalytics(
+  tripId: string,
+  stops: any[]
+): Promise<DelayAnalysisResult[]> {
+  const trip = await fetchTripDoc(tripId);
+  const tripData = trip.data();
+
+  const sortedStops = sortStops(stops);
+  const driverId = tripData?.driverId;
+  const timeWindow = getTripTimeWindow(sortedStops);
+
+  if (!driverId || !timeWindow) {
+    console.error("Missing driverId, start_time, or end_time");
+    return fallbackDelayResult();
+  }
+
+  const gpsData = await fetchGpsData(driverId, timeWindow);
+  const routeContext = buildRouteContext(tripData, sortedStops, gpsData);
+
+  const {
+    etaInputs,
+    anomaliesPerLeg,
+    legDistances,
+    legPoints,
+  } = await buildLegAnalytics({
+    tripId,
+    driverId,
+    routeStops: routeContext.routeStops,
+    legs: routeContext.legs,
+    gpsData,
+  });
+
+  console.log(anomaliesPerLeg);
+  console.log(legDistances);
+
+  const legCompletionTimes = buildLegCompletionTimes(routeContext.routeStops);
+  console.log("Actual leg completion times:", legCompletionTimes);
+
+  const weatherAtStops = await fetchHistoricalWeatherForTrip(
+    sortedStops,
+    timeWindow
+  );
+
+  const prompt = buildDelayAnalysisPrompt({
+    currentRoute: routeContext.currentRoute,
+    gpsData,
+    timeWindow,
+    routeStops: routeContext.routeStops,
+    legs: routeContext.legs,
+    legPoints,
+    anomaliesPerLeg,
+    etaInputs,
+    legCompletionTimes,
+    weatherAtStops,
+  });
+
   console.log(prompt);
   return aiJson<DelayAnalysisResult[]>(prompt, 800);
 }

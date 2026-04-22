@@ -203,13 +203,6 @@ router.get("/:id",tripStopsValidationGuard, async (req, res, next) => {
     if (req.userRole === "driver" && trip?.driverId !== req.uid) {
       return next(new AppError(ErrorCode.FORBIDDEN, 403, "Not your trip"));
     }
-    const decoded = decodePolyline(trip?.route[0].polyline || "");
-    const decoded2 = decodePolyline(trip?.route[0].legs[1].polyline || "");
-    
-
-    const delayAnalysis = await postTripAnalytics(req.params.id, req.stops  || [])
-
-    console.log("Delay analysis result:", delayAnalysis);
     
     res.json({ id: tripDoc.id, ...trip, stops: req.stops });
   } catch (err) {
@@ -539,6 +532,19 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
         console.error("Failed to reroute trip from driver location:", rerouteMessage);
       }
     }
+
+    if (status === "completed") {
+      try {
+        const delayAnalysis = await postTripAnalytics(req.params.id, req.stops || []);
+        console.log("Delay analysis result:", delayAnalysis);
+        await db.collection("trips").doc(req.params.id).update({
+          delayAnalysis: delayAnalysis,
+        });
+      } catch (err) {
+        console.error("Failed to post trip analytics:", err);
+      }
+    }
+
 
     const firstStop = await tripRef.collection("stops").orderBy("sequence").limit(1).get().then((snap) => snap.docs[0]?.data());
 
