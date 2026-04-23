@@ -1,16 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api";
-import type { DriverRecord } from "@quickroutesai/shared";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { firestore } from "@/lib/firebase";
 import { Users, Truck, Loader, CheckCircle } from "lucide-react";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
-
-interface TripStats {
-  totalTrips: number;
-  inProgressTrips: number;
-  completedToday: number;
-}
+import { useAuth } from "@/lib/auth-context";
 
 interface Stats {
   activeDrivers: number;
@@ -20,6 +15,7 @@ interface Stats {
 }
 
 export default function StatsCards() {
+  const { orgId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<Stats>({
     activeDrivers: 0,
@@ -29,28 +25,99 @@ export default function StatsCards() {
   });
 
   useEffect(() => {
-    async function fetchStats() {
-      try {
-        const [activeDrivers, tripStats] = await Promise.all([
-          apiFetch<DriverRecord[]>("/drivers/active"),
-          apiFetch<TripStats>("/trips/stats"),
-        ]);
+    // Without an orgId we have no scope to filter by — show zeros instead of
+    // leaking cross-org counts via unscoped subscriptions.
+    if (!orgId) {
+      setStats({
+        activeDrivers: 0,
+        totalTrips: 0,
+        inProgressTrips: 0,
+        completedToday: 0,
+      });
+      setLoading(false);
+      return;
+    }
 
-        setStats({
-          activeDrivers: activeDrivers.length,
-          totalTrips: tripStats.totalTrips,
-          inProgressTrips: tripStats.inProgressTrips,
-          completedToday: tripStats.completedToday,
-        });
-      } catch {
-        // Keep zeros on error — display degrades gracefully
-      } finally {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const todayIso = startOfToday.toISOString();
+
+    let resolved = 0;
+    const partial: Partial<Stats> = {};
+
+    function merge(patch: Partial<Stats>) {
+      Object.assign(partial, patch);
+      resolved += 1;
+      if (resolved === 4) {
+        setStats({ ...partial } as Stats);
         setLoading(false);
       }
     }
 
-    fetchStats();
-  }, []);
+    const unsubActiveDrivers = onSnapshot(
+      query(
+        collection(firestore, "drivers"),
+        where("orgId", "==", orgId),
+        where("isOnline", "==", true),
+      ),
+      (snap) => {
+        if (resolved < 4) {
+          merge({ activeDrivers: snap.size });
+        } else {
+          setStats((prev) => ({ ...prev, activeDrivers: snap.size }));
+        }
+      },
+    );
+
+    const unsubTotalTrips = onSnapshot(
+      query(collection(firestore, "trips"), where("orgId", "==", orgId)),
+      (snap) => {
+        if (resolved < 4) {
+          merge({ totalTrips: snap.size });
+        } else {
+          setStats((prev) => ({ ...prev, totalTrips: snap.size }));
+        }
+      },
+    );
+
+    const unsubInProgress = onSnapshot(
+      query(
+        collection(firestore, "trips"),
+        where("orgId", "==", orgId),
+        where("status", "in", ["assigned", "in_progress"]),
+      ),
+      (snap) => {
+        if (resolved < 4) {
+          merge({ inProgressTrips: snap.size });
+        } else {
+          setStats((prev) => ({ ...prev, inProgressTrips: snap.size }));
+        }
+      },
+    );
+
+    const unsubCompletedToday = onSnapshot(
+      query(
+        collection(firestore, "trips"),
+        where("orgId", "==", orgId),
+        where("status", "==", "completed"),
+        where("updatedAt", ">=", todayIso),
+      ),
+      (snap) => {
+        if (resolved < 4) {
+          merge({ completedToday: snap.size });
+        } else {
+          setStats((prev) => ({ ...prev, completedToday: snap.size }));
+        }
+      },
+    );
+
+    return () => {
+      unsubActiveDrivers();
+      unsubTotalTrips();
+      unsubInProgress();
+      unsubCompletedToday();
+    };
+  }, [orgId]);
 
   const cards = [
     { label: "Active Drivers", value: stats.activeDrivers, color: "text-green-600", icon: Users },

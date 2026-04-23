@@ -14,18 +14,57 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+/**
+ * Build a Firestore collection mock where `orgs/{id}` returns a doc with
+ * `exists: orgExists`, every other collection accepts `set` (no-op), and
+ * `users`/`drivers` writes are tracked on returned spies.
+ *
+ * Returns a reference to the tracked spies so individual tests can assert
+ * what was written to users and drivers.
+ */
+function makeCollectionMock({
+  orgExists = false,
+}: { orgExists?: boolean } = {}) {
+  const userSet = jest.fn().mockResolvedValue(undefined);
+  const driverSet = jest.fn().mockResolvedValue(undefined);
+
+  db.collection.mockImplementation((col: string) => ({
+    doc: (_id: string) => {
+      if (col === "orgs") {
+        return {
+          get: jest.fn().mockResolvedValue({ exists: orgExists }),
+          set: jest.fn().mockResolvedValue(undefined),
+        };
+      }
+      if (col === "users") {
+        return {
+          set: userSet,
+          get: jest.fn().mockResolvedValue({ exists: false }),
+        };
+      }
+      if (col === "drivers") {
+        return {
+          set: driverSet,
+          get: jest.fn().mockResolvedValue({ exists: false }),
+        };
+      }
+      return {
+        set: jest.fn().mockResolvedValue(undefined),
+        get: jest.fn().mockResolvedValue({ exists: false }),
+      };
+    },
+  }));
+
+  return { userSet, driverSet };
+}
+
 describe("POST /auth/signup", () => {
   it("creates a new user and returns a token", async () => {
     const uid = "new-user-123";
 
     auth.createUser.mockResolvedValue({ uid, email: "new@example.com" });
 
-    db.collection.mockImplementation((col: string) => ({
-      doc: (_id: string) => ({
-        set: jest.fn().mockResolvedValue(undefined),
-        get: jest.fn().mockResolvedValue({ exists: false }),
-      }),
-    }));
+    const { userSet } = makeCollectionMock({ orgExists: true });
 
     mockFetch.mockResolvedValue({
       ok: true,
@@ -43,6 +82,7 @@ describe("POST /auth/signup", () => {
       password: "securePassword123",
       name: "New User",
       role: "dispatcher",
+      orgCode: "org-xyz",
     });
 
     expect(res.status).toBe(201);
@@ -58,15 +98,134 @@ describe("POST /auth/signup", () => {
       email: "new@example.com",
       password: "securePassword123",
     });
+
+    // The user profile should be stamped with orgId
+    expect(userSet).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-xyz", role: "dispatcher" }),
+    );
+  });
+
+  it("allows admin signup without orgCode (no orgId stamped — wizard will create org later)", async () => {
+    const uid = "admin-user-123";
+
+    auth.createUser.mockResolvedValue({ uid, email: "admin@example.com" });
+
+    const { userSet } = makeCollectionMock({ orgExists: false });
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        idToken: "firebase-id-token-admin",
+        refreshToken: "refresh",
+        expiresIn: "3600",
+        localId: uid,
+        email: "admin@example.com",
+      }),
+    });
+
+    const res = await request(app).post("/auth/signup").send({
+      email: "admin@example.com",
+      password: "securePassword123",
+      name: "Admin User",
+      role: "admin",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.user.role).toBe("admin");
+
+    // No orgId set on the user profile yet — the onboarding wizard creates
+    // the org and stamps orgId on first dashboard visit.
+    const [profile] = userSet.mock.calls[0];
+    expect(profile).not.toHaveProperty("orgId");
+  });
+
+  it("rejects driver signup without orgCode", async () => {
+    const res = await request(app).post("/auth/signup").send({
+      email: "driver-no-org@example.com",
+      password: "securePassword123",
+      name: "Driver No Org",
+      role: "driver",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Organization code is required/i);
+    expect(auth.createUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects dispatcher signup without orgCode", async () => {
+    const res = await request(app).post("/auth/signup").send({
+      email: "disp-no-org@example.com",
+      password: "securePassword123",
+      name: "Disp No Org",
+      role: "dispatcher",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Organization code is required/i);
+    expect(auth.createUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects signup when orgCode does not exist", async () => {
+    makeCollectionMock({ orgExists: false });
+
+    const res = await request(app).post("/auth/signup").send({
+      email: "ghost@example.com",
+      password: "securePassword123",
+      name: "Ghost User",
+      role: "driver",
+      orgCode: "nonexistent-org",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Invalid organization code/i);
+    expect(auth.createUser).not.toHaveBeenCalled();
+  });
+
+  it("stamps orgId on driver and user docs when valid orgCode is provided", async () => {
+    const uid = "driver-with-org-123";
+
+    auth.createUser.mockResolvedValue({ uid, email: "driver2@example.com" });
+
+    const { userSet, driverSet } = makeCollectionMock({ orgExists: true });
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        idToken: "tok",
+        refreshToken: "ref",
+        expiresIn: "3600",
+        localId: uid,
+        email: "driver2@example.com",
+      }),
+    });
+
+    const res = await request(app).post("/auth/signup").send({
+      email: "driver2@example.com",
+      password: "securePassword123",
+      name: "Driver With Org",
+      role: "driver",
+      orgCode: "org-abc",
+    });
+
+    expect(res.status).toBe(201);
+    expect(userSet).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-abc", role: "driver" }),
+    );
+    expect(driverSet).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-abc" }),
+    );
   });
 
   it("returns 409 when email already exists", async () => {
     auth.createUser.mockRejectedValue(new Error("EMAIL_EXISTS"));
 
+    // Admin path: no orgCode required, so we get past the org check and
+    // hit the createUser rejection.
     const res = await request(app).post("/auth/signup").send({
       email: "existing@example.com",
       password: "securePassword123",
       name: "Duplicate User",
+      role: "admin",
     });
 
     expect(res.status).toBe(409);
@@ -106,17 +265,12 @@ describe("POST /auth/signup", () => {
     expect(res.body.error).toBe("VALIDATION_ERROR");
   });
 
-  it("defaults role to driver when not specified", async () => {
+  it("defaults role to driver when not specified (with orgCode)", async () => {
     const uid = "driver-user-123";
 
     auth.createUser.mockResolvedValue({ uid, email: "driver@example.com" });
 
-    db.collection.mockImplementation((col: string) => ({
-      doc: (_id: string) => ({
-        set: jest.fn().mockResolvedValue(undefined),
-        get: jest.fn().mockResolvedValue({ exists: false }),
-      }),
-    }));
+    makeCollectionMock({ orgExists: true });
 
     mockFetch.mockResolvedValue({
       ok: true,
@@ -133,6 +287,7 @@ describe("POST /auth/signup", () => {
       email: "driver@example.com",
       password: "securePassword123",
       name: "Driver User",
+      orgCode: "org-default",
     });
 
     expect(res.status).toBe(201);

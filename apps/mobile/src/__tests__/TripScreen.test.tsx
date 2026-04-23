@@ -25,9 +25,7 @@ const mockNavigation = { navigate: mockNavigate };
 const baseTrip = {
   driverId: 'driver123',
   status: 'assigned',
-  stops: [
-    { stopId: 's1', address: '123 Main St', lat: 40.7128, lng: -74.006, sequence: 1, notes: '' },
-  ],
+  stopCount: 1,
   route: null,
   createdAt: '2026-03-22T00:00:00Z',
   updatedAt: '2026-03-22T00:00:00Z',
@@ -81,27 +79,21 @@ describe('TripScreen (list)', () => {
     expect(getByText('#ABCD1234')).toBeTruthy();
   });
 
-  it('renders the first stop address preview', () => {
-    mockSnapshot([{ id: 'tripabcd1234', data: baseTrip }]);
-    const { getByText } = render(<TripScreen navigation={mockNavigation} />);
-    expect(getByText('123 Main St')).toBeTruthy();
-  });
-
   it('navigates to TripDetail with tripId when card is tapped', () => {
     mockSnapshot([{ id: 'tripabcd1234', data: baseTrip }]);
     const { getByText } = render(<TripScreen navigation={mockNavigation} />);
-    fireEvent.press(getByText('123 Main St'));
+    fireEvent.press(getByText('#ABCD1234'));
     expect(mockNavigate).toHaveBeenCalledWith('TripDetail', { tripId: 'tripabcd1234' });
   });
 
   it('renders multiple trip cards', () => {
-    const trip2 = { ...baseTrip, stops: [{ stopId: 's2', address: '456 Oak Ave', lat: 40.7, lng: -74.0, sequence: 1, notes: '' }] };
     mockSnapshot([
       { id: 'trip1111', data: baseTrip },
-      { id: 'trip2222', data: trip2 },
+      { id: 'trip2222', data: { ...baseTrip, stopCount: 3 } },
     ]);
     const { getByText } = render(<TripScreen navigation={mockNavigation} />);
-    expect(getByText('123 Main St')).toBeTruthy();
-    expect(getByText('456 Oak Ave')).toBeTruthy();
+    expect(getByText('#TRIP1111')).toBeTruthy();
+    expect(getByText('#TRIP2222')).toBeTruthy();
+    expect(getByText('3')).toBeTruthy();
   });
 });

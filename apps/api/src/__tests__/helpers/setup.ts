@@ -8,6 +8,8 @@ import meRoutes from "../../routes/me";
 import driverRoutes from "../../routes/drivers";
 import tripRoutes from "../../routes/trips";
 import userRoutes from "../../routes/users";
+import orgRoutes from "../../routes/orgs";
+import insightsRoutes from "../../routes/insights";
 
 // Mock Firebase Admin SDK
 jest.mock("../../config/firebase", () => {
@@ -92,6 +94,8 @@ export function createTestApp() {
   app.use("/drivers", verifyFirebaseToken, driverRoutes);
   app.use("/trips", verifyFirebaseToken, tripRoutes);
   app.use("/users", verifyFirebaseToken, userRoutes);
+  app.use("/orgs", verifyFirebaseToken, orgRoutes);
+  app.use("/insights", verifyFirebaseToken, insightsRoutes);
   app.use(errorHandler);
   return app;
 }
@@ -105,9 +109,14 @@ export function mockAuthenticatedUser(uid: string, email: string = "test@example
 }
 
 /**
- * Helper: configure the Firestore users doc mock to return a role
+ * Helper: configure the Firestore users doc mock to return a role + orgId
  */
-export function mockUserRole(uid: string, role: string, name: string = "Test User") {
+export function mockUserRole(
+  uid: string,
+  role: string,
+  name: string = "Test User",
+  orgId: string | null | undefined = "org-test",
+) {
   const { db } = require("../../config/firebase");
 
   // When collection("users").doc(uid).get() is called, return this
@@ -121,6 +130,7 @@ export function mockUserRole(uid: string, role: string, name: string = "Test Use
               email: "test@example.com",
               name,
               role,
+              ...(orgId ? { orgId } : {}),
               createdAt: new Date().toISOString(),
             }),
           }),
@@ -170,8 +180,18 @@ export function mockUserRole(uid: string, role: string, name: string = "Test Use
 
 /**
  * Setup a fully mocked authenticated context for a test user.
+ *
+ * `orgId` defaults to "org-test" so tests automatically exercise the
+ * org-scoped code paths (requireOrg + assertTripInOrg / assertDriverInOrg /
+ * assertUserInOrg). Pass `null` to simulate a user who has NOT been linked
+ * to an organization — useful for testing the `requireOrg` 403 path.
  */
-export function setupMockUser(uid: string, role: string, name: string = "Test User") {
+export function setupMockUser(
+  uid: string,
+  role: string,
+  name: string = "Test User",
+  orgId: string | null | undefined = "org-test",
+) {
   mockAuthenticatedUser(uid);
-  mockUserRole(uid, role, name);
+  mockUserRole(uid, role, name, orgId);
 }

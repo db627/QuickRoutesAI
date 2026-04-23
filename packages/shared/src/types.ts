@@ -9,6 +9,10 @@ export interface UserProfile {
   role: UserRole;
   status?: UserStatus; // omitted on legacy documents — treat as "active"
   createdAt: string; // ISO 8601
+  orgId?: string;
+  phone?: string;
+  timezone?: string;
+  wizardProgress?: WizardProgress;
 }
 
 // ── Driver ──
@@ -24,6 +28,11 @@ export interface DriverRecord {
   lastSpeedMps: number;
   lastHeading: number;
   updatedAt: string;
+  // Optional for backward compatibility with legacy documents that predate
+  // org-based tenancy. New driver records are always written with orgId once
+  // the driver is linked to an organization (currently only via admin signup;
+  // a driver invite flow is planned as a follow-up).
+  orgId?: string | null;
 }
 
 // ── Trip ──
@@ -71,6 +80,31 @@ export interface TripRoute {
   reasoning?: string; // AI explanation of stop ordering decision
 }
 
+export interface RouteOverride {
+  active: boolean;
+  reason: string;
+  overriddenAt: string; // ISO 8601
+  overriddenBy: string; // uid
+}
+
+// ── Predictive ETA ──
+export interface PredictedEta {
+  predictedArrivalAt: string;
+  baselineDurationSeconds: number;
+  adjustedDurationSeconds: number;
+  confidence: "low" | "medium" | "high";
+  reasoning: string;
+  factors: {
+    dayOfWeek: number;
+    timeOfDayHour: number;
+    historicalSampleSize: number;
+    weatherSummary?: string;
+  };
+  generatedAt: string;
+  actualArrivalAt?: string;
+  errorMinutes?: number;
+}
+
 export interface Trip {
   id: string;
   driverId: string | null;
@@ -81,6 +115,22 @@ export interface Trip {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+  orgId?: string;
+  stopCount?: number;
+  routeOverride?: RouteOverride;
+  predictedEta?: PredictedEta;
+}
+
+// ── Notification ──
+export type NotificationType = "trip_assigned" | "trip_completed" | "driver_offline";
+
+export interface Notification {
+  id: string;
+  type: NotificationType;
+  message: string;
+  read: boolean;
+  userId: string; // recipient uid
+  createdAt: string; // ISO 8601
 }
 
 // ── Event ──
@@ -92,6 +142,36 @@ export interface DriverEvent {
   driverId: string;
   payload: Record<string, unknown>;
   createdAt: string;
+}
+
+// ── Insights ──
+export interface DailyInsights {
+  date: string;
+  highlights: string[];
+  concerns: string[];
+  recommendations: string[];
+  generatedAt: string;
+  stats: {
+    tripsCompleted: number;
+    tripsCancelled: number;
+    activeDrivers: number;
+    avgDurationSeconds?: number;
+    avgEtaErrorMinutes?: number;
+  };
+}
+
+// ── Multi-driver optimization ──
+export interface MultiDriverPlan {
+  driverId: string;
+  driverName: string;
+  tripId: string;
+  stops: TripStop[];
+  reasoning: string;
+}
+
+export interface MultiDriverOptimizationResult {
+  plans: MultiDriverPlan[];
+  overallReasoning: string;
 }
 
 // ── API Responses ──
@@ -106,4 +186,38 @@ export interface ApiError {
 export interface HealthResponse {
   ok: boolean;
   service: string;
+}
+
+// ── Organization ──
+export type OrgIndustry = "delivery" | "logistics" | "field_service" | "other";
+export type FleetSizeBucket = "1-5" | "6-20" | "21-50" | "51-200" | "200+";
+
+export interface OrgAddress {
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+  country: string; // ISO-3166 alpha-2
+}
+
+export interface Org {
+  id: string;
+  name: string;
+  industry: OrgIndustry;
+  fleetSize: FleetSizeBucket;
+  address: OrgAddress;
+  ownerUid: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Wizard ──
+export interface WizardProgress {
+  currentStep: 1 | 2 | 3;
+  data: {
+    orgBasics?: { name: string; industry: OrgIndustry; fleetSize: FleetSizeBucket };
+    address?: OrgAddress;
+    adminProfile?: { name: string; phone: string; timezone: string };
+  };
+  updatedAt: string;
 }

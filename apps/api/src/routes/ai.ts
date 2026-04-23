@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { TripStop } from "@quickroutesai/shared";
 import { db } from "../config/firebase";
 import { requireRole } from "../middleware/auth";
 import {
@@ -7,7 +8,9 @@ import {
   generateDailySummary,
   detectAnomalies,
   predictETA,
+  distributeStopsAcrossDrivers,
 } from "../services/ai";
+import { geocodeAddress, computeRoute } from "../services/directions";
 
 const router = Router();
 
@@ -291,6 +294,115 @@ router.post("/eta", async (req, res) => {
     res.json({ ok: true, prediction });
   } catch (err) {
     const message = err instanceof Error ? err.message : "ETA prediction failed";
+    res.status(500).json({ error: "Internal Error", message });
+  }
+});
+
+// ─── POST /ai/multi-assign — distribute stops across multiple drivers ─
+
+router.post("/multi-assign", requireRole("dispatcher", "admin"), async (req, res) => {
+  const { driverIds, stops } = req.body;
+
+  if (!Array.isArray(driverIds) || driverIds.length < 1) {
+    return res.status(400).json({ error: "Bad Request", message: "driverIds array is required" });
+  }
+  if (!Array.isArray(stops) || stops.length < 1) {
+    return res.status(400).json({ error: "Bad Request", message: "stops array is required" });
+  }
+  if (stops.length < driverIds.length) {
+    return res.status(400).json({ error: "Bad Request", message: "Must have at least as many stops as drivers" });
+  }
+
+  try {
+    // Fetch driver info
+    const [driverDocs, userDocs] = await Promise.all([
+      Promise.all(driverIds.map((uid: string) => db.collection("drivers").doc(uid).get())),
+      Promise.all(driverIds.map((uid: string) => db.collection("users").doc(uid).get())),
+    ]);
+
+    const drivers = driverIds.map((uid: string, i: number) => ({
+      uid,
+      name: userDocs[i].exists ? (userDocs[i].data()?.name ?? "Unknown") : "Unknown",
+      lat: driverDocs[i].data()?.lastLocation?.lat ?? 0,
+      lng: driverDocs[i].data()?.lastLocation?.lng ?? 0,
+    }));
+
+    // Geocode any stops missing coordinates
+    const geocodedStops = await Promise.all(
+      stops.map(async (s: any) => {
+        if (s.lat && s.lng) return s;
+        const coords = await geocodeAddress(s.address);
+        return { ...s, ...coords };
+      }),
+    );
+
+    // AI distributes stops across drivers
+    const { assignments, reasoning } = await distributeStopsAcrossDrivers(drivers, geocodedStops);
+
+    const now = new Date().toISOString();
+
+    // Create one trip per driver, compute optimized route
+    const plans = await Promise.all(
+      assignments.map(async ({ driverIndex, stopIndices }) => {
+        const driver = drivers[driverIndex];
+
+        const driverStops = stopIndices.map((si, seq) => ({
+          stopId: crypto.randomUUID(),
+          address: geocodedStops[si].address,
+          contactName: geocodedStops[si].contactName ?? "",
+          lat: geocodedStops[si].lat,
+          lng: geocodedStops[si].lng,
+          sequence: seq,
+          notes: geocodedStops[si].notes ?? "",
+          ...(geocodedStops[si].timeWindow ? { timeWindow: geocodedStops[si].timeWindow } : {}),
+        }));
+
+        // Compute optimized route for this driver's stops
+        let routeResult = null;
+        let optimizedStops: TripStop[] = driverStops as TripStop[];
+        try {
+          const result = await computeRoute(driverStops, {
+            lat: driver.lat,
+            lng: driver.lng,
+          });
+          routeResult = result.route;
+          optimizedStops = result.optimizedStops;
+        } catch {
+          // Route computation is best-effort; trip is still created
+        }
+
+        const tripRef = db.collection("trips").doc();
+        await tripRef.set({
+          driverId: driver.uid,
+          createdBy: req.uid,
+          status: "assigned",
+          stops: optimizedStops,
+          route: routeResult,
+          notes: `Multi-driver batch. ${reasoning}`,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        await db.collection("events").add({
+          type: "multi_assign",
+          uid: req.uid,
+          payload: { tripId: tripRef.id, driverId: driver.uid, stopCount: optimizedStops.length },
+          createdAt: now,
+        });
+
+        return {
+          driverId: driver.uid,
+          driverName: driver.name,
+          tripId: tripRef.id,
+          stops: optimizedStops,
+          reasoning,
+        };
+      }),
+    );
+
+    res.json({ ok: true, plans, overallReasoning: reasoning });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Multi-driver assignment failed";
     res.status(500).json({ error: "Internal Error", message });
   }
 });
