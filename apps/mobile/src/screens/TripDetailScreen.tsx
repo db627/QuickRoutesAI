@@ -8,43 +8,10 @@ import type { Trip, TripStop } from "@quickroutesai/shared";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import { openNavigation } from "../services/navigation";
 import { startTracking, stopTracking } from "../services/location";
+import { decodePolyline } from "../utils/polyline";
+import type { TripStackScreenProps } from "../types/navigation";
 
-function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
-  const points: { latitude: number; longitude: number }[] = [];
-  let index = 0;
-  let lat = 0;
-  let lng = 0;
-
-  while (index < encoded.length) {
-    let b: number;
-    let shift = 0;
-    let result = 0;
-    do {
-      b = encoded.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    lat += result & 1 ? ~(result >> 1) : result >> 1;
-
-    shift = 0;
-    result = 0;
-    do {
-      b = encoded.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    lng += result & 1 ? ~(result >> 1) : result >> 1;
-
-    points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
-  }
-
-  return points;
-}
-
-type Props = {
-  route: { params: { tripId: string } };
-  navigation: { navigate: (screen: string, params: { tripId: string }) => void };
-};
+type Props = TripStackScreenProps<"TripDetail">;
 
 export default function TripDetailScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
@@ -165,10 +132,15 @@ export default function TripDetailScreen({ route, navigation }: Props) {
   return (
     <View className="flex-1 bg-gray-50">
       {/* Map */}
-      <View className="mx-4 mt-2 h-64 overflow-hidden rounded-2xl border border-gray-200">
+      <TouchableOpacity
+        activeOpacity={0.9}
+        onPress={() => navigation.navigate("TripMap", { tripId })}
+        className="mx-4 mt-2 h-64 overflow-hidden rounded-2xl border border-gray-200"
+      >
         <MapView
           provider={PROVIDER_GOOGLE}
           style={{ flex: 1 }}
+          pointerEvents="none"
           region={
             sortedStops.length > 0
               ? {
@@ -193,7 +165,10 @@ export default function TripDetailScreen({ route, navigation }: Props) {
             <Polyline coordinates={routeCoords} strokeColor="#3b82f6" strokeWidth={4} />
           )}
         </MapView>
-      </View>
+        <View className="absolute bottom-2 right-2 rounded-full bg-white/90 px-3 py-1">
+          <Text className="text-xs font-semibold text-blue-600">View on Map</Text>
+        </View>
+      </TouchableOpacity>
 
       {/* Trip info / status header */}
       <View className="mx-4 mt-3 rounded-xl border border-gray-200 bg-white px-5 py-3">
