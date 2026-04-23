@@ -118,6 +118,7 @@ router.patch(
         payload: { from: { status: data?.status ?? "active", role: data?.role ?? "driver" }, to: updates, userId: id },
         type: "user_updated",
         uid: req.uid,
+        orgId: req.orgId,
       });
 
       res.json({ ok: true, ...updates });
@@ -156,6 +157,7 @@ router.delete("/:id", requireRole("admin"), requireOrg, async (req, res, next) =
       payload: { userId: req.params.id, ...data },
       type: "user_deleted",
       uid: req.uid,
+      orgId: req.orgId,
     });
 
     res.json({ ok: true, message: "User deleted successfully" });

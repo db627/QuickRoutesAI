@@ -9,6 +9,7 @@ import TripForm from "@/components/TripForm";
 import StatsCards from "@/components/StatsCards";
 import InsightsSection from "@/components/InsightsSection";
 import MultiDriverOptimizer from "@/components/MultiDriverOptimizer";
+import ActivityFeed from "@/components/ActivityFeed";
 import { useState } from "react";
 
 export default function DashboardPage() {
@@ -72,11 +73,13 @@ export default function DashboardPage() {
         <DriverMap onSelectDriver={setSelectedDriverId} />
       </div>
 
-      {/* Lists */}
+      {/* Lists + Activity Feed */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <DriverList onSelectDriver={setSelectedDriverId} />
         <TripList />
       </div>
+
+      <ActivityFeed />
 
       <DriverDetailPanel
         driverId={selectedDriverId}

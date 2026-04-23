@@ -324,6 +324,7 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), requireOrg, tr
     await db.collection("events").add({
       type: "trip_duplicate",
       driverId: req.uid,
+      orgId: req.orgId,
       payload: { sourceTripId: req.params.id, duplicatedTripId: newTripRef.id },
       createdAt: now,
     });
@@ -453,6 +454,7 @@ router.patch("/:id", requireRole("dispatcher", "admin"), requireOrg, validate(up
     await db.collection("events").add({
       type: "trip_update",
       uid: req.uid,
+      orgId: req.orgId,
       payload: { tripId: req.params.id, from: { notes: trip?.notes || null, stops: trip?.stops || null }, to: updateData },
       createdAt: new Date().toISOString(),
     });
@@ -488,6 +490,7 @@ router.delete("/:id", requireRole("dispatcher", "admin"), requireOrg, async (req
     await db.collection("events").add({
       type: "trip_delete",
       uid: req.uid,
+      orgId: req.orgId,
       payload: trip,
       createdAt: new Date().toISOString(),
     });
@@ -636,6 +639,7 @@ router.post(
       await db.collection("events").add({
         type: "trip_override",
         uid: req.uid,
+        orgId: req.orgId,
         payload: {
           tripId: req.params.id,
           stopIds,
@@ -798,6 +802,7 @@ router.post("/:id/status", requireOrg, validate(updateTripStatusSchema), tripTra
     await db.collection("events").add({
       type: "status_change",
       driverId: trip?.driverId || req.uid,
+      orgId: req.orgId,
       payload: { tripId: req.params.id, from: trip?.status, to: status },
       createdAt: new Date().toISOString(),
     });
@@ -872,6 +877,7 @@ router.post("/:id/stops/:stopId/complete", requireOrg, async (req, res) => {
     await db.collection("events").add({
       type: "stop_completed",
       driverId: trip?.driverId || req.uid,
+      orgId: req.orgId,
       payload: { tripId: req.params.id, stopId: req.params.stopId, completedAt },
       createdAt: completedAt,
     });

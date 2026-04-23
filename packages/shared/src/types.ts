@@ -134,12 +134,36 @@ export interface Notification {
 }
 
 // ── Event ──
-export type EventType = "location_ping" | "status_change";
+export type EventType =
+  | "location_ping"
+  | "status_change"
+  | "stop_completed"
+  | "trip_duplicate"
+  | "trip_update"
+  | "trip_delete"
+  | "trip_override"
+  | "auto_assign"
+  | "multi_assign"
+  | "user_updated"
+  | "user_deleted";
 
 export interface DriverEvent {
   id: string;
   type: EventType;
   driverId: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+  orgId?: string;
+}
+
+/** Subset of events shown in the dashboard activity feed. */
+export type FeedEventType = "status_change" | "stop_completed";
+
+export interface FeedEvent {
+  id: string;
+  type: FeedEventType;
+  driverId?: string;
+  orgId: string;
   payload: Record<string, unknown>;
   createdAt: string;
 }
