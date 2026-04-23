@@ -60,6 +60,13 @@ export const updateTripSchema = z.object({
 });
 export type UpdateTripInput = z.infer<typeof updateTripSchema>;
 
+// ── Reorder Stops (Manual Route Override) ──
+export const reorderStopsSchema = z.object({
+  stopIds: z.array(z.string().min(1)).min(2, "At least two stops are required to reorder"),
+  reason: z.string().min(1, "Reason is required").max(500, "Reason must be 500 characters or fewer"),
+});
+export type ReorderStopsInput = z.infer<typeof reorderStopsSchema>;
+
 // ── User Registration ──
 export const userRoleSchema = z.enum(["driver", "dispatcher", "admin"]);
 
@@ -75,6 +82,7 @@ export const signupSchema = z.object({
   password: z.string().min(6, "Password must be at least 6 characters"),
   name: z.string().min(1).max(100),
   role: userRoleSchema.default("driver"),
+  orgCode: z.string().min(1).max(128).optional(),
 });
 export type SignupInput = z.infer<typeof signupSchema>;
 
@@ -90,3 +98,55 @@ export const updateUserSchema = z.object({
   status: z.enum(["active", "deactivated"]).optional(),
 });
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+
+// ── Organization ──
+export const orgAddressSchema = z.object({
+  street: z.string().min(1).max(200),
+  city: z.string().min(1).max(100),
+  state: z.string().min(1).max(50),
+  zip: z.string().min(1).max(20),
+  country: z.string().length(2).default("US"),
+});
+export type OrgAddressInput = z.infer<typeof orgAddressSchema>;
+
+export const orgBasicsSchema = z.object({
+  name: z.string().min(1).max(120),
+  industry: z.enum(["delivery", "logistics", "field_service", "other"]),
+  fleetSize: z.enum(["1-5", "6-20", "21-50", "51-200", "200+"]),
+});
+export type OrgBasicsInput = z.infer<typeof orgBasicsSchema>;
+
+export const adminProfileSchema = z.object({
+  name: z.string().min(1).max(100),
+  phone: z.string().min(7).max(20),
+  timezone: z.string().min(1).max(64),
+});
+export type AdminProfileInput = z.infer<typeof adminProfileSchema>;
+
+export const wizardProgressSchema = z.object({
+  currentStep: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  data: z.object({
+    orgBasics: orgBasicsSchema.optional(),
+    address: orgAddressSchema.optional(),
+    adminProfile: adminProfileSchema.optional(),
+  }),
+});
+export type WizardProgressInput = z.infer<typeof wizardProgressSchema>;
+
+export const createOrgSchema = z.object({
+  orgBasics: orgBasicsSchema,
+  address: orgAddressSchema,
+  adminProfile: adminProfileSchema,
+});
+export type CreateOrgInput = z.infer<typeof createOrgSchema>;
+
+// ── Update Organization ──
+// Partial update of orgBasics fields merged with an optional address object.
+export const updateOrgSchema = orgBasicsSchema
+  .partial()
+  .merge(z.object({ address: orgAddressSchema.optional() }))
+  .refine(
+    (obj) => Object.keys(obj).length > 0,
+    { message: "At least one field must be provided" },
+  );
+export type UpdateOrgInput = z.infer<typeof updateOrgSchema>;

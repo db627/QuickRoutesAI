@@ -19,6 +19,7 @@ function mockUserData(overrides: Partial<any> = {}) {
     name: "Test User",
     role: "driver",
     active: true,
+    orgId: "org-test",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,
@@ -53,7 +54,7 @@ describe("GET /users", () => {
                 return {
                     get: jest.fn().mockResolvedValue({
                     exists: true,
-                    data: () => ({ role: "admin", active: true }),
+                    data: () => ({ role: "admin", active: true, orgId: "org-test" }),
                     }),
                 };
                 }
@@ -106,7 +107,7 @@ describe("GET /users", () => {
                 return {
                     get: jest.fn().mockResolvedValue({
                     exists: true,
-                    data: () => ({ role: "admin", active: true }),
+                    data: () => ({ role: "admin", active: true, orgId: "org-test" }),
                     }),
                 };
                 }
@@ -168,7 +169,7 @@ describe("PATCH /users/:id", () => {
                     return {
                         get: jest.fn().mockResolvedValue({
                         exists: true,
-                        data: () => ({ role: "admin", active: true }),
+                        data: () => ({ role: "admin", active: true, orgId: "org-test" }),
                         }),
                     };
                     }
@@ -225,7 +226,7 @@ describe("PATCH /users/:id", () => {
                 return {
                     get: jest.fn().mockResolvedValue({
                     exists: true,
-                    data: () => ({ role: "admin", active: true }),
+                    data: () => ({ role: "admin", active: true, orgId: "org-test" }),
                     }),
                 };
                 }
@@ -332,7 +333,7 @@ describe("DELETE /users/:id", () => {
                     return {
                         get: jest.fn().mockResolvedValue({
                         exists: true,
-                        data: () => ({ role: "admin", active: true }),
+                        data: () => ({ role: "admin", active: true, orgId: "org-test" }),
                         }),
                     };
                     }
@@ -392,7 +393,7 @@ describe("DELETE /users/:id", () => {
                     return {
                         get: jest.fn().mockResolvedValue({
                         exists: true,
-                        data: () => ({ role: "admin", active: true }),
+                        data: () => ({ role: "admin", active: true, orgId: "org-test" }),
                         }),
                     };
                     }
@@ -490,5 +491,144 @@ describe("DELETE /users/:id", () => {
         expect(res.status).toBe(403);
         expect(res.body.error).toBe("FORBIDDEN");
         expect(res.body.message).toBe("Requires one of: admin");
+    });
+});
+
+describe("Org isolation for /users", () => {
+    const userId = "user-123";
+    const uid = "admin-123";
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    it("GET /users → 403 when admin has no orgId", async () => {
+        setupMockUser(uid, "admin", "Admin User", null);
+
+        const res = await request(app)
+            .get("/users")
+            .set("Authorization", "Bearer valid-token");
+
+        expect(res.status).toBe(403);
+        expect(res.body.error).toBe("FORBIDDEN");
+        expect(res.body.message).toMatch(/not linked to an organization/i);
+    });
+
+    it("GET /users → scopes listing by orgId", async () => {
+        setupMockUser(uid, "admin", "Admin User", "org-alpha");
+
+        paginateFirestore.mockResolvedValue({
+            data: [],
+            total: 0,
+            page: 1,
+            hasMore: false,
+        });
+
+        const whereMock = jest.fn().mockReturnThis();
+        db.collection.mockImplementation((col: string) => {
+            if (col === "users") {
+                return {
+                    doc: (id: string) => ({
+                        get: jest.fn().mockResolvedValue({
+                            exists: id === uid,
+                            data: () => ({ role: "admin", active: true, orgId: "org-alpha" }),
+                        }),
+                    }),
+                    where: whereMock,
+                };
+            }
+            return { doc: jest.fn().mockReturnThis(), get: jest.fn(), set: jest.fn() };
+        });
+
+        const res = await request(app)
+            .get("/users")
+            .set("Authorization", "Bearer valid-token");
+
+        expect(res.status).toBe(200);
+        // First `.where` is the org-scope filter.
+        expect(whereMock).toHaveBeenCalledWith("orgId", "==", "org-alpha");
+    });
+
+    it("PATCH /users/:id → 403 when target user is in a different org", async () => {
+        setupMockUser(uid, "admin", "Test Admin", "org-alpha");
+
+        const updateMock = jest.fn();
+        db.collection.mockImplementation((col: string) => {
+            if (col === "users") {
+                return {
+                    doc: (id: string) => {
+                        if (id === uid) {
+                            return {
+                                get: jest.fn().mockResolvedValue({
+                                    exists: true,
+                                    data: () => ({ role: "admin", active: true, orgId: "org-alpha" }),
+                                }),
+                            };
+                        }
+                        if (id === userId) {
+                            return {
+                                get: jest.fn().mockResolvedValue({
+                                    exists: true,
+                                    data: () => mockUserData({ orgId: "org-beta" }),
+                                }),
+                                update: updateMock,
+                            };
+                        }
+                        return { get: jest.fn().mockResolvedValue({ exists: false }) };
+                    },
+                };
+            }
+            return { doc: jest.fn().mockReturnThis(), get: jest.fn(), set: jest.fn() };
+        });
+
+        const res = await request(app)
+            .patch(`/users/${userId}`)
+            .send({ role: "driver" })
+            .set("Authorization", "Bearer valid-token");
+
+        expect(res.status).toBe(403);
+        expect(res.body.error).toBe("FORBIDDEN");
+        expect(updateMock).not.toHaveBeenCalled();
+    });
+
+    it("DELETE /users/:id → 403 when target user is in a different org", async () => {
+        setupMockUser(uid, "admin", "Test Admin", "org-alpha");
+
+        const deleteMock = jest.fn();
+        db.collection.mockImplementation((col: string) => {
+            if (col === "users") {
+                return {
+                    doc: (id: string) => {
+                        if (id === uid) {
+                            return {
+                                get: jest.fn().mockResolvedValue({
+                                    exists: true,
+                                    data: () => ({ role: "admin", active: true, orgId: "org-alpha" }),
+                                }),
+                            };
+                        }
+                        if (id === userId) {
+                            return {
+                                get: jest.fn().mockResolvedValue({
+                                    exists: true,
+                                    data: () => mockUserData({ orgId: "org-beta" }),
+                                }),
+                                delete: deleteMock,
+                            };
+                        }
+                        return { get: jest.fn().mockResolvedValue({ exists: false }) };
+                    },
+                };
+            }
+            return { doc: jest.fn().mockReturnThis(), get: jest.fn(), set: jest.fn() };
+        });
+
+        const res = await request(app)
+            .delete(`/users/${userId}`)
+            .set("Authorization", "Bearer valid-token");
+
+        expect(res.status).toBe(403);
+        expect(res.body.error).toBe("FORBIDDEN");
+        expect(deleteMock).not.toHaveBeenCalled();
     });
 });

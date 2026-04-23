@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -9,6 +9,7 @@ import {
   onSnapshot,
   collection,
   query,
+  where,
 } from "firebase/firestore";
 import {
   APIProvider,
@@ -23,8 +24,10 @@ import { firestore } from "@/lib/firebase";
 import { apiFetch } from "@/lib/api";
 import { decodePolyline, formatDistance, formatDuration } from "@/lib/utils";
 import TripForm from "@/components/TripForm";
+import DraggableStopList from "@/components/DraggableStopList";
 import { useToast } from "@/lib/toast-context";
-import type { Trip, TripStop, DriverRecord } from "@quickroutesai/shared";
+import { useAuth } from "@/lib/auth-context";
+import type { Trip, TripStop, DriverRecord, PredictedEta } from "@quickroutesai/shared";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
 const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || "";
@@ -113,16 +116,27 @@ function AssignDriverDropdown({
   onAssigned: () => void;
 }) {
   const { toast } = useToast();
+  const { orgId } = useAuth();
   const [drivers, setDrivers] = useState<DriverOption[]>([]);
   const [open, setOpen] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [autoAssigning, setAutoAssigning] = useState(false);
+  const [claiming, setClaiming] = useState(false);
 
-  useEffect(() => {
-    apiFetch<{ data: DriverOption[] }>("/drivers")
+  const fetchDrivers = useCallback(() => {
+    return apiFetch<{ data: DriverOption[] }>("/drivers")
       .then((res) => setDrivers(res.data))
       .catch(() => {
-        const q = query(collection(firestore, "drivers"));
+        // Fallback Firestore subscription: still scope by orgId so we don't
+        // leak drivers from other organizations.
+        if (!orgId) {
+          setDrivers([]);
+          return;
+        }
+        const q = query(
+          collection(firestore, "drivers"),
+          where("orgId", "==", orgId),
+        );
         const unsub = onSnapshot(q, (snap) => {
           setDrivers(
             snap.docs.map((d) => ({
@@ -133,7 +147,33 @@ function AssignDriverDropdown({
         });
         return unsub;
       });
-  }, []);
+  }, [orgId]);
+
+  useEffect(() => {
+    fetchDrivers();
+  }, [fetchDrivers]);
+
+  // Drivers that signed up publicly land with `orgId: null` and don't show up
+  // in org-scoped listings. This action attaches them to the caller's org.
+  const claimUnlinked = async () => {
+    setClaiming(true);
+    try {
+      const result = await apiFetch<{ claimed: number; driverIds: string[] }>(
+        "/drivers/claim-unlinked",
+        { method: "POST" },
+      );
+      if (result.claimed > 0) {
+        toast.success(`${result.claimed} drivers linked to your organization`);
+        await fetchDrivers();
+      } else {
+        toast.info("No unlinked drivers to claim");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to link drivers");
+    } finally {
+      setClaiming(false);
+    }
+  };
 
   const assign = async (driverId: string) => {
     setAssigning(true);
@@ -189,7 +229,12 @@ function AssignDriverDropdown({
         <div className="absolute right-0 z-50 mt-10 w-64 rounded-lg border border-gray-200 bg-white shadow-xl">
           <div className="max-h-60 overflow-y-auto divide-y divide-gray-200">
             {drivers.length === 0 && (
-              <p className="px-4 py-3 text-sm text-gray-400">No drivers found</p>
+              <div className="px-4 py-3 text-sm text-gray-400">
+                <p>No drivers found</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  If drivers signed up but aren&apos;t showing, link them to your org.
+                </p>
+              </div>
             )}
             {drivers.map((d) => (
               <button
@@ -210,6 +255,15 @@ function AssignDriverDropdown({
                 </span>
               </button>
             ))}
+          </div>
+          <div className="border-t border-gray-200 px-2 py-2">
+            <button
+              onClick={claimUnlinked}
+              disabled={claiming}
+              className="w-full rounded-md px-3 py-2 text-left text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+            >
+              {claiming ? "Linking..." : "Link unlinked drivers"}
+            </button>
           </div>
         </div>
       )}
@@ -546,13 +600,275 @@ function ETAPanel({ tripId }: { tripId: string }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Predictive ETA Engine card                                         */
+/* ------------------------------------------------------------------ */
+function PredictedEtaCard({
+  tripId,
+  prediction,
+  canPredict,
+}: {
+  tripId: string;
+  prediction: PredictedEta | undefined;
+  canPredict: boolean;
+}) {
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      await apiFetch(`/trips/${tripId}/predict-eta`, { method: "POST" });
+      toast.success("ETA prediction generated");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to predict ETA");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confidenceColors: Record<string, string> = {
+    low: "bg-gray-100 text-gray-700",
+    medium: "bg-amber-100 text-amber-800",
+    high: "bg-green-100 text-green-800",
+  };
+
+  return (
+    <div className="rounded-xl border border-violet-200 bg-violet-50">
+      <div className="flex items-center justify-between border-b border-violet-200 px-5 py-3">
+        <h2 className="font-semibold text-violet-900">Predictive ETA</h2>
+        {canPredict && (
+          <button
+            onClick={run}
+            disabled={loading}
+            className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700 disabled:opacity-50"
+          >
+            {loading ? "Predicting..." : prediction ? "Re-run Prediction" : "Predict ETA"}
+          </button>
+        )}
+      </div>
+      {prediction ? (
+        <div className="space-y-3 px-5 py-4">
+          <div className="flex flex-wrap items-center gap-6">
+            <div>
+              <p className="text-xs text-violet-700">Predicted Arrival</p>
+              <p className="text-lg font-semibold text-violet-900">
+                {new Date(prediction.predictedArrivalAt).toLocaleString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  month: "short",
+                  day: "numeric",
+                })}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-violet-700">Confidence</p>
+              <span
+                className={`mt-0.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${confidenceColors[prediction.confidence] || ""}`}
+              >
+                {prediction.confidence}
+              </span>
+            </div>
+            <div>
+              <p className="text-xs text-violet-700">Baseline / Adjusted</p>
+              <p className="text-sm font-medium text-violet-900">
+                {Math.round(prediction.baselineDurationSeconds / 60)} /{" "}
+                {Math.round(prediction.adjustedDurationSeconds / 60)} min
+              </p>
+            </div>
+            {prediction.actualArrivalAt && typeof prediction.errorMinutes === "number" && (
+              <div>
+                <p className="text-xs text-violet-700">Actual (error)</p>
+                <p className="text-sm font-medium text-violet-900">
+                  {new Date(prediction.actualArrivalAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}{" "}
+                  (±{prediction.errorMinutes.toFixed(1)} min)
+                </p>
+              </div>
+            )}
+          </div>
+          {prediction.reasoning && (
+            <p className="text-sm text-gray-700">{prediction.reasoning}</p>
+          )}
+          <p className="text-xs text-violet-600">
+            Factors: DoW {prediction.factors.dayOfWeek}, hour {prediction.factors.timeOfDayHour},{" "}
+            {prediction.factors.historicalSampleSize} historical samples
+            {prediction.factors.weatherSummary ? `; weather: ${prediction.factors.weatherSummary}` : ""}
+          </p>
+        </div>
+      ) : (
+        <div className="px-5 py-4 text-sm text-violet-700">
+          No prediction yet. {canPredict ? "Click Predict ETA to generate one." : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Status history timeline                                            */
+/* ------------------------------------------------------------------ */
+const STATUS_STEPS = ["draft", "assigned", "in_progress", "completed"] as const;
+
+const stepLabel: Record<string, string> = {
+  draft: "Draft",
+  assigned: "Assigned",
+  in_progress: "In Progress",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
+
+function StatusTimeline({ status }: { status: string }) {
+  if (status === "cancelled") {
+    return (
+      <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-3">
+        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white text-xs font-bold">✕</div>
+        <span className="text-sm font-medium text-red-700">Trip Cancelled</span>
+      </div>
+    );
+  }
+
+  const currentIdx = STATUS_STEPS.indexOf(status as typeof STATUS_STEPS[number]);
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white px-5 py-4">
+      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Status Timeline</p>
+      <div className="flex items-center gap-0">
+        {STATUS_STEPS.map((step, idx) => {
+          const done = idx < currentIdx;
+          const active = idx === currentIdx;
+          return (
+            <React.Fragment key={step}>
+              <div className="flex flex-col items-center gap-1">
+                <div
+                  className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold transition-colors ${
+                    done
+                      ? "bg-brand-600 text-white"
+                      : active
+                        ? "border-2 border-brand-600 bg-brand-50 text-brand-600"
+                        : "border-2 border-gray-200 bg-white text-gray-300"
+                  }`}
+                >
+                  {done ? "✓" : idx + 1}
+                </div>
+                <span
+                  className={`text-xs font-medium ${
+                    active ? "text-brand-600" : done ? "text-gray-700" : "text-gray-300"
+                  }`}
+                >
+                  {stepLabel[step]}
+                </span>
+              </div>
+              {idx < STATUS_STEPS.length - 1 && (
+                <div
+                  className={`mb-4 h-0.5 flex-1 ${idx < currentIdx ? "bg-brand-600" : "bg-gray-200"}`}
+                />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Assignment info panel                                              */
+/* ------------------------------------------------------------------ */
+function AssignmentInfoPanel({
+  driverId,
+  driverName,
+  driverPos,
+  tripStatus,
+}: {
+  driverId: string | null;
+  driverName: string | null;
+  driverPos: { lat: number; lng: number; speedMps: number; heading: number; updatedAt: string | null } | null;
+  tripStatus: string;
+}) {
+  if (!driverId) return null;
+
+  const isOnline = driverPos !== null;
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white">
+      <div className="border-b border-gray-200 px-5 py-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Assigned Driver</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-6 px-5 py-4">
+        {/* Avatar + name */}
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-sm font-bold text-brand-700">
+            {(driverName || driverId).slice(0, 2).toUpperCase()}
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-900">{driverName || driverId.slice(0, 12) + "..."}</p>
+            <p className="text-xs text-gray-400">UID: {driverId.slice(0, 10)}…</p>
+          </div>
+        </div>
+
+        {/* Online status */}
+        <div>
+          <p className="text-xs text-gray-400">Status</p>
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <div className={`h-2 w-2 rounded-full ${isOnline ? "animate-pulse bg-green-500" : "bg-gray-300"}`} />
+            <span className={`text-sm font-medium ${isOnline ? "text-green-600" : "text-gray-400"}`}>
+              {isOnline ? "Online" : "Offline"}
+            </span>
+          </div>
+        </div>
+
+        {/* Speed */}
+        {driverPos && (
+          <div>
+            <p className="text-xs text-gray-400">Speed</p>
+            <p className="mt-0.5 text-sm font-medium text-gray-900">
+              {(driverPos.speedMps * 2.237).toFixed(0)} mph
+            </p>
+          </div>
+        )}
+
+        {/* Heading */}
+        {driverPos && (
+          <div>
+            <p className="text-xs text-gray-400">Heading</p>
+            <p className="mt-0.5 text-sm font-medium text-gray-900">{driverPos.heading.toFixed(0)}°</p>
+          </div>
+        )}
+
+        {/* Trip status */}
+        <div>
+          <p className="text-xs text-gray-400">Trip Status</p>
+          <span className={`mt-0.5 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[tripStatus] || ""}`}>
+            {tripStatus.replace("_", " ")}
+          </span>
+        </div>
+
+        {/* Last update */}
+        {driverPos?.updatedAt && (
+          <div>
+            <p className="text-xs text-gray-400">Last Update</p>
+            <p className="mt-0.5 text-xs text-gray-500">
+              {new Date(driverPos.updatedAt).toLocaleTimeString()}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main page component                                                */
 /* ------------------------------------------------------------------ */
 export default function TripDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { toast } = useToast();
-  const [trip, setTrip] = useState<Trip | null>(null);
+  const { role, orgId } = useAuth();
+  const [rawTrip, setRawTrip] = useState<Trip | null>(null);
+  const [stops, setStops] = useState<TripStop[]>([]);
   const [loading, setLoading] = useState(true);
   const [driverPos, setDriverPos] = useState<{
     lat: number;
@@ -577,14 +893,47 @@ export default function TripDetailPage() {
     if (!id) return;
     const unsub = onSnapshot(doc(firestore, "trips", id), (snap) => {
       if (snap.exists()) {
-        setTrip({ id: snap.id, ...(snap.data() as Omit<Trip, "id">) });
+        setRawTrip({ id: snap.id, ...(snap.data() as Omit<Trip, "id">) });
       } else {
-        setTrip(null);
+        setRawTrip(null);
       }
       setLoading(false);
     });
     return unsub;
   }, [id]);
+
+  // Cross-org guard: if a user somehow navigates to a trip belonging to a
+  // different organization (or a legacy trip without an orgId), bounce them
+  // back to the trip list. The API already 403s on writes, but this prevents
+  // the direct Firestore read from leaking trip contents to the UI.
+  useEffect(() => {
+    if (!rawTrip || !orgId) return;
+    if (rawTrip.orgId !== orgId) {
+      toast.error("You don't have access to this trip.");
+      router.replace("/dashboard/trips");
+    }
+  }, [rawTrip, orgId, router, toast]);
+
+  // Subscribe to stops subcollection in real-time
+  useEffect(() => {
+    if (!id) return;
+    const stopsRef = collection(firestore, "trips", id, "stops");
+    const unsub = onSnapshot(stopsRef, (snap) => {
+      const docs = snap.docs.map((d) => ({
+        stopId: d.id,
+        ...(d.data() as Omit<TripStop, "stopId">),
+      }));
+      docs.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+      setStops(docs);
+    });
+    return unsub;
+  }, [id]);
+
+  // Merge rawTrip with live stops from subcollection
+  const trip = useMemo(
+    () => (rawTrip ? { ...rawTrip, stops } : null),
+    [rawTrip, stops],
+  );
 
   // Subscribe to driver's live position when driver is assigned
   useEffect(() => {
@@ -738,8 +1087,6 @@ export default function TripDetailPage() {
   // Decode route polyline if available
   const polylinePath = trip.route?.polyline ? decodePolyline(trip.route.polyline) : [];
 
-  const stops = trip.stops ?? [];
-
   // Determine map center from first stop or default
   const mapCenter =
     stops.length > 0
@@ -755,7 +1102,7 @@ export default function TripDetailPage() {
 
   const canEdit = trip.status === "draft";
   const canCancel = trip.status === "draft" || trip.status === "assigned";
-  const canDuplicate = trip.status === "completed";
+  const canDuplicate = true;
 
   // Pre-fill stops sorted by sequence
   const initialStops = stops.slice().sort((a, b) => a.sequence - b.sequence);
@@ -779,6 +1126,14 @@ export default function TripDetailPage() {
               >
                 {trip.status.replace("_", " ")}
               </span>
+              {trip.routeOverride?.active && (
+                <span
+                  className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700"
+                  title={trip.routeOverride.reason}
+                >
+                  Manually overridden
+                </span>
+              )}
             </div>
             <p className="mt-0.5 text-xs text-gray-400">ID: {trip.id}</p>
           </div>
@@ -891,6 +1246,17 @@ export default function TripDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Status timeline */}
+      <StatusTimeline status={trip.status} />
+
+      {/* Assignment info panel */}
+      <AssignmentInfoPanel
+        driverId={trip.driverId}
+        driverName={driverName}
+        driverPos={driverPos}
+        tripStatus={trip.status}
+      />
 
       {/* AI Route Reasoning */}
       {trip.route?.reasoning && (
@@ -1029,12 +1395,30 @@ export default function TripDetailPage() {
         <ETAPanel tripId={trip.id} />
       )}
 
+      {/* Predictive ETA Engine (historical + weather-adjusted) */}
+      {trip.status !== "cancelled" && (
+        <PredictedEtaCard
+          tripId={trip.id}
+          prediction={trip.predictedEta}
+          canPredict={role === "dispatcher" || role === "admin"}
+        />
+      )}
+
       {/* Stops (editable for non-terminal trips) */}
       <StopEditor
         tripId={trip.id}
         currentStops={stops}
         editable={trip.status !== "completed" && trip.status !== "cancelled"}
       />
+
+      {/* Manual route override (drag-and-drop reorder + reason) */}
+      {stops.length >= 2 && (
+        <DraggableStopList
+          tripId={trip.id}
+          stops={stops}
+          canOverride={trip.status !== "completed" && trip.status !== "cancelled"}
+        />
+      )}
 
       {/* Created / Updated */}
       <div className="flex gap-6 text-xs text-gray-400">

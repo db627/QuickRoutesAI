@@ -66,35 +66,28 @@ export default function HistoryScreen() {
             <Text className="mt-2 text-sm text-gray-500">Your completed deliveries will appear here.</Text>
           </View>
         }
-        renderItem={({ item }) => {
-          const stops = Array.isArray(item.stops) ? item.stops : [];
-          return (
-            <View className="mb-3 rounded-xl border border-gray-200 bg-white p-4">
-              <View className="flex-row items-center justify-between mb-2">
-                <Text className="font-semibold text-gray-900">
-                  {stops.length} stop{stops.length !== 1 && "s"}
+        renderItem={({ item }) => (
+          <View className="mb-3 rounded-xl border border-gray-200 bg-white p-4">
+            <View className="flex-row items-center justify-between mb-2">
+              <Text className="font-semibold text-gray-900">
+                {item.stopCount ?? 0} stop{(item.stopCount ?? 0) !== 1 && "s"}
+              </Text>
+              <Text className="text-xs text-gray-400">
+                {new Date(item.updatedAt).toLocaleDateString()}
+              </Text>
+            </View>
+            {item.route && (
+              <View className="flex-row">
+                <Text className="text-xs text-gray-500">
+                  {(item.route.distanceMeters / 1609.344).toFixed(1)} mi
                 </Text>
                 <Text className="text-xs text-gray-400">
                   {new Date(item.updatedAt).toLocaleDateString()}
                 </Text>
               </View>
-              {item.route && (
-                <View className="flex-row">
-                  <Text className="text-xs text-gray-500">
-                    {(item.route.distanceMeters / 1609.344).toFixed(1)} mi
-                  </Text>
-                  <Text className="text-xs text-gray-300 mx-2">&middot;</Text>
-                  <Text className="text-xs text-gray-500">
-                    {Math.round(item.route.durationSeconds / 60)} min
-                  </Text>
-                </View>
-              )}
-              <Text className="text-xs text-gray-400 mt-1" numberOfLines={1}>
-                {stops[0]?.address || "Unknown"} &rarr; {stops[stops.length - 1]?.address || "Unknown"}
-              </Text>
-            </View>
-          );
-        }}
+            )}
+          </View>
+        )}
       />
     </View>
   );
