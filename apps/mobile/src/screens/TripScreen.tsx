@@ -107,6 +107,7 @@ export default function TripScreen({ navigation }: Props) {
       }
       renderItem={({ item }) => {
         const stops = Array.isArray(item.stops) ? item.stops : [];
+        const count = item.stopCount ?? stops.length;
         return (
           <TouchableOpacity
             onPress={() => navigation.navigate("TripDetail", { tripId: item.id })}
@@ -122,12 +123,19 @@ export default function TripScreen({ navigation }: Props) {
               </View>
             </View>
 
-          <View className="mt-3 flex-row items-center gap-4">
-            <View className="flex-row items-center gap-1">
-              <Text className="text-base font-bold text-gray-900">{item.stopCount ?? 0}</Text>
-              <Text className="text-sm text-gray-500">
-                stop{(item.stopCount ?? 0) !== 1 ? "s" : ""}
-              </Text>
+            <View className="mt-3 flex-row items-center gap-4">
+              <View className="flex-row items-center gap-1">
+                <Text className="text-base font-bold text-gray-900">{count}</Text>
+                <Text className="text-sm text-gray-500">
+                  stop{count !== 1 ? "s" : ""}
+                </Text>
+              </View>
+              {item.route && (
+                <Text className="text-sm text-gray-400">
+                  {(item.route.distanceMeters / 1000).toFixed(1)} km &middot;{" "}
+                  {Math.round(item.route.durationSeconds / 60)} min
+                </Text>
+              )}
             </View>
 
             <View className="mt-2 flex-row items-center gap-1">
@@ -140,14 +148,9 @@ export default function TripScreen({ navigation }: Props) {
                 {[...stops].sort((a, b) => a.sequence - b.sequence)[0].address}
               </Text>
             )}
-          </View>
-
-          <View className="mt-2 flex-row items-center gap-1">
-            <Text className="text-xs text-gray-400">Scheduled</Text>
-            <Text className="text-xs font-medium text-gray-600">{formatDate(item.createdAt)}</Text>
-          </View>
-        </TouchableOpacity>
-      )}
+          </TouchableOpacity>
+        );
+      }}
     />
   );
 }

@@ -41,7 +41,7 @@ export default function TripETA({ trip, enableLiveLocation = true }: Props) {
         Next Stop ETA
       </Text>
       <View className="mt-1 flex-row items-baseline justify-between">
-        <Text className="text-lg font-semibold text-gray-900" numberOfLines={1}>
+        <Text className="flex-1 text-lg font-semibold text-gray-900" numberOfLines={1}>
           {eta.nextStop.address}
         </Text>
         {hasTiming && (
