@@ -866,13 +866,31 @@ router.post("/:id/stops/:stopId/complete", requireOrg, async (req, res) => {
     }
 
     const completedAt = new Date().toISOString();
-    await stopRef.update({ status: "completed", completedAt });
+
+    const { completionNotes, photoUrls } = req.body ?? {};
+    const update: Record<string, unknown> = { status: "completed", completedAt };
+    if (typeof completionNotes === "string" && completionNotes.trim().length > 0) {
+      update.completionNotes = completionNotes.trim().slice(0, 2000);
+    }
+    if (Array.isArray(photoUrls)) {
+      const cleaned = photoUrls
+        .filter((u): u is string => typeof u === "string" && u.length > 0)
+        .slice(0, 5);
+      if (cleaned.length > 0) update.photoUrls = cleaned;
+    }
+
+    await stopRef.update(update);
     await tripRef.update({ updatedAt: completedAt });
 
     await db.collection("events").add({
       type: "stop_completed",
       driverId: trip?.driverId || req.uid,
-      payload: { tripId: req.params.id, stopId: req.params.stopId, completedAt },
+      payload: {
+        tripId: req.params.id,
+        stopId: req.params.stopId,
+        completedAt,
+        photoCount: Array.isArray(update.photoUrls) ? update.photoUrls.length : 0,
+      },
       createdAt: completedAt,
     });
 

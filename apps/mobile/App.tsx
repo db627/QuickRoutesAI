@@ -18,8 +18,10 @@ import { View, ActivityIndicator } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import StatusBanner from "./src/components/StatusBanner";
 
+import type { TripStackParamList } from "./src/types/navigation";
+
 const Stack = createNativeStackNavigator();
-const TripStack = createNativeStackNavigator();
+const TripStack = createNativeStackNavigator<TripStackParamList>();
 const Tab = createBottomTabNavigator();
 
 function TripNavigator() {

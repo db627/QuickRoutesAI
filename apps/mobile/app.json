@@ -16,6 +16,8 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "QuickRoutesAI needs your location to track deliveries.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "QuickRoutesAI tracks your location in the background during active deliveries.",
+        "NSCameraUsageDescription": "QuickRoutesAI uses the camera to capture proof-of-delivery photos.",
+        "NSPhotoLibraryUsageDescription": "QuickRoutesAI needs photo library access to attach delivery photos.",
         "UIBackgroundModes": ["location"]
       }
     },
@@ -38,6 +40,13 @@
         {
           "locationAlwaysAndWhenInUsePermission": "QuickRoutesAI tracks your location in the background during active deliveries.",
           "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "QuickRoutesAI uses the camera to capture proof-of-delivery photos.",
+          "photosPermission": "QuickRoutesAI needs photo library access to attach delivery photos."
         }
       ]
     ]
