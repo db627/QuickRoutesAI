@@ -1,5 +1,5 @@
 import { renderHook, act } from '@testing-library/react-native';
-import NetInfo from '@react-native-community/netinfo';
+import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
 jest.mock('../config/firebase', () => ({
@@ -26,11 +26,12 @@ describe('useNetworkStatus', () => {
     (NetInfo.addEventListener as jest.Mock).mockReturnValue(() => {});
 
     const { result } = renderHook(() => useNetworkStatus());
+    await act(async () => {});
     expect(result.current.isConnected).toBe(true);
   });
 
   it('updates when network goes offline', async () => {
-    let listener: (state: any) => void;
+    let listener: (state: Pick<NetInfoState, 'isConnected' | 'isInternetReachable'>) => void = () => {};
     (NetInfo.fetch as jest.Mock).mockResolvedValue({ isConnected: true, isInternetReachable: true });
     (NetInfo.addEventListener as jest.Mock).mockImplementation((cb) => {
       listener = cb;
@@ -38,6 +39,7 @@ describe('useNetworkStatus', () => {
     });
 
     const { result } = renderHook(() => useNetworkStatus());
+    await act(async () => {});
 
     act(() => {
       listener({ isConnected: false, isInternetReachable: false });
@@ -47,7 +49,7 @@ describe('useNetworkStatus', () => {
   });
 
   it('updates when network comes back online', async () => {
-    let listener: (state: any) => void;
+    let listener: (state: Pick<NetInfoState, 'isConnected' | 'isInternetReachable'>) => void = () => {};
     (NetInfo.fetch as jest.Mock).mockResolvedValue({ isConnected: false, isInternetReachable: false });
     (NetInfo.addEventListener as jest.Mock).mockImplementation((cb) => {
       listener = cb;
@@ -55,6 +57,7 @@ describe('useNetworkStatus', () => {
     });
 
     const { result } = renderHook(() => useNetworkStatus());
+    await act(async () => {});
 
     act(() => {
       listener({ isConnected: true, isInternetReachable: true });

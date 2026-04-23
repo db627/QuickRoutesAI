@@ -11,6 +11,7 @@ import LoginScreen from "./src/screens/LoginScreen";
 import DriverHomeScreen from "./src/screens/DriverHomeScreen";
 import TripScreen from "./src/screens/TripScreen";
 import TripDetailScreen from "./src/screens/TripDetailScreen";
+import TripMapScreen from "./src/screens/TripMapScreen";
 import TripCompletionScreen from "./src/screens/TripCompletionScreen";
 import HistoryScreen from "./src/screens/HistoryScreen";
 import ProfileScreen from "./src/screens/ProfileScreen";
@@ -18,8 +19,10 @@ import { View, ActivityIndicator } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import StatusBanner from "./src/components/StatusBanner";
 
+import type { TripStackParamList } from "./src/types/navigation";
+
 const Stack = createNativeStackNavigator();
-const TripStack = createNativeStackNavigator();
+const TripStack = createNativeStackNavigator<TripStackParamList>();
 const Tab = createBottomTabNavigator();
 
 function TripNavigator() {
@@ -36,6 +39,11 @@ function TripNavigator() {
         name="TripDetail"
         component={TripDetailScreen}
         options={{ title: "Trip Detail" }}
+      />
+      <TripStack.Screen
+        name="TripMap"
+        component={TripMapScreen}
+        options={{ title: "Route Map" }}
       />
       <TripStack.Screen
         name="TripCompletion"

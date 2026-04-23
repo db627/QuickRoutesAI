@@ -45,8 +45,8 @@ jest.mock('react-native-maps', () => ({
   PROVIDER_GOOGLE: 'google',
 }));
 
-const mockRoute = { params: { tripId: 'trip1' } };
-const mockNavigation = { navigate: jest.fn() };
+const mockRoute = { params: { tripId: 'trip1' } } as any;
+const mockNavigation = { navigate: jest.fn() } as any;
 
 const baseStops = [
   { stopId: 's1', address: '123 Main St', lat: 40.7128, lng: -74.006, sequence: 1, notes: '' },

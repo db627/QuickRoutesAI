@@ -4,6 +4,7 @@ import MapView, { Polyline, Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import { collection, doc, getDoc, getDocs } from "firebase/firestore";
 import { firestore } from "../config/firebase";
 import type { Trip, TripStop } from "@quickroutesai/shared";
+import type { TripStackScreenProps } from "../types/navigation";
 
 function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
   const points: { latitude: number; longitude: number }[] = [];
@@ -33,10 +34,7 @@ function decodePolyline(encoded: string): { latitude: number; longitude: number 
   return points;
 }
 
-type Props = {
-  route: { params: { tripId: string } };
-  navigation: { popToTop: () => void };
-};
+type Props = TripStackScreenProps<"TripCompletion">;
 
 export default function TripCompletionScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
