@@ -4,11 +4,11 @@ import Link from "next/link";
 import type { Trip } from "@quickroutesai/shared";
 
 const statusColors: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-600",
-  assigned: "bg-blue-50 text-blue-600",
-  in_progress: "bg-amber-50 text-amber-600",
-  completed: "bg-green-50 text-green-600",
-  cancelled: "bg-red-50 text-red-600",
+  draft: "bg-gray-100 text-gray-700",
+  assigned: "bg-brand-100 text-brand-700",
+  in_progress: "bg-amber-50 text-amber-700",
+  completed: "bg-green-50 text-green-700",
+  cancelled: "bg-red-50 text-red-700",
 };
 
 /**
@@ -78,7 +78,7 @@ export function TripCard({ trip, driverName }: TripCardProps) {
         </span>
         <span
           className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
-            statusColors[trip.status] || "bg-gray-100 text-gray-600"
+            statusColors[trip.status] || "bg-gray-100 text-gray-700"
           }`}
         >
           {trip.status.replace("_", " ")}

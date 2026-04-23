@@ -47,40 +47,14 @@ interface InsightCardProps {
   icon: React.ReactNode;
 }
 
-function InsightCard({ title, items, accent, icon }: InsightCardProps) {
-  const accentStyles = {
-    green: {
-      border: "border-green-200",
-      bg: "bg-green-50",
-      iconBg: "bg-green-100",
-      iconText: "text-green-700",
-      bullet: "text-green-500",
-    },
-    amber: {
-      border: "border-amber-200",
-      bg: "bg-amber-50",
-      iconBg: "bg-amber-100",
-      iconText: "text-amber-700",
-      bullet: "text-amber-500",
-    },
-    blue: {
-      border: "border-blue-200",
-      bg: "bg-blue-50",
-      iconBg: "bg-blue-100",
-      iconText: "text-blue-700",
-      bullet: "text-blue-500",
-    },
-  }[accent];
-
+function InsightCard({ title, items, icon }: InsightCardProps) {
   return (
-    <div className={`rounded-xl border ${accentStyles.border} ${accentStyles.bg} p-5`}>
+    <div className="rounded-xl border border-gray-200 bg-white p-5">
       <div className="mb-3 flex items-center gap-2">
-        <span
-          className={`flex h-8 w-8 items-center justify-center rounded-lg ${accentStyles.iconBg} ${accentStyles.iconText}`}
-        >
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
           {icon}
         </span>
-        <h3 className="font-semibold text-gray-900">{title}</h3>
+        <h3 className="font-semibold text-brand-700">{title}</h3>
       </div>
       {items.length === 0 ? (
         <p className="text-sm text-gray-500">No items.</p>
@@ -88,7 +62,7 @@ function InsightCard({ title, items, accent, icon }: InsightCardProps) {
         <ul className="space-y-2">
           {items.map((item, i) => (
             <li key={i} className="flex gap-2 text-sm text-gray-700">
-              <span className={accentStyles.bullet} aria-hidden>
+              <span className="text-gray-400" aria-hidden>
                 •
               </span>
               <span>{item}</span>
