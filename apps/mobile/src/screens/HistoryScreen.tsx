@@ -77,14 +77,10 @@ export default function HistoryScreen() {
               </Text>
             </View>
             {item.route && (
-              <View className="flex-row">
-                <Text className="text-xs text-gray-500">
-                  {(item.route.distanceMeters / 1609.344).toFixed(1)} mi
-                </Text>
-                <Text className="text-xs text-gray-400">
-                  {new Date(item.updatedAt).toLocaleDateString()}
-                </Text>
-              </View>
+              <Text className="text-xs text-gray-500">
+                {(item.route.distanceMeters / 1000).toFixed(1)} km &middot;{" "}
+                {Math.round(item.route.durationSeconds / 60)} min
+              </Text>
             )}
           </View>
         )}
