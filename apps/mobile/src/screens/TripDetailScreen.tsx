@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert, Image, ScrollView } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { collection, doc, onSnapshot } from "firebase/firestore";
 import { firestore } from "../config/firebase";
@@ -8,6 +8,9 @@ import type { Trip, TripStop } from "@quickroutesai/shared";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import { openNavigation } from "../services/navigation";
 import { startTracking, stopTracking } from "../services/location";
+import { uploadStopPhotos, type UploadProgress } from "../services/photoUpload";
+import StopCompletionModal from "../components/StopCompletionModal";
+import type { TripStackScreenProps } from "../types/navigation";
 
 function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
   const points: { latitude: number; longitude: number }[] = [];
@@ -41,16 +44,16 @@ function decodePolyline(encoded: string): { latitude: number; longitude: number 
   return points;
 }
 
-type Props = {
-  route: { params: { tripId: string } };
-  navigation: { navigate: (screen: string, params: { tripId: string }) => void };
-};
+type Props = TripStackScreenProps<"TripDetail">;
 
 export default function TripDetailScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
   const [rawTrip, setRawTrip] = useState<Trip | null>(null);
   const [stops, setStops] = useState<TripStop[]>([]);
   const [loading, setLoading] = useState(true);
+  const [completingStop, setCompletingStop] = useState<TripStop | null>(null);
+  const [submittingCompletion, setSubmittingCompletion] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const { isConnected } = useNetworkStatus();
   const tripUnsubRef = useRef<(() => void) | null>(null);
   const stopsUnsubRef = useRef<(() => void) | null>(null);
@@ -113,20 +116,49 @@ export default function TripDetailScreen({ route, navigation }: Props) {
     [tripId, isConnected, navigation],
   );
 
-  const markStopComplete = useCallback(
-    async (stopId: string) => {
+  const openCompletionModal = useCallback(
+    (stop: TripStop) => {
       if (!isConnected) {
         Alert.alert("No Connection", "Stop cannot be marked complete while offline.");
         return;
       }
+      setCompletingStop(stop);
+    },
+    [isConnected],
+  );
+
+  const submitStopCompletion = useCallback(
+    async ({ notes, localPhotoUris }: { notes: string; localPhotoUris: string[] }) => {
+      if (!completingStop) return;
+      setSubmittingCompletion(true);
       try {
-        await apiFetch(`/trips/${tripId}/stops/${stopId}/complete`, { method: "POST" });
+        let photoUrls: string[] = [];
+        if (localPhotoUris.length > 0) {
+          setUploadProgress({ uploaded: 0, total: localPhotoUris.length });
+          photoUrls = await uploadStopPhotos(
+            tripId,
+            completingStop.stopId,
+            localPhotoUris,
+            setUploadProgress,
+          );
+        }
+        await apiFetch(`/trips/${tripId}/stops/${completingStop.stopId}/complete`, {
+          method: "POST",
+          body: JSON.stringify({
+            completionNotes: notes || undefined,
+            photoUrls: photoUrls.length > 0 ? photoUrls : undefined,
+          }),
+        });
+        setCompletingStop(null);
       } catch (err) {
         console.error("Failed to complete stop:", err);
         Alert.alert("Error", "Failed to mark stop as complete. Please try again.");
+      } finally {
+        setSubmittingCompletion(false);
+        setUploadProgress(null);
       }
     },
-    [tripId, isConnected],
+    [tripId, completingStop],
   );
 
   const confirmCompleteTrip = useCallback(() => {
@@ -237,33 +269,52 @@ export default function TripDetailScreen({ route, navigation }: Props) {
             !isCompleted &&
             sortedStops.slice(0, index).every((s) => s.status === "completed");
           return (
-            <View className="flex-row items-center border-b border-gray-100 bg-white px-4 py-3">
-              <View
-                className={`mr-3 h-8 w-8 items-center justify-center rounded-full ${
-                  isCompleted ? "bg-gray-400" : index === 0 ? "bg-green-500" : "bg-brand-600"
-                }`}
-              >
-                <Text className="text-sm font-bold text-white">{index + 1}</Text>
-              </View>
-              <View className="flex-1">
-                <Text className={`text-sm font-medium ${isCompleted ? "text-gray-400 line-through" : "text-gray-900"}`}>
-                  {item.address}
-                </Text>
-                {item.contact ? (
-                  <Text className="text-xs text-gray-500">{item.contact}</Text>
-                ) : null}
-                {item.timeWindow ? (
-                  <Text className="text-xs text-amber-600">
-                    {item.timeWindow.start} – {item.timeWindow.end}
+            <View className="border-b border-gray-100 bg-white px-4 py-3">
+              <View className="flex-row items-start">
+                <View
+                  className={`mr-3 mt-0.5 h-8 w-8 items-center justify-center rounded-full ${
+                    isCompleted ? "bg-gray-400" : index === 0 ? "bg-green-500" : "bg-brand-600"
+                  }`}
+                >
+                  <Text className="text-sm font-bold text-white">{index + 1}</Text>
+                </View>
+                <View className="flex-1">
+                  <Text className={`text-sm font-medium ${isCompleted ? "text-gray-400 line-through" : "text-gray-900"}`}>
+                    {item.address}
                   </Text>
-                ) : null}
-                {item.notes ? <Text className="text-xs text-gray-400">{item.notes}</Text> : null}
-                {isCompleted && item.completedAt ? (
-                  <Text className="text-xs text-green-600">
-                    Done {new Date(item.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </Text>
-                ) : null}
-              </View>
+                  {item.contact ? (
+                    <Text className="text-xs text-gray-500">{item.contact}</Text>
+                  ) : null}
+                  {item.timeWindow ? (
+                    <Text className="text-xs text-amber-600">
+                      {item.timeWindow.start} – {item.timeWindow.end}
+                    </Text>
+                  ) : null}
+                  {item.notes ? <Text className="text-xs text-gray-400">{item.notes}</Text> : null}
+                  {isCompleted && item.completedAt ? (
+                    <Text className="text-xs text-green-600">
+                      Done {new Date(item.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </Text>
+                  ) : null}
+                  {isCompleted && item.completionNotes ? (
+                    <View className="mt-1.5 rounded-md bg-gray-50 px-2 py-1.5">
+                      <Text className="text-xs text-gray-700">{item.completionNotes}</Text>
+                    </View>
+                  ) : null}
+                  {isCompleted && item.photoUrls && item.photoUrls.length > 0 ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-2">
+                      <View className="flex-row gap-2">
+                        {item.photoUrls.map((url) => (
+                          <Image
+                            key={url}
+                            source={{ uri: url }}
+                            className="h-14 w-14 rounded-md bg-gray-100"
+                          />
+                        ))}
+                      </View>
+                    </ScrollView>
+                  ) : null}
+                </View>
               <View className="ml-2 flex-col gap-1">
                 {trip.status === "in_progress" && !isCompleted && (
                   <TouchableOpacity
@@ -275,12 +326,13 @@ export default function TripDetailScreen({ route, navigation }: Props) {
                 )}
                 {isNext && (
                   <TouchableOpacity
-                    onPress={() => markStopComplete(item.stopId)}
+                    onPress={() => openCompletionModal(item)}
                     className="rounded-lg bg-green-500 px-3 py-1.5"
                   >
                     <Text className="text-xs font-semibold text-white">Mark Complete</Text>
                   </TouchableOpacity>
                 )}
+              </View>
               </View>
             </View>
           );
@@ -317,6 +369,16 @@ export default function TripDetailScreen({ route, navigation }: Props) {
           </View>
         )}
       </View>
+
+      <StopCompletionModal
+        visible={!!completingStop}
+        stopNumber={completingStop ? sortedStops.findIndex((s) => s.stopId === completingStop.stopId) + 1 : 0}
+        stopAddress={completingStop?.address ?? ""}
+        submitting={submittingCompletion}
+        uploadProgress={uploadProgress}
+        onCancel={() => !submittingCompletion && setCompletingStop(null)}
+        onSubmit={submitStopCompletion}
+      />
     </View>
   );
 }

@@ -57,6 +57,8 @@ export interface TripStop {
   timeWindow?: TimeWindow;
   status?: StopStatus;
   completedAt?: string; // ISO 8601
+  completionNotes?: string;
+  photoUrls?: string[];
 }
 export interface RouteLeg {
   fromStopId?: string;
