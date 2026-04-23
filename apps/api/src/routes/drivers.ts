@@ -37,25 +37,38 @@ router.post("/location", validate(locationPingSchema), async (req, res) => {
   const now = new Date().toISOString();
 
   try {
+    const driverRef = db.collection("drivers").doc(req.uid);
+    const driverSnap = await driverRef.get();
+    const wasOffline = !driverSnap.exists || driverSnap.data()?.isOnline === false;
+
     // Update driver document
-    await db
-      .collection("drivers")
-      .doc(req.uid)
-      .set(
-        {
-          isOnline: true,
-          lastLocation: { lat, lng },
-          lastSpeedMps: speedMps,
-          lastHeading: heading,
-          updatedAt: now,
-        },
-        { merge: true },
-      );
+    await driverRef.set(
+      {
+        isOnline: true,
+        lastLocation: { lat, lng },
+        lastSpeedMps: speedMps,
+        lastHeading: heading,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+
+    // Emit online transition event only when driver was previously offline
+    if (wasOffline) {
+      await db.collection("events").add({
+        type: "status_change",
+        driverId: req.uid,
+        orgId: req.orgId,
+        payload: { status: "online" },
+        createdAt: now,
+      });
+    }
 
     // Write event log
     await db.collection("events").add({
       type: "location_ping",
       driverId: req.uid,
+      orgId: req.orgId,
       payload: { lat, lng, speedMps, heading },
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -100,8 +113,8 @@ router.get("/", requireRole("dispatcher", "admin"), requireOrg, pagination, asyn
 
     const isOnline = req.query.online === "true" ? true : null;
     const isAvailable = req.query.available === "true" ? true : null;
-    // Scope to caller's org. Combined with `isOnline`, this needs a composite
-    // index (orgId ASC, isOnline ASC, updatedAt DESC) — see PR description.
+    // Scope to caller's org. Combined with `isOnline`, this needs the composite
+    // index defined in firestore.indexes.json: (orgId ASC, isOnline ASC, updatedAt DESC).
     var baseQuery: admin.firestore.Query = db
       .collection("drivers")
       .where("orgId", "==", req.orgId!);
@@ -246,6 +259,7 @@ router.post("/offline", async (req, res) => {
     await db.collection("events").add({
       type: "status_change",
       driverId: req.uid,
+      orgId: req.orgId,
       payload: { status: "offline" },
       createdAt: new Date().toISOString(),
     });
