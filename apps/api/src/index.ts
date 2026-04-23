@@ -15,6 +15,7 @@ import aiRoutes from "./routes/ai";
 import insightsRoutes from "./routes/insights";
 import quoteRoutes from "./routes/quote";
 import orgRoutes from "./routes/orgs";
+import analyticsRoutes from "./routes/analytics";
 import { errorHandler } from "./middleware/errorHandler";
 const app = express();
 
@@ -37,6 +38,7 @@ app.use("/users", verifyFirebaseToken, userRoutes);
 app.use("/ai", verifyFirebaseToken, aiRoutes);
 app.use("/orgs", verifyFirebaseToken, orgRoutes);
 app.use("/insights", verifyFirebaseToken, insightsRoutes);
+app.use("/analytics", verifyFirebaseToken, analyticsRoutes);
 
 // Global error handler
 app.use(errorHandler);
