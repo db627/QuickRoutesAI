@@ -348,7 +348,7 @@ router.patch("/:id", requireRole("dispatcher", "admin"), validate(updateTripSche
     // If stops changed and there are 2+, recompute the route and optimize stop order
     if (resolvedStops && resolvedStops.length >= 2) {
       try {
-        const { route, optimizedStops } = await computeRoute(resolvedStops);
+        const { route, optimizedStops } = await computeRoute(resolvedStops, undefined, trip?.driverId || "no driver");
         let routes = trip?.route || [];
 
         if(!Array.isArray(routes)) {
@@ -442,7 +442,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), tripStopsValidatio
       return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Need at least 2 stops to compute route"));
     }
 
-    const { route: routeResult, optimizedStops } = await computeRoute(stops, currentLocation);
+    const { route: routeResult, optimizedStops } = await computeRoute(stops, currentLocation, trip?.driverId || "no driver");
 
     let routes = trip?.route || [];
 
@@ -512,7 +512,7 @@ router.post("/:id/status", validate(updateTripStatusSchema), tripTransitionGuard
     // When a driver starts a trip, optionally recompute route from their live location.
     if (status === "in_progress" && currentLocation && Array.isArray(req?.stops) && req.stops.length > 0) {
       try {
-        const { route: reroutedRoute, optimizedStops } = await computeRoute(req.stops, currentLocation);
+        const { route: reroutedRoute, optimizedStops } = await computeRoute(req.stops, currentLocation, trip?.driverId || "no driver");
         updateData.route = reroutedRoute;
         const batch = db.batch();
         const tripRef = db.collection("trips").doc(req.params.id);

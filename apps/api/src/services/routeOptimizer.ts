@@ -18,6 +18,7 @@ export async function optimizeStopOrder(stops: TripStop[], weatherInfo?: any, dr
   const rest = sorted.slice(1);
   
   const retrievedRouteFeedback = await retrieveRouteFeedback(Timestamp.now(), driverId || ""); 
+  console.log("Test \n", retrievedRouteFeedback);
   const stopList = rest
     .map((s, i) => {
       let line = `  ${i}: "${s.address}" (lat: ${s.lat}, lng: ${s.lng})`;
@@ -34,24 +35,56 @@ export async function optimizeStopOrder(stops: TripStop[], weatherInfo?: any, dr
   if (weatherInfo !== undefined) {
     weatherDataStr = weatherInfo.stops.map((w: any) => `Stop ${w.address} -- Current: ${w.current.main}, Temperature: ${w.current.temperatureF}°F, Precipitation Chance: ${w.current.precipitationChance}%, Visibility: ${w.current.visibilityMiles} miles, Wind Speed: ${w.current.windSpeedMph} mph, -- Forecast: ${w.forecast.map((f: any) => `${new Date(f.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} Time: ${f.main}, Temperature: ${f.temperatureF}°F, Wind Speed: ${f.windSpeedMph} mph, Precipitation Chance: ${f.precipitationChance}%`).join("; ")}`).join("\n\n");
   }
+  let driverFeedbackStr = "No driver historical feedback available for the last 30 days.";
+  if (retrievedRouteFeedback.completedTrips > 0) {
+  driverFeedbackStr = JSON.stringify(retrievedRouteFeedback, null, 2);
+}
   
-  const prompt = `You are a route optimization engine. Given a starting point and a list of delivery stops, return the optimal order to visit ALL stops.
+  const prompt = `You are an intelligent delivery route optimization engine.
 
-${hasTimeWindows ? "IMPORTANT: Some stops have delivery time windows. You MUST respect these constraints — visit those stops within their time windows. Balance time constraints with minimizing total driving distance.\nIf weather information is provided, please consider it in your reasoning when deciding the order.\n" : ""}Starting point (fixed, always first):
-  "${origin.address}" (lat: ${origin.lat}, lng: ${origin.lng})
+Your job is to determine the best visiting order for ALL stops.
+
+Optimization priorities (highest to lowest):
+1. Respect required delivery time windows.
+2. Minimize total driving distance and backtracking.
+3. Reduce expected delay risk from weather or traffic.
+4. Use historical driver performance only to improve ETA realism and robustness.
+5. Keep route practical and geographically efficient.
+
+Starting point (fixed, always first):
+"${origin.address}" (lat: ${origin.lat}, lng: ${origin.lng})
 
 Stops to reorder:
 ${stopList}
 
-Weather information for stops (if available):
+Weather conditions by stop:
 ${weatherDataStr}
 
-Return ONLY a JSON object with two keys:
-- "order": array of the stop indices in optimal visiting order (e.g. [2, 0, 4, 1, 3])
-- "reasoning": one or two sentences explaining why this order minimizes travel time/distance
+Driver historical performance context (last 30 days):
+${driverFeedbackStr}
 
-Example: {"order": [2, 0, 4, 1, 3], "reasoning": "Stops 2 and 0 cluster in the north end, reducing backtracking before heading south."}
-No other text — just the JSON object.`;
+How to use driver history:
+- If historical ETA accuracy was low, choose simpler/more robust routes.
+- If driver often has long dwell times, prefer clustered stops.
+- If traffic is the most common historical delay, favor routes with less cross-city movement.
+- If weather delays are common and current weather is poor, favor safer/tighter sequencing.
+- Do NOT ignore geography because of driver history.
+
+How to use weather:
+- Heavy rain / low visibility / wind may slow travel.
+- If multiple stops are similar distance, prefer the lower-risk weather order.
+- Weather should adjust route timing realism, not replace geography.
+
+Return ONLY valid JSON:
+
+{
+  "order": [2,0,4,1,3],
+  "reasoning": "Stops 2 and 0 cluster geographically, reducing backtracking. Rain and lower visibility in the western segment make it better to service eastern stops first. Driver history showed longer dwell times, so tighter clustering improves schedule reliability."
+}
+
+No markdown. No extra text.`;
+  
+  console.log("Route Optimization Prompt:\n", prompt);
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",

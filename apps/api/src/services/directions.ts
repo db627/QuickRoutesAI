@@ -114,7 +114,7 @@ function durationStrToSeconds(v?: string): number {
  * 2. Google Directions computes the actual route along the optimized order.
  * Returns both the route and the reordered stops with updated sequence numbers.
  */
-export async function computeRoute(stops: TripStop[], originOverride?: RouteOrigin): Promise<ComputeRouteResult> {
+export async function computeRoute(stops: TripStop[], originOverride?: RouteOrigin, driverId:string = "no user"): Promise<ComputeRouteResult> {
   const apiKey = getApiKey();
 
   const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
@@ -167,7 +167,7 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
 
   
       const withOrigin = sorted.map((s, idx) => ({ ...s, sequence: idx + 1 }));
-      const result = await optimizeStopOrder([syntheticOrigin, ...withOrigin], weatherInfo);
+      const result = await optimizeStopOrder([syntheticOrigin, ...withOrigin], weatherInfo, driverId);
 
       optimizedStops = result.stops
         .slice(1)
@@ -176,7 +176,7 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
       optimizationReasoning = result.reasoning;
 
     } else {
-      const result = await optimizeStopOrder(sorted, weatherInfo);
+      const result = await optimizeStopOrder(sorted, weatherInfo, driverId);
       optimizedStops = result.stops;
       optimizationReasoning = result.reasoning;
     }

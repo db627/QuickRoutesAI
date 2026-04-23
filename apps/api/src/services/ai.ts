@@ -1140,28 +1140,157 @@ export async function postTripAnalytic(
 }
 
 
-export async function retrieveRouteFeedback(todaysDate: Timestamp, driverId: string): Promise<RouteAccuracyFeedback[]> {
-  
-  const endDate = todaysDate.toDate();
+type PredictionBias = "optimistic" | "pessimistic" | "balanced";
 
-  const startDate = new Date(endDate);
-  startDate.setDate(startDate.getDate() - 30);
+interface TripDelayReason {
+  reason: string;
+}
 
-  const trips = await db
-    .collection("trips")
-    .where("status", "==", "completed")
-    .where("createdAt", ">=", Timestamp.fromDate(startDate))
-    .where("createdAt", "<=", Timestamp.fromDate(endDate))
-    .where("driverId", "==", driverId)
-    .get();
+interface TripDelayReasonSummary {
+  tripId: string;
+  delayReasons: TripDelayReason[];
+}
 
-  const feedbacks: RouteAccuracyFeedback[] = [];
-  for (const trip of trips.docs) {
-    const tripData = trip.data();
-    if (tripData.routeFeedback) {
-      feedbacks.push(tripData.routeFeedback);
+interface DriverHistorySummary {
+  completedTrips: number;
+  avgRouteAccuracyPercent: number;
+  avgLegErrorMinutes: number;
+  predictionBias: PredictionBias;
+  avgPredictedMinutes: number;
+  avgActualMinutes: number;
+  dominantDelayCauses: {
+    traffic: number;
+    weather: number;
+    dwell_time: number;
+    route_inefficiency: number;
+    normal_operations: number;
+  };
+  tripDelayReasoning: TripDelayReasonSummary[];
+}
+
+function summarizeDriverHistory(trips: any[]): DriverHistorySummary {
+  const feedbacks = trips
+    .map((t) => t.feedbackAnalysis)
+    .filter(Boolean);
+
+  const delays = trips.flatMap((t) =>
+    Array.isArray(t.delayAnalysis) ? t.delayAnalysis : []
+  );
+
+  const avg = (nums: number[]) =>
+    nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
+
+  const avgRouteAccuracyPercent = avg(
+    feedbacks.map((f: any) => f.routeAccuracyPercent ?? 0)
+  );
+
+  const avgLegErrorMinutes = avg(
+    feedbacks.map((f: any) => f.promptContextFeedback?.avgLegErrorMinutes ?? 0)
+  );
+
+  const avgPredictedMinutes = avg(
+    feedbacks.map((f: any) => f.overallPredictedMinutes ?? 0)
+  );
+
+  const avgActualMinutes = avg(
+    feedbacks.map((f: any) => f.overallActualMinutes ?? 0)
+  );
+
+  const biasCounts: Record<PredictionBias, number> = {
+    optimistic: 0,
+    pessimistic: 0,
+    balanced: 0,
+  };
+
+  for (const f of feedbacks) {
+    const bias =
+      f.promptContextFeedback?.likelyBias as PredictionBias | undefined;
+
+    if (bias && bias in biasCounts) {
+      biasCounts[bias]++;
     }
   }
 
-  return feedbacks;
+  const predictionBias =
+    (Object.entries(biasCounts).sort((a, b) => b[1] - a[1])[0]?.[0] as PredictionBias) ||
+    "balanced";
+
+  const dominantDelayCauses = {
+    traffic: 0,
+    weather: 0,
+    dwell_time: 0,
+    route_inefficiency: 0,
+    normal_operations: 0,
+  };
+
+  for (const d of delays) {
+    if (d?.delayCause && d.delayCause in dominantDelayCauses) {
+      dominantDelayCauses[
+        d.delayCause as keyof typeof dominantDelayCauses
+      ]++;
+    }
+  }
+
+  
+  const tripDelayReasoning: TripDelayReasonSummary[] = trips.map((trip) => {
+    const delayReasons =
+      Array.isArray(trip.delayAnalysis)
+        ? trip.delayAnalysis
+            .map((d: any) => d?.summary || d?.reasoning)
+            .filter(Boolean)
+            .map((text: string) => ({
+              reason: text,
+            }))
+        : [];
+
+    return {
+      tripId: trip.id ?? trip.tripId ?? "",
+      delayReasons,
+    };
+  });
+
+  return {
+    completedTrips: trips.length,
+    avgRouteAccuracyPercent: Number(avgRouteAccuracyPercent.toFixed(2)),
+    avgLegErrorMinutes: Number(avgLegErrorMinutes.toFixed(2)),
+    predictionBias,
+    avgPredictedMinutes: Number(avgPredictedMinutes.toFixed(2)),
+    avgActualMinutes: Number(avgActualMinutes.toFixed(2)),
+    dominantDelayCauses,
+    tripDelayReasoning,
+  };
+}
+
+export async function retrieveRouteFeedback(
+  todaysDate: Timestamp,
+  driverId: string
+): Promise<DriverHistorySummary> {
+  const endDate = todaysDate.toDate();
+  endDate.setHours(23, 59, 59, 999);
+
+  const startDate = new Date(endDate);
+  startDate.setDate(startDate.getDate() - 30);
+  startDate.setHours(0, 0, 0, 0);
+
+  console.log(startDate, endDate);
+  console.log(driverId);
+
+  const tripsSnapshot = await db
+  .collection("trips")
+  .where("status", "==", "completed")
+  .where("driverId", "==", driverId)
+  .where("updatedAt", ">=", startDate.toISOString())
+  .where("updatedAt", "<=", endDate.toISOString())
+  .get();
+
+  const trips = tripsSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }));
+
+  console.log(trips);
+
+  const driver30days = summarizeDriverHistory(trips);
+
+  return driver30days;
 }
