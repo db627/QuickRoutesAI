@@ -15,6 +15,10 @@ jest.mock('firebase/firestore', () => ({
   onSnapshot: jest.fn(),
 }));
 
+jest.mock('../services/location', () => ({
+  stopTracking: jest.fn().mockResolvedValue(undefined),
+}));
+
 const mockNavigate = jest.fn();
 const mockNavigation = { navigate: mockNavigate };
 
