@@ -25,6 +25,7 @@ import { apiFetch } from "@/lib/api";
 import { decodePolyline, formatDistance, formatDuration } from "@/lib/utils";
 import TripForm from "@/components/TripForm";
 import DraggableStopList from "@/components/DraggableStopList";
+import RouteComparisonView from "@/components/RouteComparisonView";
 import { useToast } from "@/lib/toast-context";
 import { useAuth } from "@/lib/auth-context";
 import type { Trip, TripStop, DriverRecord, PredictedEta } from "@quickroutesai/shared";
@@ -1258,14 +1259,9 @@ export default function TripDetailPage() {
         tripStatus={trip.status}
       />
 
-      {/* AI Route Reasoning */}
-      {trip.route?.reasoning && (
-        <div className="rounded-xl border border-brand-100 bg-brand-50 px-5 py-4">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-brand-600">
-            AI Route Reasoning
-          </p>
-          <p className="text-sm text-gray-700">{trip.route.reasoning}</p>
-        </div>
+      {/* Route comparison (shown when a computed route exists) */}
+      {trip.route && stops.length >= 2 && (
+        <RouteComparisonView stops={stops} route={trip.route} />
       )}
 
       {/* Map */}
