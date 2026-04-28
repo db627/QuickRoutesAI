@@ -14,12 +14,15 @@ import TripDetailScreen from "./src/screens/TripDetailScreen";
 import TripCompletionScreen from "./src/screens/TripCompletionScreen";
 import HistoryScreen from "./src/screens/HistoryScreen";
 import ProfileScreen from "./src/screens/ProfileScreen";
+import WeeklyHoursScreen from "./src/screens/WeeklyHoursScreen";
 import { View, ActivityIndicator } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import StatusBanner from "./src/components/StatusBanner";
 
 const Stack = createNativeStackNavigator();
 const TripStack = createNativeStackNavigator();
+const ProfileStack = createNativeStackNavigator();
+const HomeStack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
 function TripNavigator() {
@@ -43,6 +46,36 @@ function TripNavigator() {
         options={{ title: "Summary", headerBackVisible: false }}
       />
     </TripStack.Navigator>
+  );
+}
+
+function HomeNavigator() {
+  return (
+    <HomeStack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: "#ffffff" },
+        headerTintColor: "#111827",
+        headerShadowVisible: false,
+      }}
+    >
+      <HomeStack.Screen name="DriverHome" component={DriverHomeScreen} options={{ title: "Home" }} />
+      <HomeStack.Screen name="WeeklyHours" component={WeeklyHoursScreen} options={{ title: "Hours This Week" }} />
+    </HomeStack.Navigator>
+  );
+}
+
+function ProfileNavigator() {
+  return (
+    <ProfileStack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: "#ffffff" },
+        headerTintColor: "#111827",
+        headerShadowVisible: false,
+      }}
+    >
+      <ProfileStack.Screen name="ProfileMain" component={ProfileScreen} options={{ title: "Profile" }} />
+      <ProfileStack.Screen name="WeeklyHours" component={WeeklyHoursScreen} options={{ title: "Hours This Week" }} />
+    </ProfileStack.Navigator>
   );
 }
 
@@ -73,10 +106,10 @@ function DriverTabs() {
         },
       })}
     >
-      <Tab.Screen name="Home" component={DriverHomeScreen} />
+      <Tab.Screen name="Home" component={HomeNavigator} options={{ headerShown: false }} />
       <Tab.Screen name="Trip" component={TripNavigator} options={{ headerShown: false }} />
       <Tab.Screen name="History" component={HistoryScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Profile" component={ProfileNavigator} options={{ headerShown: false }} />
     </Tab.Navigator>
   );
 }

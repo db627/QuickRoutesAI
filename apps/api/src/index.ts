@@ -13,6 +13,7 @@ import tripRoutes from "./routes/trips";
 import userRoutes from "./routes/users";
 import aiRoutes from "./routes/ai";
 import insightsRoutes from "./routes/insights";
+import shiftsRoutes from "./routes/shifts";
 import quoteRoutes from "./routes/quote";
 import orgRoutes from "./routes/orgs";
 import { errorHandler } from "./middleware/errorHandler";
@@ -37,6 +38,7 @@ app.use("/users", verifyFirebaseToken, userRoutes);
 app.use("/ai", verifyFirebaseToken, aiRoutes);
 app.use("/orgs", verifyFirebaseToken, orgRoutes);
 app.use("/insights", verifyFirebaseToken, insightsRoutes);
+app.use("/shifts", verifyFirebaseToken, shiftsRoutes);
 
 // Global error handler
 app.use(errorHandler);
