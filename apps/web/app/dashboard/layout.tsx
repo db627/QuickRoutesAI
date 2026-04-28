@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/auth-context";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Sidebar from "@/components/Sidebar";
+import NoOrgNotice from "@/components/NoOrgNotice";
 import NotificationBell from "@/components/NotificationBell";
 
 const HamburgerIcon = () => (
@@ -13,16 +14,21 @@ const HamburgerIcon = () => (
 );
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { user, role, loading, logout } = useAuth();
+  const { user, role, orgId, loading, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
-    if (!loading && !user) {
+    if (loading) return;
+    if (!user) {
       router.replace("/login");
+      return;
     }
-  }, [user, loading, router]);
+    if (role === "admin" && !orgId) {
+      router.replace("/onboarding");
+    }
+  }, [user, role, orgId, loading, router]);
 
   // Close drawer whenever the route changes
   useEffect(() => {
@@ -38,6 +44,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   if (!user) return null;
+  if (role === "admin" && !orgId) return null; // redirecting
+  if (role !== "admin" && !orgId) return <NoOrgNotice />;
 
   return (
     <div className="flex h-screen flex-col">
@@ -56,7 +64,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <NotificationBell />
       </header>
 
-      {/* Sidebar + main content */}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           role={role}

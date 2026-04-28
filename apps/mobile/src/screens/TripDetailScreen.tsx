@@ -1,10 +1,10 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
-import { doc, onSnapshot } from "firebase/firestore";
+import { collection, doc, onSnapshot } from "firebase/firestore";
 import { firestore } from "../config/firebase";
 import { apiFetch } from "../services/api";
-import type { Trip } from "@quickroutesai/shared";
+import type { Trip, TripStop } from "@quickroutesai/shared";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import { openNavigation } from "../services/navigation";
 import { startTracking, stopTracking } from "../services/location";
@@ -48,24 +48,45 @@ type Props = {
 
 export default function TripDetailScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
-  const [trip, setTrip] = useState<Trip | null>(null);
+  const [rawTrip, setRawTrip] = useState<Trip | null>(null);
+  const [stops, setStops] = useState<TripStop[]>([]);
   const [loading, setLoading] = useState(true);
   const { isConnected } = useNetworkStatus();
-  const unsubRef = useRef<(() => void) | null>(null);
+  const tripUnsubRef = useRef<(() => void) | null>(null);
+  const stopsUnsubRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    unsubRef.current?.();
+    tripUnsubRef.current?.();
     const docRef = doc(firestore, "trips", tripId);
-    unsubRef.current = onSnapshot(docRef, (snapshot) => {
+    tripUnsubRef.current = onSnapshot(docRef, (snapshot) => {
       if (snapshot.exists()) {
-        setTrip({ id: snapshot.id, ...(snapshot.data() as Omit<Trip, "id">) });
+        setRawTrip({ id: snapshot.id, ...(snapshot.data() as Omit<Trip, "id">) });
       } else {
-        setTrip(null);
+        setRawTrip(null);
       }
       setLoading(false);
     });
-    return () => unsubRef.current?.();
+    return () => tripUnsubRef.current?.();
   }, [tripId]);
+
+  useEffect(() => {
+    stopsUnsubRef.current?.();
+    const stopsRef = collection(firestore, "trips", tripId, "stops");
+    stopsUnsubRef.current = onSnapshot(stopsRef, (snapshot) => {
+      const docs = snapshot.docs.map((d) => ({
+        stopId: d.id,
+        ...(d.data() as Omit<TripStop, "stopId">),
+      }));
+      docs.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+      setStops(docs);
+    });
+    return () => stopsUnsubRef.current?.();
+  }, [tripId]);
+
+  const trip = useMemo(
+    () => (rawTrip ? { ...rawTrip, stops } : null),
+    [rawTrip, stops],
+  );
 
   const updateStatus = useCallback(
     async (status: "in_progress" | "completed") => {
@@ -139,7 +160,7 @@ export default function TripDetailScreen({ route, navigation }: Props) {
   }
 
   const routeCoords = trip.route?.polyline ? decodePolyline(trip.route.polyline) : [];
-  const sortedStops = [...trip.stops].sort((a, b) => a.sequence - b.sequence);
+  const sortedStops = [...(trip.stops ?? [])].sort((a, b) => a.sequence - b.sequence);
 
   return (
     <View className="flex-1 bg-gray-50">
@@ -178,7 +199,7 @@ export default function TripDetailScreen({ route, navigation }: Props) {
       <View className="mx-4 mt-3 rounded-xl border border-gray-200 bg-white px-5 py-3">
         <View className="flex-row items-center justify-between">
           <Text className="font-semibold text-gray-900">
-            {trip.stops.length} stop{trip.stops.length !== 1 && "s"}
+            {trip.stopCount ?? sortedStops.length} stop{(trip.stopCount ?? sortedStops.length) !== 1 && "s"}
           </Text>
           <View className={`rounded-full px-3 py-1 ${statusBg(trip.status)}`}>
             <Text className={`text-xs font-medium ${statusText(trip.status)}`}>
@@ -246,7 +267,7 @@ export default function TripDetailScreen({ route, navigation }: Props) {
               <View className="ml-2 flex-col gap-1">
                 {trip.status === "in_progress" && !isCompleted && (
                   <TouchableOpacity
-                    onPress={() => openNavigation(trip.stops)}
+                    onPress={() => openNavigation(sortedStops)}
                     className="rounded-lg bg-blue-500 px-3 py-1.5"
                   >
                     <Text className="text-xs font-semibold text-white">Navigate</Text>
@@ -279,7 +300,7 @@ export default function TripDetailScreen({ route, navigation }: Props) {
         {trip.status === "in_progress" && (
           <View className="flex-row gap-3">
             <TouchableOpacity
-              onPress={() => openNavigation(trip.stops)}
+              onPress={() => openNavigation(sortedStops)}
               disabled={!trip.route}
               className={`flex-1 items-center rounded-xl py-3 ${
                 trip.route ? "bg-blue-500" : "bg-gray-300"

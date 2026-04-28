@@ -7,6 +7,7 @@ import DriverDetailPanel from "@/components/DriverDetailPanel";
 import TripList from "@/components/TripList";
 import TripForm from "@/components/TripForm";
 import StatsCards from "@/components/StatsCards";
+import InsightsSection from "@/components/InsightsSection";
 import MultiDriverOptimizer from "@/components/MultiDriverOptimizer";
 import { useState } from "react";
 
@@ -59,6 +60,9 @@ export default function DashboardPage() {
       {showMultiOptimizer && (
         <MultiDriverOptimizer onClose={() => setShowMultiOptimizer(false)} />
       )}
+
+      {/* AI Insights */}
+      <InsightsSection />
 
       {/* Stats overview */}
       <StatsCards />

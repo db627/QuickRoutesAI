@@ -1,6 +1,7 @@
 import { render, screen, waitFor, act } from "@testing-library/react";
 import StatsCards from "@/components/StatsCards";
 import { onSnapshot } from "firebase/firestore";
+import { useAuth } from "@/lib/auth-context";
 
 jest.mock("@/lib/firebase", () => ({ firestore: {} }));
 
@@ -11,10 +12,25 @@ jest.mock("firebase/firestore", () => ({
   onSnapshot: jest.fn(),
 }));
 
+jest.mock("@/lib/auth-context", () => ({
+  useAuth: jest.fn(),
+}));
+
 const mockOnSnapshot = onSnapshot as jest.MockedFunction<typeof onSnapshot>;
+const mockedUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
 
 describe("StatsCards", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedUseAuth.mockReturnValue({
+      user: {} as any,
+      role: "dispatcher",
+      orgId: "org-test",
+      loading: false,
+      logout: jest.fn(),
+      refresh: jest.fn(),
+    });
+  });
 
   it("shows skeletons while listeners have not fired", () => {
     mockOnSnapshot.mockImplementation(() => jest.fn() as any);

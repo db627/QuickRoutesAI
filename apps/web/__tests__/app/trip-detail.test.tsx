@@ -56,15 +56,25 @@ function makeTripDoc(overrides = {}) {
     data: () => ({
       status: "assigned",
       driverId: null,
-      stops: [
-        { address: "123 Main St", lat: 40.71, lng: -74.01, notes: "" },
-        { address: "456 Oak Ave", lat: 40.72, lng: -74.02, notes: "" },
-      ],
       route: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       ...overrides,
     }),
+  };
+}
+
+function makeStopsSnap(
+  stops: Array<{ stopId: string; address: string; lat: number; lng: number; sequence: number; notes?: string }> = [],
+) {
+  return {
+    docs: stops.map((s) => ({
+      id: s.stopId,
+      data: () => {
+        const { stopId: _id, ...rest } = s;
+        return rest;
+      },
+    })),
   };
 }
 
@@ -98,10 +108,17 @@ describe("TripDetailPage", () => {
   });
 
   it("shows trip-not-found state when the document does not exist", async () => {
-    mockOnSnapshot.mockImplementation((_: any, cb: any) => {
+    // 1st call: trip doc (does not exist)
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
       cb({ exists: () => false, id: "trip-123", data: () => ({}) });
       return jest.fn() as any;
     });
+    // 2nd call: stops subcollection (empty)
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeStopsSnap([]));
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
 
     render(<TripDetailPage />);
 
@@ -112,9 +129,17 @@ describe("TripDetailPage", () => {
 
   it("shows trip content after the trip document is loaded", async () => {
     // 1st onSnapshot = trip doc (sets loading=false)
-    // 2nd onSnapshot = driver pos (only fires if driverId is set — skipped here)
+    // 2nd onSnapshot = stops subcollection (provides stop list)
+    // 3rd+ onSnapshot = driver pos (only fires if driverId is set — skipped here)
     mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
       cb(makeTripDoc());
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeStopsSnap([
+        { stopId: "s1", address: "123 Main St", lat: 40.71, lng: -74.01, sequence: 0, notes: "" },
+        { stopId: "s2", address: "456 Oak Ave", lat: 40.72, lng: -74.02, sequence: 1, notes: "" },
+      ]));
       return jest.fn() as any;
     });
     mockOnSnapshot.mockImplementation(() => jest.fn() as any);
@@ -125,8 +150,31 @@ describe("TripDetailPage", () => {
       expect(screen.getByText("Trip Detail")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("123 Main St")).toBeInTheDocument();
-    expect(screen.getByText("456 Oak Ave")).toBeInTheDocument();
+    // Addresses appear in both StopEditor (add/remove) and DraggableStopList (reorder).
+    expect(screen.getAllByText("123 Main St").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("456 Oak Ave").length).toBeGreaterThan(0);
+  });
+
+  it("renders stop addresses from the stops subcollection", async () => {
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeTripDoc({ status: "draft" }));
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementationOnce((_: any, cb: any) => {
+      cb(makeStopsSnap([
+        { stopId: "s1", address: "10 Downing St", lat: 51.5, lng: -0.13, sequence: 0 },
+        { stopId: "s2", address: "221B Baker St", lat: 51.52, lng: -0.15, sequence: 1 },
+      ]));
+      return jest.fn() as any;
+    });
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
+
+    render(<TripDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("10 Downing St").length).toBeGreaterThan(0);
+    });
+    expect(screen.getAllByText("221B Baker St").length).toBeGreaterThan(0);
   });
 
   it("shows the Compute Route button when route is null", async () => {
