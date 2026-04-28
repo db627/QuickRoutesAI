@@ -39,9 +39,9 @@ export default function WizardShell({
               data-complete={step < currentStep}
               className={`h-2 w-12 rounded-full ${
                 step < currentStep
-                  ? "bg-green-500"
+                  ? "bg-brand-600"
                   : step === currentStep
-                    ? "bg-blue-500"
+                    ? "bg-brand-500"
                     : "bg-gray-200"
               }`}
             />
@@ -65,7 +65,7 @@ export default function WizardShell({
             type="button"
             onClick={onNext}
             disabled={nextDisabled || submitting}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {submitting ? "Saving..." : nextLabel}
           </button>

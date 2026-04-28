@@ -25,6 +25,7 @@ import { apiFetch } from "@/lib/api";
 import { decodePolyline, formatDistance, formatDuration } from "@/lib/utils";
 import TripForm from "@/components/TripForm";
 import DraggableStopList from "@/components/DraggableStopList";
+import RouteComparisonView from "@/components/RouteComparisonView";
 import { useToast } from "@/lib/toast-context";
 import { useAuth } from "@/lib/auth-context";
 import type { Trip, TripStop, DriverRecord, PredictedEta } from "@quickroutesai/shared";
@@ -34,11 +35,11 @@ const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || "";
 const DEFAULT_CENTER = { lat: 40.7128, lng: -74.006 };
 
 const statusColors: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-600",
-  assigned: "bg-blue-50 text-blue-600",
-  in_progress: "bg-green-50 text-green-600",
-  completed: "bg-purple-50 text-purple-600",
-  cancelled: "bg-red-50 text-red-600",
+  draft: "bg-gray-100 text-gray-700",
+  assigned: "bg-brand-100 text-brand-700",
+  in_progress: "bg-amber-50 text-amber-700",
+  completed: "bg-green-50 text-green-700",
+  cancelled: "bg-red-50 text-red-700",
 };
 
 /* ------------------------------------------------------------------ */
@@ -214,7 +215,7 @@ function AssignDriverDropdown({
         <button
           onClick={autoAssign}
           disabled={autoAssigning}
-          className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+          className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         >
           {autoAssigning ? "AI Picking..." : "Smart Assign"}
         </button>
@@ -260,7 +261,7 @@ function AssignDriverDropdown({
             <button
               onClick={claimUnlinked}
               disabled={claiming}
-              className="w-full rounded-md px-3 py-2 text-left text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+              className="w-full rounded-md px-3 py-2 text-left text-xs font-medium text-brand-600 hover:bg-brand-50 disabled:opacity-50"
             >
               {claiming ? "Linking..." : "Link unlinked drivers"}
             </button>
@@ -412,7 +413,7 @@ function StopEditor({
                     ? "bg-green-600"
                     : idx === sorted.length - 1
                       ? "bg-red-600"
-                      : "bg-blue-600"
+                      : "bg-brand-600"
               }`}
             >
               {stop.status === "completed" ? "✓" : idx + 1}
@@ -435,7 +436,7 @@ function StopEditor({
                 <p className="mt-1 text-xs text-gray-500">{stop.notes}</p>
               )}
               {stop.timeWindow && !editing && (
-                <p className="mt-1 text-xs text-amber-600">
+                <p className="mt-1 text-xs text-gray-500">
                   Deliver: {stop.timeWindow.start} - {stop.timeWindow.end}
                 </p>
               )}
@@ -547,13 +548,13 @@ function ETAPanel({ tripId }: { tripId: string }) {
   };
 
   return (
-    <div className="rounded-xl border border-indigo-200 bg-indigo-50">
-      <div className="flex items-center justify-between border-b border-indigo-200 px-5 py-3">
-        <h2 className="font-semibold text-indigo-900">AI ETA Prediction</h2>
+    <div className="rounded-xl border border-gray-200 bg-white">
+      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+        <h2 className="font-semibold text-brand-700">AI ETA Prediction</h2>
         <button
           onClick={fetchETA}
           disabled={loading}
-          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+          className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         >
           {loading ? "Predicting..." : prediction ? "Refresh ETA" : "Predict ETA"}
         </button>
@@ -562,14 +563,14 @@ function ETAPanel({ tripId }: { tripId: string }) {
         <div className="px-5 py-4 space-y-3">
           <div className="flex items-center gap-6">
             <div>
-              <p className="text-xs text-indigo-600">Total ETA</p>
-              <p className="text-2xl font-bold text-indigo-900">
+              <p className="text-xs text-gray-500">Total ETA</p>
+              <p className="text-2xl font-bold text-gray-900">
                 {prediction.estimatedArrivalMinutes} min
               </p>
             </div>
             <div>
-              <p className="text-xs text-indigo-600">Confidence</p>
-              <p className="text-lg font-semibold text-indigo-900">
+              <p className="text-xs text-gray-500">Confidence</p>
+              <p className="text-lg font-semibold text-gray-900">
                 {Math.round(prediction.confidence * 100)}%
               </p>
             </div>
@@ -577,7 +578,7 @@ function ETAPanel({ tripId }: { tripId: string }) {
           {prediction.factors.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {prediction.factors.map((f, i) => (
-                <span key={i} className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs text-indigo-700">
+                <span key={i} className="rounded-full bg-brand-50 px-2.5 py-0.5 text-xs text-brand-700">
                   {f}
                 </span>
               ))}
@@ -588,7 +589,7 @@ function ETAPanel({ tripId }: { tripId: string }) {
               {prediction.perStopETA.map((s) => (
                 <div key={s.stopIndex} className="flex items-center justify-between text-sm">
                   <span className="text-gray-600 truncate max-w-[200px]">{s.address}</span>
-                  <span className="font-medium text-indigo-700">{s.etaMinutes} min</span>
+                  <span className="font-medium text-brand-700">{s.etaMinutes} min</span>
                 </div>
               ))}
             </div>
@@ -628,19 +629,19 @@ function PredictedEtaCard({
 
   const confidenceColors: Record<string, string> = {
     low: "bg-gray-100 text-gray-700",
-    medium: "bg-amber-100 text-amber-800",
-    high: "bg-green-100 text-green-800",
+    medium: "bg-brand-50 text-brand-700",
+    high: "bg-green-50 text-green-700",
   };
 
   return (
-    <div className="rounded-xl border border-violet-200 bg-violet-50">
-      <div className="flex items-center justify-between border-b border-violet-200 px-5 py-3">
-        <h2 className="font-semibold text-violet-900">Predictive ETA</h2>
+    <div className="rounded-xl border border-gray-200 bg-white">
+      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+        <h2 className="font-semibold text-brand-700">Predictive ETA</h2>
         {canPredict && (
           <button
             onClick={run}
             disabled={loading}
-            className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700 disabled:opacity-50"
+            className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
           >
             {loading ? "Predicting..." : prediction ? "Re-run Prediction" : "Predict ETA"}
           </button>
@@ -650,8 +651,8 @@ function PredictedEtaCard({
         <div className="space-y-3 px-5 py-4">
           <div className="flex flex-wrap items-center gap-6">
             <div>
-              <p className="text-xs text-violet-700">Predicted Arrival</p>
-              <p className="text-lg font-semibold text-violet-900">
+              <p className="text-xs text-gray-500">Predicted Arrival</p>
+              <p className="text-lg font-semibold text-gray-900">
                 {new Date(prediction.predictedArrivalAt).toLocaleString([], {
                   hour: "2-digit",
                   minute: "2-digit",
@@ -661,7 +662,7 @@ function PredictedEtaCard({
               </p>
             </div>
             <div>
-              <p className="text-xs text-violet-700">Confidence</p>
+              <p className="text-xs text-gray-500">Confidence</p>
               <span
                 className={`mt-0.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${confidenceColors[prediction.confidence] || ""}`}
               >
@@ -669,16 +670,16 @@ function PredictedEtaCard({
               </span>
             </div>
             <div>
-              <p className="text-xs text-violet-700">Baseline / Adjusted</p>
-              <p className="text-sm font-medium text-violet-900">
+              <p className="text-xs text-gray-500">Baseline / Adjusted</p>
+              <p className="text-sm font-medium text-gray-900">
                 {Math.round(prediction.baselineDurationSeconds / 60)} /{" "}
                 {Math.round(prediction.adjustedDurationSeconds / 60)} min
               </p>
             </div>
             {prediction.actualArrivalAt && typeof prediction.errorMinutes === "number" && (
               <div>
-                <p className="text-xs text-violet-700">Actual (error)</p>
-                <p className="text-sm font-medium text-violet-900">
+                <p className="text-xs text-gray-500">Actual (error)</p>
+                <p className="text-sm font-medium text-gray-900">
                   {new Date(prediction.actualArrivalAt).toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",
@@ -691,14 +692,14 @@ function PredictedEtaCard({
           {prediction.reasoning && (
             <p className="text-sm text-gray-700">{prediction.reasoning}</p>
           )}
-          <p className="text-xs text-violet-600">
+          <p className="text-xs text-gray-500">
             Factors: DoW {prediction.factors.dayOfWeek}, hour {prediction.factors.timeOfDayHour},{" "}
             {prediction.factors.historicalSampleSize} historical samples
             {prediction.factors.weatherSummary ? `; weather: ${prediction.factors.weatherSummary}` : ""}
           </p>
         </div>
       ) : (
-        <div className="px-5 py-4 text-sm text-violet-700">
+        <div className="px-5 py-4 text-sm text-gray-500">
           No prediction yet. {canPredict ? "Click Predict ETA to generate one." : ""}
         </div>
       )}
@@ -1232,15 +1233,15 @@ export default function TripDetailPage() {
             {trip.route ? formatDuration(trip.route.durationSeconds) : "--"}
           </p>
         </div>
-        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3">
-          <p className="text-xs text-green-600">Fuel Savings</p>
-          <p className="mt-0.5 text-sm font-bold text-green-700">
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+          <p className="text-xs text-gray-500">Fuel Savings</p>
+          <p className="mt-0.5 text-sm font-bold text-gray-900">
             {trip.route?.fuelSavingsGallons != null
               ? `${trip.route.fuelSavingsGallons.toFixed(2)} gal`
               : "--"}
           </p>
           {trip.route?.naiveDistanceMeters != null && trip.route.naiveDistanceMeters > 0 && (
-            <p className="text-xs text-green-500">
+            <p className="text-xs text-gray-500">
               vs {formatDistance(trip.route.naiveDistanceMeters)} unoptimized
             </p>
           )}
@@ -1258,14 +1259,9 @@ export default function TripDetailPage() {
         tripStatus={trip.status}
       />
 
-      {/* AI Route Reasoning */}
-      {trip.route?.reasoning && (
-        <div className="rounded-xl border border-brand-100 bg-brand-50 px-5 py-4">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-brand-600">
-            AI Route Reasoning
-          </p>
-          <p className="text-sm text-gray-700">{trip.route.reasoning}</p>
-        </div>
+      {/* Route comparison (shown when a computed route exists) */}
+      {trip.route && stops.length >= 2 && (
+        <RouteComparisonView stops={stops} route={trip.route} />
       )}
 
       {/* Map */}
@@ -1329,7 +1325,7 @@ export default function TripDetailPage() {
                               <p className="text-xs text-gray-500">{stop.notes}</p>
                             )}
                             {stop.timeWindow && (
-                              <p className="text-xs text-amber-600">
+                              <p className="text-xs text-gray-500">
                                 Window: {stop.timeWindow.start}–{stop.timeWindow.end}
                               </p>
                             )}

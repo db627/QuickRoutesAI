@@ -230,6 +230,114 @@ router.post("/claim-unlinked", requireRole("dispatcher", "admin"), requireOrg, a
 });
 
 /**
+ * GET /drivers/performance — ranked driver performance metrics for the leaderboard.
+ *
+ * Compares current period (last N days) vs previous period (N days before that).
+ * Query params:
+ *   ?days=7  — window length in days (default 7, max 90)
+ */
+router.get("/performance", requireRole("dispatcher", "admin"), requireOrg, async (req, res) => {
+  const days = Math.min(Math.max(parseInt(String(req.query.days ?? "7"), 10) || 7, 1), 90);
+  const now = new Date();
+  const currentStart = new Date(now.getTime() - days * 86400_000).toISOString();
+  const prevStart = new Date(now.getTime() - days * 2 * 86400_000).toISOString();
+
+  try {
+    const [currentSnap, prevSnap] = await Promise.all([
+      db
+        .collection("trips")
+        .where("orgId", "==", req.orgId!)
+        .where("status", "==", "completed")
+        .where("updatedAt", ">=", currentStart)
+        .get(),
+      db
+        .collection("trips")
+        .where("orgId", "==", req.orgId!)
+        .where("status", "==", "completed")
+        .where("updatedAt", ">=", prevStart)
+        .where("updatedAt", "<", currentStart)
+        .get(),
+    ]);
+
+    // ── Aggregate current period ────────────────────────────────────────────
+    interface DriverStats {
+      tripCount: number;
+      durations: number[];
+      onTimeCount: number;
+      etaCount: number;
+    }
+    const current: Record<string, DriverStats> = {};
+
+    for (const doc of currentSnap.docs) {
+      const t = doc.data();
+      const uid = t.driverId as string | null;
+      if (!uid) continue;
+      if (!current[uid]) current[uid] = { tripCount: 0, durations: [], onTimeCount: 0, etaCount: 0 };
+      current[uid].tripCount++;
+      if (typeof t.route?.durationSeconds === "number") {
+        current[uid].durations.push(t.route.durationSeconds);
+      }
+      if (typeof t.predictedEta?.errorMinutes === "number") {
+        current[uid].etaCount++;
+        if (t.predictedEta.errorMinutes <= 10) current[uid].onTimeCount++;
+      }
+    }
+
+    // ── Aggregate previous period trip counts ───────────────────────────────
+    const prev: Record<string, number> = {};
+    for (const doc of prevSnap.docs) {
+      const uid = doc.data().driverId as string | null;
+      if (!uid) continue;
+      prev[uid] = (prev[uid] ?? 0) + 1;
+    }
+
+    // ── Enrich with driver names ────────────────────────────────────────────
+    const driverIds = Object.keys(current);
+    const userDocs = await Promise.all(
+      driverIds.map((uid) => db.collection("users").doc(uid).get()),
+    );
+    const nameMap: Record<string, string> = {};
+    userDocs.forEach((d, i) => {
+      nameMap[driverIds[i]] = d.exists ? (d.data()?.name ?? "Unknown") : "Unknown";
+    });
+
+    // ── Build leaderboard ───────────────────────────────────────────────────
+    const leaderboard = driverIds.map((uid) => {
+      const s = current[uid];
+      const avgCompletionTimeSeconds =
+        s.durations.length > 0
+          ? s.durations.reduce((a, b) => a + b, 0) / s.durations.length
+          : null;
+      const onTimePct = s.etaCount > 0 ? Math.round((s.onTimeCount / s.etaCount) * 100) : null;
+      const prevCount = prev[uid] ?? null;
+
+      let trend: "up" | "down" | "same" | "new" = "new";
+      if (prevCount !== null) {
+        if (s.tripCount > prevCount) trend = "up";
+        else if (s.tripCount < prevCount) trend = "down";
+        else trend = "same";
+      }
+
+      return {
+        driverId: uid,
+        name: nameMap[uid],
+        tripCount: s.tripCount,
+        avgCompletionTimeSeconds,
+        onTimePct,
+        prevTripCount: prevCount,
+        trend,
+      };
+    });
+
+    leaderboard.sort((a, b) => b.tripCount - a.tripCount);
+
+    res.json({ drivers: leaderboard, periodDays: days });
+  } catch (err) {
+    res.status(500).json({ error: "Internal Error", message: "Failed to fetch performance data" });
+  }
+});
+
+/**
  * POST /drivers/offline — driver sets themselves offline
  */
 router.post("/offline", async (req, res) => {

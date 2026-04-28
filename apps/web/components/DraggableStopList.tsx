@@ -165,7 +165,7 @@ export default function DraggableStopList({
             <button
               onClick={openReasonPrompt}
               disabled={submitting || !isOrderChanged}
-              className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+              className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
             >
               Save reordering
             </button>
@@ -194,7 +194,7 @@ export default function DraggableStopList({
                     ? "bg-green-600"
                     : idx === localStops.length - 1
                       ? "bg-red-600"
-                      : "bg-blue-600"
+                      : "bg-brand-600"
               }`}
             >
               {stop.status === "completed" ? "✓" : idx + 1}
@@ -213,7 +213,7 @@ export default function DraggableStopList({
                 <p className="mt-1 text-xs text-gray-500">{stop.notes}</p>
               )}
               {stop.timeWindow && (
-                <p className="mt-1 text-xs text-amber-600">
+                <p className="mt-1 text-xs text-gray-500">
                   Deliver: {stop.timeWindow.start} - {stop.timeWindow.end}
                 </p>
               )}
@@ -284,7 +284,7 @@ export default function DraggableStopList({
               <button
                 onClick={submitOverride}
                 disabled={submitting || !reason.trim()}
-                className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 {submitting ? "Saving..." : "Confirm override"}
               </button>

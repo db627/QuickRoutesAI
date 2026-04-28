@@ -9,6 +9,7 @@ import TripForm from "@/components/TripForm";
 import StatsCards from "@/components/StatsCards";
 import InsightsSection from "@/components/InsightsSection";
 import MultiDriverOptimizer from "@/components/MultiDriverOptimizer";
+import DriverLeaderboard from "@/components/DriverLeaderboard";
 import { useState } from "react";
 
 export default function DashboardPage() {
@@ -77,6 +78,9 @@ export default function DashboardPage() {
         <DriverList onSelectDriver={setSelectedDriverId} />
         <TripList />
       </div>
+
+      {/* Driver leaderboard */}
+      <DriverLeaderboard onSelectDriver={setSelectedDriverId} />
 
       <DriverDetailPanel
         driverId={selectedDriverId}
