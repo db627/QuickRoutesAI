@@ -13,8 +13,14 @@ import {
   flushQueue,
 } from "../services/offlineQueue";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
+import { startShift, endShift } from "../services/shifts";
+import { Ionicons } from "@expo/vector-icons";
 
-export default function ProfileScreen() {
+interface Props {
+  navigation?: { navigate: (screen: string) => void };
+}
+
+export default function ProfileScreen({ navigation }: Props = {}) {
   const uid = auth.currentUser?.uid;
   const { isConnected } = useNetworkStatus();
 
@@ -120,6 +126,16 @@ export default function ProfileScreen() {
 
     await setDoc(doc(firestore, "drivers", uid), data, { merge: true });
 
+    try {
+      if (newStatus) {
+        await startShift();
+      } else {
+        await endShift();
+      }
+    } catch {
+      // ignore — toggling online flag is the primary action
+    }
+
     if (!newStatus) await stopTracking();
   };
 
@@ -131,6 +147,11 @@ export default function ProfileScreen() {
         { isOnline: false, updatedAt: new Date().toISOString() },
         { merge: true }
       );
+      try {
+        await endShift();
+      } catch {
+        // ignore
+      }
     }
     await signOut(auth);
   };
@@ -183,6 +204,18 @@ export default function ProfileScreen() {
             <Text className="text-xs text-gray-500 mt-1">Miles Driven</Text>
           </View>
         </View>
+
+        {/* Hours This Week link */}
+        {navigation && (
+          <TouchableOpacity
+            onPress={() => navigation.navigate("WeeklyHours")}
+            className="flex-row items-center rounded-xl border border-gray-200 bg-white px-4 py-3.5 mb-3"
+          >
+            <Ionicons name="time-outline" size={20} color="#3b82f6" />
+            <Text className="flex-1 ml-3 font-medium text-gray-900">Hours This Week</Text>
+            <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
+          </TouchableOpacity>
+        )}
 
         {/* Actions */}
         <TouchableOpacity

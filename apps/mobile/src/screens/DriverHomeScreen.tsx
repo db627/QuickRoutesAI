@@ -14,8 +14,14 @@ import {
   flushQueue,
 } from "../services/offlineQueue";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
+import { startShift, endShift } from "../services/shifts";
+import TodayHoursCard from "../components/TodayHoursCard";
 
-export default function DriverHomeScreen() {
+interface Props {
+  navigation?: { navigate: (screen: string) => void };
+}
+
+export default function DriverHomeScreen({ navigation }: Props) {
   const { isConnected } = useNetworkStatus();
 
   const [isOnline, setIsOnline] = useState(false);
@@ -110,6 +116,19 @@ export default function DriverHomeScreen() {
 
       await setDoc(doc(firestore, "drivers", uid), data, { merge: true });
 
+      // Record shift start/end. We deliberately don't fail the toggle if the
+      // shift API call fails — the driver's online flag should still flip;
+      // a stale open shift will be auto-closed on the next start.
+      try {
+        if (newStatus) {
+          await startShift();
+        } else {
+          await endShift();
+        }
+      } catch {
+        // ignore — see above
+      }
+
       if (!newStatus && isTracking) {
         await stopTracking();
         setIsTracking(false);
@@ -143,6 +162,11 @@ export default function DriverHomeScreen() {
         { isOnline: false, updatedAt: new Date().toISOString() },
         { merge: true }
       );
+      try {
+        await endShift();
+      } catch {
+        // ignore
+      }
     }
     await signOut(auth);
   };
@@ -165,6 +189,12 @@ export default function DriverHomeScreen() {
           <Text className="text-xs text-orange-700 font-medium">Sync paused, waiting for connection.</Text>
         </View>
       )}
+
+      {/* Today's hours */}
+      <TodayHoursCard
+        isOnline={isOnline}
+        onPress={navigation ? () => navigation.navigate("WeeklyHours") : undefined}
+      />
 
       {/* Map */}
       <View className="flex-1 mx-4 mb-4 overflow-hidden rounded-2xl border border-gray-200">

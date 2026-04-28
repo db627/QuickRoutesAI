@@ -144,6 +144,24 @@ export interface Trip {
   predictedEta?: PredictedEta;
 }
 
+// ── Driver Shift ──
+export interface DriverShift {
+  id: string;
+  driverId: string;
+  orgId: string;
+  startedAt: string; // ISO 8601
+  endedAt: string | null;
+  durationSeconds: number | null; // null while shift is open
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShiftDailyTotal {
+  date: string; // YYYY-MM-DD (driver's local date)
+  totalSeconds: number;
+  shiftCount: number;
+}
+
 // ── Notification ──
 export type NotificationType = "trip_assigned" | "trip_completed" | "driver_offline";
 

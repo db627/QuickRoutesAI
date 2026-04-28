@@ -13,6 +13,7 @@ import tripRoutes from "./routes/trips";
 import userRoutes from "./routes/users";
 import aiRoutes from "./routes/ai";
 import insightsRoutes from "./routes/insights";
+import shiftsRoutes from "./routes/shifts";
 import quoteRoutes from "./routes/quote";
 import orgRoutes from "./routes/orgs";
 import telemetryRoutes from "./routes/telemetry";
@@ -38,6 +39,7 @@ app.use("/users", verifyFirebaseToken, userRoutes);
 app.use("/ai", verifyFirebaseToken, aiRoutes);
 app.use("/orgs", verifyFirebaseToken, orgRoutes);
 app.use("/insights", verifyFirebaseToken, insightsRoutes);
+app.use("/shifts", verifyFirebaseToken, shiftsRoutes);
 app.use("/telemetry", verifyFirebaseToken, telemetryLimiter, telemetryRoutes);
 
 // Global error handler
