@@ -60,3 +60,18 @@ export const quoteLimiter = rateLimit({
   skip: () => isTest,
   message: rateLimitedMessage("Too many quote requests, please try again later"),
 });
+
+/**
+ * Limiter for driver GPS telemetry batches.
+ * 1 request per 5 seconds per driver UID.
+ * Must run after verifyFirebaseToken so req.uid is available.
+ */
+export const telemetryLimiter = rateLimit({
+  windowMs: 5 * 1000,
+  max: 1,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req as any).uid ?? req.ip ?? "unknown",
+  skip: () => isTest,
+  message: rateLimitedMessage("Telemetry rate limit exceeded: max 1 request per 5 seconds"),
+});
