@@ -35,6 +35,19 @@ export interface DriverRecord {
   orgId?: string | null;
 }
 
+// ── Driver Performance ──
+export type DriverTrend = "up" | "down" | "same" | "new";
+
+export interface DriverPerformance {
+  driverId: string;
+  name: string;
+  tripCount: number;
+  avgCompletionTimeSeconds: number | null;
+  onTimePct: number | null;
+  prevTripCount: number | null;
+  trend: DriverTrend;
+}
+
 // ── Trip ──
 export type TripStatus = "draft" | "assigned" | "in_progress" | "completed" | "cancelled";
 
