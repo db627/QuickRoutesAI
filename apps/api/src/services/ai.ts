@@ -500,7 +500,7 @@ function getTripTimeWindow(sortedStops: RouteStopLike[]): TripTimeWindow | null 
 
   if (!rawStart || !rawEnd) return null;
 
-  return {
+  return { b
     startTime: toTimestamp(rawStart),
     endTime: toTimestamp(rawEnd),
   };
@@ -1293,4 +1293,264 @@ export async function retrieveRouteFeedback(
   const driver30days = summarizeDriverHistory(trips);
 
   return driver30days;
+}
+
+
+// ───  AI-powered Driver Performance ─────────────────────────
+
+type TrendDirection = "improving" | "declining" | "stable";
+
+interface DriverAssessment {
+  driverId: string;
+  weekStart: string;
+  weekEnd: string;
+  createdAt: string;
+
+  performanceScore: number;
+
+  metrics: {
+    completedTrips: number;
+    avgSpeedMph: number;
+    maxSpeedMph: number;
+    speedingEventCount: number;
+    avgDwellMinutes: number;
+    totalDwellMinutes: number;
+    onTimeRatePercent: number;
+    avgRouteAccuracyPercent: number;
+    avgLegErrorMinutes: number;
+  };
+
+  trends: {
+    speedPatterns: string;
+    dwellTimes: string;
+    onTimeRate: TrendDirection;
+  };
+
+  recommendations: string[];
+  summary: string;
+}
+
+function clampScore(score: number): number {
+  return Math.max(1, Math.min(100, Math.round(score)));
+}
+
+async function fetchTripStops(tripId: string): Promise<RouteStopLike[]> {
+  const stopsSnapshot = await db
+    .collection("trips")
+    .doc(tripId)
+    .collection("stops")
+    .orderBy("sequence")
+    .get();
+
+  return stopsSnapshot.docs.map((doc) => ({
+    stopId: doc.id,
+    ...doc.data(),
+  })) as RouteStopLike[];
+}
+
+function computeDwellMinutes(stops: RouteStopLike[]): number[] {
+  return stops
+    .map((s) => {
+      if (!s.start_time || !s.end_time) return 0;
+
+      const start = toTimestamp(s.start_time);
+      const end = toTimestamp(s.end_time);
+
+      return Math.max(0, (end.seconds - start.seconds) / 60);
+    })
+    .filter((minutes) => minutes > 0);
+}
+
+function computeOnTimeRatePercent(trips: any[]): number {
+  const feedbackTrips = trips.filter((t) => t.feedbackAnalysis);
+  if (!feedbackTrips.length) return 0;
+
+  const onTimeTrips = feedbackTrips.filter((t) => {
+    const feedback = t.feedbackAnalysis;
+    const predicted = feedback?.overallPredictedMinutes ?? 0;
+    const actual = feedback?.overallActualMinutes ?? 0;
+
+    if (!predicted || !actual) return false;
+
+    return actual <= predicted * 1.1;
+  });
+
+  return Number(((onTimeTrips.length / feedbackTrips.length) * 100).toFixed(2));
+}
+
+function determineTrend(values: number[]): TrendDirection {
+  if (values.length < 2) return "stable";
+
+  const midpoint = Math.floor(values.length / 2);
+  const firstHalf = values.slice(0, midpoint);
+  const secondHalf = values.slice(midpoint);
+
+  const avg = (nums: number[]) =>
+    nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
+
+  const firstAvg = avg(firstHalf);
+  const secondAvg = avg(secondHalf);
+
+  if (secondAvg > firstAvg * 1.05) return "improving";
+  if (secondAvg < firstAvg * 0.95) return "declining";
+  return "stable";
+}
+
+function computeBasePerformanceScore(metrics: DriverAssessment["metrics"]): number {
+  let score = 100;
+
+  score -= metrics.speedingEventCount * 2;
+  score -= Math.max(0, metrics.avgDwellMinutes - 8) * 2;
+  score -= Math.max(0, 90 - metrics.onTimeRatePercent) * 0.6;
+  score -= Math.max(0, metrics.avgLegErrorMinutes - 5) * 1.5;
+  score -= Math.max(0, 85 - metrics.avgRouteAccuracyPercent) * 0.5;
+
+  return clampScore(score);
+}
+
+export async function analyzeWeeklyDriverPerformance(
+  driverId: string,
+  todaysDate: Timestamp = Timestamp.now()
+): Promise<DriverAssessment> {
+  const endDate = todaysDate.toDate();
+  endDate.setHours(23, 59, 59, 999);
+
+  const startDate = new Date(endDate);
+  startDate.setDate(startDate.getDate() - 7);
+  startDate.setHours(0, 0, 0, 0);
+
+  const tripsSnapshot = await db
+    .collection("trips")
+    .where("status", "==", "completed")
+    .where("driverId", "==", driverId)
+    .where("updatedAt", ">=", startDate.toISOString())
+    .where("updatedAt", "<=", endDate.toISOString())
+    .get();
+
+  const trips = tripsSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }));
+
+  const gpsData = await fetchGpsData(driverId, {
+    startTime: Timestamp.fromDate(startDate),
+    endTime: Timestamp.fromDate(endDate),
+  });
+
+  const speedsMph = gpsData.map((p) => p.speedMps * 2.237);
+  const avgSpeedMph =
+    speedsMph.length > 0
+      ? speedsMph.reduce((a, b) => a + b, 0) / speedsMph.length
+      : 0;
+
+  const maxSpeedMph = speedsMph.length > 0 ? Math.max(...speedsMph) : 0;
+  const speedingEventCount = speedsMph.filter((speed) => speed > 75).length;
+
+  const dwellMinutesByTrip = await Promise.all(
+  trips.map(async (trip) => {
+    const stops = await fetchTripStops(trip.id);
+    return computeDwellMinutes(stops);
+    })
+  );
+
+  const dwellMinutes = dwellMinutesByTrip.flat();
+
+  const totalDwellMinutes = dwellMinutes.reduce((a, b) => a + b, 0);
+  const avgDwellMinutes =
+    dwellMinutes.length > 0 ? totalDwellMinutes / dwellMinutes.length : 0;
+
+  const history = summarizeDriverHistory(trips);
+
+  const onTimeRatePercent = computeOnTimeRatePercent(trips);
+
+  const onTimeRatesByTrip = trips
+    .filter((t) => t.feedbackAnalysis)
+    .map((t) => {
+      const predicted = t.feedbackAnalysis?.overallPredictedMinutes ?? 0;
+      const actual = t.feedbackAnalysis?.overallActualMinutes ?? 0;
+      return predicted && actual && actual <= predicted * 1.1 ? 100 : 0;
+    });
+
+  const metrics: DriverAssessment["metrics"] = {
+    completedTrips: trips.length,
+    avgSpeedMph: Number(avgSpeedMph.toFixed(2)),
+    maxSpeedMph: Number(maxSpeedMph.toFixed(2)),
+    speedingEventCount,
+    avgDwellMinutes: Number(avgDwellMinutes.toFixed(2)),
+    totalDwellMinutes: Number(totalDwellMinutes.toFixed(2)),
+    onTimeRatePercent,
+    avgRouteAccuracyPercent: history.avgRouteAccuracyPercent,
+    avgLegErrorMinutes: history.avgLegErrorMinutes,
+  };
+
+  const baseScore = computeBasePerformanceScore(metrics);
+
+  const prompt = `You are a fleet operations analyst.
+
+Analyze this driver's weekly performance.
+
+Driver ID: ${driverId}
+Week: ${startDate.toISOString()} to ${endDate.toISOString()}
+
+Metrics:
+${JSON.stringify(metrics, null, 2)}
+
+Delay cause counts:
+${JSON.stringify(history.dominantDelayCauses, null, 2)}
+
+Trip delay reasoning:
+${JSON.stringify(history.tripDelayReasoning, null, 2)}
+
+Base performance score calculated from real metrics: ${baseScore}
+
+Return ONLY this JSON object:
+{
+  "performanceScore": <number from 1-100, close to the base score unless the evidence strongly suggests otherwise>,
+  "summary": "<2-3 sentence weekly performance summary>",
+  "trends": {
+    "speedPatterns": "<short analysis of speed behavior>",
+    "dwellTimes": "<short analysis of dwell time behavior>",
+    "onTimeRate": "improving|declining|stable"
+  },
+  "recommendations": ["<specific recommendation>", "<specific recommendation>", "<specific recommendation>"]
+}`;
+
+  const aiResult = await aiJson<{
+    performanceScore: number;
+    summary: string;
+    trends: {
+      speedPatterns: string;
+      dwellTimes: string;
+      onTimeRate: TrendDirection;
+    };
+    recommendations: string[];
+  }>(prompt, 700);
+
+  const assessment: DriverAssessment = {
+    driverId,
+    weekStart: startDate.toISOString(),
+    weekEnd: endDate.toISOString(),
+    createdAt: new Date().toISOString(),
+
+    performanceScore: clampScore(aiResult.performanceScore ?? baseScore),
+
+    metrics,
+
+    trends: {
+      speedPatterns: aiResult.trends?.speedPatterns ?? "No clear speed trend found.",
+      dwellTimes: aiResult.trends?.dwellTimes ?? "No clear dwell time trend found.",
+      onTimeRate:
+        aiResult.trends?.onTimeRate ?? determineTrend(onTimeRatesByTrip),
+    },
+
+    recommendations: Array.isArray(aiResult.recommendations)
+      ? aiResult.recommendations
+      : [],
+
+    summary: aiResult.summary ?? "",
+  };
+
+  await db.collection("driver_assessments").add(assessment);
+
+  return assessment;
 }
