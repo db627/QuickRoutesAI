@@ -1094,12 +1094,14 @@ export default function TripDetailPage() {
       ? { lat: stops[0].lat, lng: stops[0].lng }
       : DEFAULT_CENTER;
 
-  // Stop marker color helper
-  const stopPinColors = (index: number, total: number) => {
-    if (index === 0) return { bg: "#22c55e", glyph: "#fff", border: "#16a34a" }; // green
-    if (index === total - 1) return { bg: "#ef4444", glyph: "#fff", border: "#dc2626" }; // red
-    return { bg: "#3b82f6", glyph: "#fff", border: "#2563eb" }; // blue
-  };
+  // Progress tracking: find the next pending stop and ETA to it from route legs
+  const sortedForProgress = stops.slice().sort((a, b) => a.sequence - b.sequence);
+  const nextStopIdx = sortedForProgress.findIndex(s => s.status !== "completed");
+  const etaToNextStopSec = (() => {
+    if (nextStopIdx <= 0 || !trip.route?.legs?.length) return null;
+    const leg = trip.route.legs.find(l => l.toIndex === nextStopIdx);
+    return leg?.durationSeconds ?? null;
+  })();
 
   const canEdit = trip.status === "draft";
   const canCancel = trip.status === "draft" || trip.status === "assigned";
@@ -1283,17 +1285,15 @@ export default function TripDetailPage() {
               {/* Route polyline */}
               {polylinePath.length > 0 && <RoutePolyline path={polylinePath} />}
 
-              {/* Stop markers */}
-              {stops
-                .slice()
-                .sort((a, b) => a.sequence - b.sequence)
+              {/* Stop markers — completed: gray, next: pulsing orange, remaining: red */}
+              {sortedForProgress
                 .filter((stop) => stop.lat != null && stop.lng != null)
                 .map((stop, idx) => {
-                  const colors = stopPinColors(idx, stops.length);
+                  const isCompleted = stop.status === "completed";
+                  const isNext = idx === nextStopIdx;
                   return (
                     <React.Fragment key={stop.stopId}>
                       <AdvancedMarker
-                        key={stop.stopId}
                         position={{ lat: stop.lat, lng: stop.lng }}
                         title={`Stop ${idx + 1}: ${stop.address}`}
                         onClick={() =>
@@ -1302,12 +1302,21 @@ export default function TripDetailPage() {
                           )
                         }
                       >
-                        <Pin
-                          background={colors.bg}
-                          glyphColor={colors.glyph}
-                          borderColor={colors.border}
-                          glyph={String(idx + 1)}
-                        />
+                        {isNext ? (
+                          <div className="relative flex items-center justify-center">
+                            <div className="absolute h-10 w-10 rounded-full bg-orange-400 animate-ping opacity-60" />
+                            <div className="relative flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-orange-500 text-xs font-bold text-white shadow-lg">
+                              {idx + 1}
+                            </div>
+                          </div>
+                        ) : (
+                          <Pin
+                            background={isCompleted ? "#22c55e" : "#ef4444"}
+                            glyphColor="#fff"
+                            borderColor={isCompleted ? "#16a34a" : "#dc2626"}
+                            glyph={isCompleted ? "✓" : String(idx + 1)}
+                          />
+                        )}
                       </AdvancedMarker>
                       {selectedStopId === stop.stopId && (
                         <InfoWindow
@@ -1365,18 +1374,22 @@ export default function TripDetailPage() {
 
       {/* Live driver info */}
       {driverPos && (
-        <div className="flex items-center gap-6 rounded-xl border border-brand-200 bg-brand-50 px-5 py-3">
+        <div className="flex flex-wrap items-center gap-6 rounded-xl border border-brand-200 bg-brand-50 px-5 py-3">
           <div className="flex items-center gap-2">
             <div className="h-2.5 w-2.5 rounded-full bg-green-500 animate-pulse" />
             <span className="text-sm font-medium text-gray-900">Driver Live</span>
           </div>
-          <div className="flex items-center gap-4 text-sm text-gray-600">
-            <span>
-              {(driverPos.speedMps * 2.237).toFixed(0)} mph
-            </span>
-            <span>
-              {driverPos.heading.toFixed(0)}&deg; heading
-            </span>
+          <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
+            <span>{(driverPos.speedMps * 2.237).toFixed(0)} mph</span>
+            <span>{driverPos.heading.toFixed(0)}&deg; heading</span>
+            {etaToNextStopSec != null && (
+              <div className="flex items-center gap-1.5">
+                <div className="h-2 w-2 rounded-full bg-orange-400 animate-ping" />
+                <span className="text-xs font-semibold text-orange-700">
+                  ~{formatDuration(etaToNextStopSec)} to next stop
+                </span>
+              </div>
+            )}
             {driverPos.updatedAt && (
               <span className="text-xs text-gray-400">
                 Updated {new Date(driverPos.updatedAt).toLocaleTimeString()}
