@@ -6,6 +6,10 @@ import { useEffect, useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import NoOrgNotice from "@/components/NoOrgNotice";
 import NotificationBell from "@/components/NotificationBell";
+import { QuickActionsProvider, useQuickActions } from "@/lib/quick-actions-context";
+import QuickActionsToolbar from "@/components/QuickActionsToolbar";
+import TripForm from "@/components/TripForm";
+import MultiDriverOptimizer from "@/components/MultiDriverOptimizer";
 
 const HamburgerIcon = () => (
   <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -13,11 +17,12 @@ const HamburgerIcon = () => (
   </svg>
 );
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const { user, role, orgId, loading, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { showTripForm, closeNewTrip, showMultiOptimizer, closeMultiOptimizer } = useQuickActions();
 
   useEffect(() => {
     if (loading) return;
@@ -73,6 +78,41 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         />
         <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
       </div>
+
+      {/* Floating quick actions toolbar — dispatcher/admin only */}
+      <QuickActionsToolbar />
+
+      {/* New Trip modal — triggered from toolbar or any page */}
+      {showTripForm && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-6 pt-16"
+          onClick={(e) => { if (e.target === e.currentTarget) closeNewTrip(); }}
+        >
+          <div className="w-full max-w-2xl">
+            <TripForm onCreated={closeNewTrip} />
+          </div>
+        </div>
+      )}
+
+      {/* Multi-Driver Optimizer modal — triggered from toolbar or dashboard */}
+      {showMultiOptimizer && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-6 pt-16"
+          onClick={(e) => { if (e.target === e.currentTarget) closeMultiOptimizer(); }}
+        >
+          <div className="w-full max-w-3xl">
+            <MultiDriverOptimizer onClose={closeMultiOptimizer} />
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <QuickActionsProvider>
+      <DashboardLayoutInner>{children}</DashboardLayoutInner>
+    </QuickActionsProvider>
   );
 }
