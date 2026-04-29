@@ -8,8 +8,17 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
  * total driving distance/time while respecting delivery time windows.
  * The first stop (origin) stays fixed; all other stops are reordered.
  */
-export async function optimizeStopOrder(stops: TripStop[], weatherInfo?: any): Promise<{ stops: TripStop[]; reasoning: string }> {
-  if (stops.length <= 2) return { stops, reasoning: "" };
+export interface OptimizerViolationFlag {
+  stopIndex: number; // index into the reorderable stops array (origin excluded)
+  window: string;    // "HH:mm - HH:mm"
+  issue: "early" | "late";
+}
+
+export async function optimizeStopOrder(
+  stops: TripStop[],
+  weatherInfo?: any,
+): Promise<{ stops: TripStop[]; reasoning: string; violations: OptimizerViolationFlag[] }> {
+  if (stops.length <= 2) return { stops, reasoning: "", violations: [] };
 
   const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
   const origin = sorted[0];
@@ -32,9 +41,16 @@ export async function optimizeStopOrder(stops: TripStop[], weatherInfo?: any): P
     weatherDataStr = weatherInfo.stops.map((w: any) => `Stop ${w.address} -- Current: ${w.current.main}, Temperature: ${w.current.temperatureF}°F, Precipitation Chance: ${w.current.precipitationChance}%, Visibility: ${w.current.visibilityMiles} miles, Wind Speed: ${w.current.windSpeedMph} mph, -- Forecast: ${w.forecast.map((f: any) => `${new Date(f.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} Time: ${f.main}, Temperature: ${f.temperatureF}°F, Wind Speed: ${f.windSpeedMph} mph, Precipitation Chance: ${f.precipitationChance}%`).join("; ")}`).join("\n\n");
   }
   
+  const timeWindowSection = hasTimeWindows
+    ? `CRITICAL TIME WINDOW CONSTRAINTS:
+Stops marked [DELIVER BETWEEN ...] MUST be visited within that window. Prioritize these stops over distance minimization — sequence them so time-sensitive deliveries arrive on time. Only flag a violation if the constraint is physically impossible to satisfy given travel distances.
+
+`
+    : "";
+
   const prompt = `You are a route optimization engine. Given a starting point and a list of delivery stops, return the optimal order to visit ALL stops.
 
-${hasTimeWindows ? "IMPORTANT: Some stops have delivery time windows. You MUST respect these constraints — visit those stops within their time windows. Balance time constraints with minimizing total driving distance.\nIf weather information is provided, please consider it in your reasoning when deciding the order.\n" : ""}Starting point (fixed, always first):
+${timeWindowSection}${hasTimeWindows && weatherInfo ? "If weather information is provided, consider it in your reasoning.\n\n" : ""}Starting point (fixed, always first):
   "${origin.address}" (lat: ${origin.lat}, lng: ${origin.lng})
 
 Stops to reorder:
@@ -43,11 +59,12 @@ ${stopList}
 Weather information for stops (if available):
 ${weatherDataStr}
 
-Return ONLY a JSON object with two keys:
+Return ONLY a JSON object with THREE keys:
 - "order": array of the stop indices in optimal visiting order (e.g. [2, 0, 4, 1, 3])
-- "reasoning": one or two sentences explaining why this order minimizes travel time/distance
+- "reasoning": one or two sentences explaining why this order minimizes travel time/distance while respecting time windows
+- "violations": array of stops that CANNOT meet their time window given this order — each entry must be { "stopIndex": <number>, "window": "<start>-<end>", "issue": "early" | "late" }. Use an empty array if there are no violations.
 
-Example: {"order": [2, 0, 4, 1, 3], "reasoning": "Stops 2 and 0 cluster in the north end, reducing backtracking before heading south."}
+Example: {"order": [2, 0, 4, 1, 3], "reasoning": "Stops 2 and 0 cluster in the north end.", "violations": [{"stopIndex": 3, "window": "09:00-10:00", "issue": "late"}]}
 No other text — just the JSON object.`;
 
   const response = await client.chat.completions.create({
@@ -62,14 +79,14 @@ No other text — just the JSON object.`;
     throw new Error("Empty response from OpenAI");
   }
 
-  let parsed: { order: number[]; reasoning: string };
+  let parsed: { order: number[]; reasoning: string; violations?: OptimizerViolationFlag[] };
   try {
     parsed = JSON.parse(content);
   } catch {
     throw new Error(`Failed to parse OpenAI response: ${content}`);
   }
 
-  const { order: indices, reasoning } = parsed;
+  const { order: indices, reasoning, violations = [] } = parsed;
 
   if (!Array.isArray(indices) || indices.length !== rest.length) {
     throw new Error(`Invalid indices from OpenAI: expected ${rest.length} items, got ${JSON.stringify(indices)}`);
@@ -87,5 +104,5 @@ No other text — just the JSON object.`;
     optimized.push({ ...rest[idx], sequence: seq + 1 });
   });
 
-  return { stops: optimized, reasoning: reasoning ?? "" };
+  return { stops: optimized, reasoning: reasoning ?? "", violations: Array.isArray(violations) ? violations : [] };
 }
