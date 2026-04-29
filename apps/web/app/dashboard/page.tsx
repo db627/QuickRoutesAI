@@ -69,7 +69,7 @@ export default function DashboardPage() {
       <StatsCards />
 
       {/* Live driver map */}
-      <div className="rounded-xl border border-gray-200 bg-white p-1">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         <DriverMap onSelectDriver={setSelectedDriverId} />
       </div>
 
