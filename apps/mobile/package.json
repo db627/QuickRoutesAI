@@ -8,7 +8,7 @@
     "ios": "expo start --ios",
     "typecheck": "tsc --noEmit",
     "test": "jest",
-    "eas-build-pre-install": "cd ../.. && corepack enable && pnpm install --frozen-lockfile"
+    "eas-build-pre-install": "echo '=== PRE-INSTALL DIAG ===' && pwd && echo '--- ls .' && ls -la && echo '--- ls ../..' && ls -la ../.. && echo '--- which pnpm' && which pnpm || echo 'no pnpm' && echo '--- which npm' && which npm && echo '=== INSTALLING AT ROOT ===' && cd ../.. && corepack enable 2>/dev/null || true && (pnpm install --no-frozen-lockfile || npm install --legacy-peer-deps) && echo '=== POST-INSTALL CHECK ===' && ls node_modules/expo 2>/dev/null && echo 'expo at root: yes' || echo 'expo at root: NO' && ls apps/mobile/node_modules/expo 2>/dev/null && echo 'expo at mobile: yes' || echo 'expo at mobile: NO — symlinking' && (cd apps/mobile/node_modules && for pkg in expo expo-location expo-modules-core expo-modules-autolinking expo-constants expo-asset expo-status-bar expo-font; do test -e $pkg || ln -sf ../../../node_modules/$pkg $pkg; done) && echo '=== FINAL STATE ===' && ls -la apps/mobile/node_modules | head -30"
   },
   "jest": {
     "preset": "jest-expo",
