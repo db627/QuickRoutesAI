@@ -19,6 +19,13 @@ try {
 
 const config = getDefaultConfig(projectRoot);
 
+// Disable Metro's package.json "exports" resolution. Firebase 10's `@firebase/auth`
+// package uses the legacy `react-native` field (not `exports`) to ship the
+// React-Native-specific build that registers the auth component. With exports
+// resolution on (Expo 54 default), Metro picks the browser build and the
+// `Component auth has not been registered yet` error fires at startup.
+config.resolver.unstable_enablePackageExports = false;
+
 // Watch the monorepo root for shared package changes
 config.watchFolders = [monorepoRoot];
 // Let Metro resolve packages from the monorepo root node_modules
