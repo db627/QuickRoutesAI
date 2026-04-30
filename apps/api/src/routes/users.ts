@@ -68,8 +68,67 @@ router.get(
 );
 
 /**
- * PATCH /users/:id — update a user's role and/or status.
+ * GET /users/unassigned — list users that are not linked to any organization.
+ *
+ * Admin-only. Deliberately does NOT use `requireOrg` on the *target* lookup
+ * (the caller must still have an org via `requireRole("admin")` + their own
+ * profile, but the *result set* is users WITHOUT an org). Filters out
+ * deactivated accounts. Capped at 100.
+ *
+ * Used by the admin dashboard "Unassigned users" section to claim individual
+ * drivers / dispatchers into the admin's org.
+ */
+router.get("/unassigned", requireRole("admin"), async (req, res, next) => {
+  try {
+    // Try the indexed query first; fall back to a full scan if `orgId == null`
+    // can't be queried (older Firestore versions / emulator quirks).
+    let docs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    try {
+      const snap = await db
+        .collection("users")
+        .where("orgId", "==", null)
+        .limit(100)
+        .get();
+      docs = snap.docs;
+    } catch {
+      const snap = await db.collection("users").limit(500).get();
+      docs = snap.docs.filter((d) => {
+        const data = d.data();
+        return data.orgId === null || data.orgId === undefined;
+      });
+    }
+
+    const data = docs
+      .map((d) => ({ uid: d.id, ...d.data() }))
+      .filter((u: any) => u.status !== "deactivated")
+      .slice(0, 100);
+
+    res.json({ data });
+  } catch (err) {
+    return next(
+      err instanceof AppError
+        ? err
+        : new AppError(ErrorCode.INTERNAL_ERROR, 500, "Failed to fetch unassigned users"),
+    );
+  }
+});
+
+/**
+ * PATCH /users/:id — update a user's role, status, and/or org membership.
+ *
  * Admin only. Admins cannot deactivate their own account.
+ *
+ * orgId semantics:
+ *   - `orgId: <admin's orgId>` — claim an unlinked user OR no-op if already
+ *     in this org. 403 if the target already belongs to a *different* org
+ *     (no cross-org poaching).
+ *   - `orgId: null` — remove a user from the admin's org. The target MUST
+ *     currently be in the admin's org.
+ *   - Setting orgId to any other org's id is rejected (admins can only
+ *     assign to their *own* org).
+ *
+ * When the target is a driver, the matching drivers/{uid} doc gets the
+ * same orgId stamped on it (consistent with POST /drivers/claim-unlinked).
  */
 router.patch(
   "/:id",
@@ -78,7 +137,29 @@ router.patch(
   validate(updateUserSchema),
   async (req, res, next) => {
     const { id } = req.params;
-    const { role, status } = req.body;
+    const { role, status, orgId: requestedOrgId } = req.body as {
+      role?: string;
+      status?: string;
+      orgId?: string | null;
+    };
+    const adminOrgId = req.orgId!;
+    const orgIdProvided = Object.prototype.hasOwnProperty.call(req.body, "orgId");
+
+    // Admins can only set orgId to their own org or null. Block attempts to
+    // stamp some other org's id onto a user.
+    if (
+      orgIdProvided &&
+      requestedOrgId !== null &&
+      requestedOrgId !== adminOrgId
+    ) {
+      return next(
+        new AppError(
+          ErrorCode.FORBIDDEN,
+          403,
+          "You can only assign users to your own organization",
+        ),
+      );
+    }
 
     // Prevent admins from deactivating themselves
     if (id === req.uid && status === "deactivated") {
@@ -97,16 +178,68 @@ router.patch(
       }
 
       const data = userDoc.data();
-      try {
-        assertUserInOrg(data, req.orgId);
-      } catch (err) {
-        return next(err);
+      const targetCurrentOrgId: string | null | undefined = data?.orgId ?? null;
+
+      // Org membership changes have their own auth rules — handle them BEFORE
+      // the generic same-org assertion (which would 403 unlinked users).
+      if (orgIdProvided) {
+        if (requestedOrgId === null) {
+          // Removing from org: target must currently be in admin's org.
+          if (targetCurrentOrgId !== adminOrgId) {
+            return next(
+              new AppError(
+                ErrorCode.FORBIDDEN,
+                403,
+                "User does not belong to your organization",
+              ),
+            );
+          }
+        } else {
+          // Adding to admin's org: target must be unlinked OR already here.
+          if (
+            targetCurrentOrgId !== null &&
+            targetCurrentOrgId !== undefined &&
+            targetCurrentOrgId !== adminOrgId
+          ) {
+            return next(
+              new AppError(
+                ErrorCode.FORBIDDEN,
+                403,
+                "User already belongs to another organization",
+              ),
+            );
+          }
+        }
+      } else {
+        // Plain role/status update: target must be in admin's org.
+        try {
+          assertUserInOrg(data, adminOrgId);
+        } catch (err) {
+          return next(err);
+        }
       }
-      const updates: Record<string, string> = { updatedAt: new Date().toISOString() };
+
+      const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
       if (role !== undefined) updates.role = role;
       if (status !== undefined) updates.status = status;
+      if (orgIdProvided) updates.orgId = requestedOrgId;
 
       await userRef.update(updates);
+
+      // Mirror orgId onto matching drivers/{uid} doc when the target is a
+      // driver (consistent with POST /drivers/claim-unlinked).
+      if (orgIdProvided) {
+        const effectiveRole = role ?? data?.role;
+        if (effectiveRole === "driver") {
+          await db
+            .collection("drivers")
+            .doc(id)
+            .set(
+              { orgId: requestedOrgId, updatedAt: new Date().toISOString() },
+              { merge: true },
+            );
+        }
+      }
 
       // Sync Firebase Auth disabled state when status changes
       if (status !== undefined) {
@@ -115,7 +248,15 @@ router.patch(
 
       await db.collection("events").add({
         createdAt: new Date().toISOString(),
-        payload: { from: { status: data?.status ?? "active", role: data?.role ?? "driver" }, to: updates, userId: id },
+        payload: {
+          from: {
+            status: data?.status ?? "active",
+            role: data?.role ?? "driver",
+            orgId: targetCurrentOrgId,
+          },
+          to: updates,
+          userId: id,
+        },
         type: "user_updated",
         uid: req.uid,
       });

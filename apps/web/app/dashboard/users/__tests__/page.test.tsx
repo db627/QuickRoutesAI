@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { onSnapshot } from "firebase/firestore";
 import UsersPage from "../page";
+import { ToastProvider } from "@/lib/toast-context";
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,8 @@ jest.mock("@/lib/auth-context", () => ({
   useAuth: () => mockUseAuth(),
 }));
 
+const ADMIN_ORG = "org-test";
+
 // firebase/firestore: onSnapshot calls callback synchronously so the table
 // renders immediately without needing waitFor.
 const MOCK_USERS = [
@@ -27,6 +30,7 @@ const MOCK_USERS = [
     role: "admin" as const,
     status: "active" as const,
     createdAt: "2024-01-15T00:00:00.000Z",
+    orgId: ADMIN_ORG,
   },
   {
     uid: "user-2",
@@ -35,6 +39,7 @@ const MOCK_USERS = [
     role: "dispatcher" as const,
     status: "active" as const,
     createdAt: "2024-02-10T00:00:00.000Z",
+    orgId: ADMIN_ORG,
   },
   {
     uid: "user-3",
@@ -43,6 +48,7 @@ const MOCK_USERS = [
     role: "driver" as const,
     status: "deactivated" as const,
     createdAt: "2024-03-01T00:00:00.000Z",
+    orgId: ADMIN_ORG,
   },
 ];
 
@@ -58,6 +64,7 @@ jest.mock("firebase/firestore", () => ({
           role: u.role,
           status: u.status,
           createdAt: u.createdAt,
+          orgId: u.orgId,
         }),
       })),
     });
@@ -71,13 +78,28 @@ jest.mock("@/lib/firebase", () => ({
 }));
 
 jest.mock("@/lib/api", () => ({
-  apiFetch: jest.fn(),
+  // Default: the unassigned-users fetch returns an empty list. Individual
+  // tests can override per call if they need richer behavior.
+  apiFetch: jest.fn().mockResolvedValue({ data: [] }),
 }));
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function setupAdmin(uid = "user-1") {
-  mockUseAuth.mockReturnValue({ user: { uid }, role: "admin", loading: false });
+  mockUseAuth.mockReturnValue({
+    user: { uid },
+    role: "admin",
+    orgId: ADMIN_ORG,
+    loading: false,
+  });
+}
+
+function renderPage() {
+  return render(
+    <ToastProvider>
+      <UsersPage />
+    </ToastProvider>,
+  );
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -88,19 +110,19 @@ describe("UsersPage", () => {
   describe("role gate redirect", () => {
     it("redirects a dispatcher to /dashboard", () => {
       mockUseAuth.mockReturnValue({ user: { uid: "u1" }, role: "dispatcher", loading: false });
-      render(<UsersPage />);
+      renderPage();
       expect(mockReplace).toHaveBeenCalledWith("/dashboard");
     });
 
     it("redirects a driver to /dashboard", () => {
       mockUseAuth.mockReturnValue({ user: { uid: "u1" }, role: "driver", loading: false });
-      render(<UsersPage />);
+      renderPage();
       expect(mockReplace).toHaveBeenCalledWith("/dashboard");
     });
 
     it("does not redirect an admin", () => {
       setupAdmin();
-      render(<UsersPage />);
+      renderPage();
       expect(mockReplace).not.toHaveBeenCalled();
     });
   });
@@ -114,13 +136,13 @@ describe("UsersPage", () => {
       // so dataLoading stays true and the skeleton renders.
       (onSnapshot as jest.Mock).mockImplementationOnce(() => jest.fn());
 
-      const { container } = render(<UsersPage />);
+      const { container } = renderPage();
       expect(container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
     });
 
     it("renders a row for every user", () => {
       setupAdmin();
-      render(<UsersPage />);
+      renderPage();
       expect(screen.getByText("Alice Smith")).toBeInTheDocument();
       expect(screen.getByText("Bob Jones")).toBeInTheDocument();
       expect(screen.getByText("Carol Williams")).toBeInTheDocument();
@@ -128,7 +150,7 @@ describe("UsersPage", () => {
 
     it("renders email addresses", () => {
       setupAdmin();
-      render(<UsersPage />);
+      renderPage();
       expect(screen.getByText("alice@example.com")).toBeInTheDocument();
       expect(screen.getByText("bob@example.com")).toBeInTheDocument();
       expect(screen.getByText("carol@example.com")).toBeInTheDocument();
@@ -136,7 +158,7 @@ describe("UsersPage", () => {
 
     it("renders a colored role badge in each row", () => {
       setupAdmin();
-      render(<UsersPage />);
+      renderPage();
 
       const aliceRow = screen.getByText("Alice Smith").closest("tr")!;
       const bobRow = screen.getByText("Bob Jones").closest("tr")!;
@@ -150,7 +172,7 @@ describe("UsersPage", () => {
 
     it("renders Active and Deactivated status badges correctly", () => {
       setupAdmin();
-      render(<UsersPage />);
+      renderPage();
 
       const activeStatuses = screen.getAllByText("Active");
       expect(activeStatuses).toHaveLength(2); // Alice + Bob
@@ -160,7 +182,7 @@ describe("UsersPage", () => {
 
     it("renders the created date for each user", () => {
       setupAdmin();
-      render(<UsersPage />);
+      renderPage();
       // Dates are formatted with toLocaleDateString — just assert they're non-empty
       const createdCells = document
         .querySelectorAll("td:nth-child(5)");
@@ -171,13 +193,13 @@ describe("UsersPage", () => {
 
     it("marks the logged-in admin's row with a 'you' badge", () => {
       setupAdmin("user-1"); // user-1 is Alice
-      render(<UsersPage />);
+      renderPage();
       expect(screen.getByText("you")).toBeInTheDocument();
     });
 
     it("disables the role dropdown on the logged-in user's own row", () => {
       setupAdmin("user-1");
-      render(<UsersPage />);
+      renderPage();
       const aliceRow = screen.getByText("Alice Smith").closest("tr")!;
       const roleSelect = aliceRow.querySelector("select");
       expect(roleSelect).toBeDisabled();
@@ -185,7 +207,7 @@ describe("UsersPage", () => {
 
     it("disables the deactivate button on the logged-in user's own row", () => {
       setupAdmin("user-1");
-      render(<UsersPage />);
+      renderPage();
       const aliceRow = screen.getByText("Alice Smith").closest("tr")!;
       const deactivateBtn = aliceRow.querySelector("button");
       expect(deactivateBtn).toBeDisabled();
@@ -193,7 +215,7 @@ describe("UsersPage", () => {
 
     it("shows Reactivate instead of Deactivate for a deactivated user", () => {
       setupAdmin();
-      render(<UsersPage />);
+      renderPage();
       const carolRow = screen.getByText("Carol Williams").closest("tr")!;
       expect(carolRow).toHaveTextContent("Reactivate");
     });
@@ -204,7 +226,7 @@ describe("UsersPage", () => {
   describe("search filtering", () => {
     it("filters rows by name", async () => {
       setupAdmin();
-      render(<UsersPage />);
+      renderPage();
 
       await userEvent.type(screen.getByPlaceholderText("Search by name or email..."), "Alice");
 
@@ -215,7 +237,7 @@ describe("UsersPage", () => {
 
     it("filters rows by email", async () => {
       setupAdmin();
-      render(<UsersPage />);
+      renderPage();
 
       await userEvent.type(screen.getByPlaceholderText("Search by name or email..."), "bob@");
 
@@ -226,7 +248,7 @@ describe("UsersPage", () => {
 
     it("is case-insensitive", async () => {
       setupAdmin();
-      render(<UsersPage />);
+      renderPage();
 
       await userEvent.type(screen.getByPlaceholderText("Search by name or email..."), "CAROL");
 
@@ -236,7 +258,7 @@ describe("UsersPage", () => {
 
     it("shows an empty state when no users match the search", async () => {
       setupAdmin();
-      render(<UsersPage />);
+      renderPage();
 
       await userEvent.type(
         screen.getByPlaceholderText("Search by name or email..."),

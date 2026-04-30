@@ -96,6 +96,10 @@ export type LoginInput = z.infer<typeof loginSchema>;
 export const updateUserSchema = z.object({
   role: userRoleSchema.optional(),
   status: z.enum(["active", "deactivated"]).optional(),
+  // Admin can assign a user to their own organization (`orgId: <admin's orgId>`)
+  // or remove a user from the org (`orgId: null`). The route enforces that
+  // admins cannot stamp some other org's id onto a user.
+  orgId: z.union([z.string().min(1), z.null()]).optional(),
 });
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 
