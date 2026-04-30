@@ -547,7 +547,12 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), requireOrg, tripSt
 
     res.json({ ok: true, route: routeResult, stops: optimizedStops });
   } catch (err) {
-    next(err);
+    console.error("[POST /trips/:id/route] failed:", err instanceof Error ? err.stack : err);
+    const message = err instanceof Error ? err.message : "Compute route failed";
+    return res.status(500).json({
+      error: ErrorCode.DIRECTIONS_FAILED,
+      message: `Compute route failed: ${message}`,
+    });
   }
 });
 
