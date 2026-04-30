@@ -1,6 +1,7 @@
 {
   "name": "quickroutesai",
   "private": true,
+  "packageManager": "pnpm@10.33.2",
   "scripts": {
     "dev": "concurrently \"pnpm --filter api dev\" \"pnpm --filter web dev\"",
     "lint": "eslint . --ext .ts,.tsx",
