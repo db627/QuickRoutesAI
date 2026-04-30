@@ -15,6 +15,7 @@ import aiRoutes from "./routes/ai";
 import insightsRoutes from "./routes/insights";
 import quoteRoutes from "./routes/quote";
 import orgRoutes from "./routes/orgs";
+import inviteRoutes from "./routes/invites";
 import telemetryRoutes from "./routes/telemetry";
 import { errorHandler } from "./middleware/errorHandler";
 const app = express();
@@ -28,6 +29,7 @@ app.use(globalLimiter);
 // Public routes
 app.use("/health", healthRoutes);
 app.use("/auth", authRoutes); // login & signup are public; setup applies its own middleware
+app.use("/invites", inviteRoutes); // GET /invites/lookup/:token is public; other endpoints apply auth inside the router
 app.use("/quote", quoteLimiter, quoteRoutes);
 
 // Protected routes (require Firebase auth)

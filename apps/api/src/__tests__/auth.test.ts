@@ -295,6 +295,184 @@ describe("POST /auth/signup", () => {
   });
 });
 
+describe("POST /auth/signup with inviteToken", () => {
+  /**
+   * Wires up Firestore for invite-driven signup. The first invite read
+   * (outside the transaction) and the read inside `runTransaction` both
+   * resolve to whatever `invite` we pass in.
+   */
+  function mockInviteFlow(opts: {
+    invite: { email: string; role: string; orgId: string; status: string } | null;
+  }) {
+    const userSet = jest.fn();
+    const driverSet = jest.fn();
+    const inviteUpdate = jest.fn();
+
+    const inviteSnap = {
+      exists: opts.invite !== null,
+      data: () => opts.invite,
+    };
+
+    db.runTransaction = jest.fn(async (fn: any) => {
+      return fn({
+        get: jest.fn().mockResolvedValue(inviteSnap),
+        set: (ref: any, value: any) => {
+          if (ref?.__col === "users") userSet(value);
+          else if (ref?.__col === "drivers") driverSet(value);
+        },
+        update: (_ref: any, value: any) => inviteUpdate(value),
+      });
+    });
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "invites") {
+        return {
+          doc: (_id: string) => ({
+            __col: "invites",
+            get: jest.fn().mockResolvedValue(inviteSnap),
+          }),
+        };
+      }
+      if (col === "users") {
+        return {
+          doc: (_id: string) => ({
+            __col: "users",
+            set: jest.fn(),
+            get: jest.fn().mockResolvedValue({ exists: false }),
+          }),
+        };
+      }
+      if (col === "drivers") {
+        return {
+          doc: (_id: string) => ({
+            __col: "drivers",
+            set: jest.fn(),
+            get: jest.fn().mockResolvedValue({ exists: false }),
+          }),
+        };
+      }
+      return {
+        doc: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({ exists: false }),
+        set: jest.fn(),
+      };
+    });
+
+    return { userSet, driverSet, inviteUpdate };
+  }
+
+  it("uses the invite's orgId/role and marks the invite used", async () => {
+    const uid = "invitee-uid";
+    auth.createUser.mockResolvedValue({ uid, email: "invited@example.com" });
+
+    const { userSet, driverSet, inviteUpdate } = mockInviteFlow({
+      invite: {
+        email: "invited@example.com",
+        role: "driver",
+        orgId: "org-from-invite",
+        status: "pending",
+      },
+    });
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        idToken: "id-tok",
+        refreshToken: "refresh",
+        expiresIn: "3600",
+        localId: uid,
+        email: "invited@example.com",
+      }),
+    });
+
+    const res = await request(app).post("/auth/signup").send({
+      email: "invited@example.com",
+      password: "securePassword123",
+      name: "Invited User",
+      // Body says admin/no orgCode — invite must override these.
+      role: "admin",
+      inviteToken: "tok-xyz",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.user.role).toBe("driver"); // from invite, not body
+    expect(userSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "org-from-invite",
+        role: "driver",
+      }),
+    );
+    expect(driverSet).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-from-invite" }),
+    );
+    expect(inviteUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "used",
+        usedByUid: uid,
+      }),
+    );
+  });
+
+  it("rejects when invite email does not match body email", async () => {
+    mockInviteFlow({
+      invite: {
+        email: "real-invitee@example.com",
+        role: "driver",
+        orgId: "org-from-invite",
+        status: "pending",
+      },
+    });
+
+    const res = await request(app).post("/auth/signup").send({
+      email: "spoofed@example.com",
+      password: "securePassword123",
+      name: "Spoof User",
+      inviteToken: "tok-xyz",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Email does not match/i);
+    expect(auth.createUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects when invite is already used", async () => {
+    mockInviteFlow({
+      invite: {
+        email: "invited@example.com",
+        role: "driver",
+        orgId: "org-from-invite",
+        status: "used",
+      },
+    });
+
+    const res = await request(app).post("/auth/signup").send({
+      email: "invited@example.com",
+      password: "securePassword123",
+      name: "Invited User",
+      inviteToken: "tok-xyz",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Invalid or expired invite/i);
+    expect(auth.createUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects when invite token does not exist", async () => {
+    mockInviteFlow({ invite: null });
+
+    const res = await request(app).post("/auth/signup").send({
+      email: "invited@example.com",
+      password: "securePassword123",
+      name: "Invited User",
+      inviteToken: "tok-bogus",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Invalid or expired invite/i);
+    expect(auth.createUser).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /auth/login", () => {
   it("returns a token for valid credentials", async () => {
     const uid = "existing-user-456";

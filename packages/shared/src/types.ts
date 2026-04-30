@@ -234,6 +234,31 @@ export interface Org {
   updatedAt: string;
 }
 
+// ── Invites ──
+export type InviteRole = "driver" | "dispatcher";
+export type InviteStatus = "pending" | "used" | "revoked";
+
+export interface Invite {
+  id: string; // == doc id == the token shown in URL
+  orgId: string;
+  email: string; // lowercased on write
+  role: InviteRole;
+  status: InviteStatus;
+  createdBy: string; // admin uid
+  createdAt: string; // ISO 8601
+  usedAt?: string; // ISO 8601 when accepted
+  usedByUid?: string; // uid that accepted
+}
+
+// Public lookup payload: a deliberately minimal projection, returned by the
+// unauthenticated GET /invites/lookup/:token endpoint.
+export interface InviteLookup {
+  email: string;
+  role: InviteRole;
+  orgId: string;
+  status: "pending";
+}
+
 // ── Wizard ──
 export interface WizardProgress {
   currentStep: 1 | 2 | 3;

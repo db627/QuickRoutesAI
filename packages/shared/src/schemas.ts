@@ -83,8 +83,19 @@ export const signupSchema = z.object({
   name: z.string().min(1).max(100),
   role: userRoleSchema.default("driver"),
   orgCode: z.string().min(1).max(128).optional(),
+  // When present, the API will look up the invite, ignore role/orgCode in this
+  // body, and use the invite's stamped values instead. See POST /auth/signup.
+  inviteToken: z.string().min(1).max(128).optional(),
 });
 export type SignupInput = z.infer<typeof signupSchema>;
+
+// ── Invites ──
+// Admin-generated, per-email invite links. Token is the Firestore doc id.
+export const createInviteSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(["driver", "dispatcher"]),
+});
+export type CreateInviteInput = z.infer<typeof createInviteSchema>;
 
 export const loginSchema = z.object({
   email: z.string().email(),

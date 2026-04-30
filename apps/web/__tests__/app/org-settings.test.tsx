@@ -57,8 +57,46 @@ function setAuth(overrides: Partial<ReturnType<typeof useAuth>> = {}) {
   } as any);
 }
 
+/**
+ * Build a path-routing apiFetch mock. The OrganizationSettingsPage now hosts
+ * an InviteTeamSection that fetches `/invites` on mount, so the previous
+ * sequential `mockResolvedValueOnce` chain is racy (its position depends on
+ * which useEffect resolves first). Routing by URL is order-independent.
+ */
+function setupApiMock(handlers: {
+  org?: any | (() => any);
+  patch?: any | ((body: string) => any);
+  invitesList?: any[];
+} = {}) {
+  let invitesList = handlers.invitesList ?? [];
+  mockedApiFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path === "/invites" && (!init || init.method !== "POST")) {
+      return { data: invitesList } as any;
+    }
+    if (path.startsWith("/invites") && init?.method === "POST") {
+      return undefined as any;
+    }
+    if (path.startsWith("/invites/") && init?.method === "DELETE") {
+      return undefined as any;
+    }
+    if (path === "/orgs/org-1") {
+      if (init?.method === "PATCH") {
+        if (typeof handlers.patch === "function") {
+          return (handlers.patch as any)(init.body);
+        }
+        if (handlers.patch !== undefined) return handlers.patch;
+        throw new Error("PATCH not configured");
+      }
+      if (typeof handlers.org === "function") return handlers.org();
+      return handlers.org;
+    }
+    return undefined as any;
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
+  setupApiMock();
 });
 
 describe("OrganizationSettingsPage", () => {
@@ -78,7 +116,7 @@ describe("OrganizationSettingsPage", () => {
 
   it("loads and displays org data for admin", async () => {
     setAuth();
-    mockedApiFetch.mockResolvedValueOnce(sampleOrg);
+    setupApiMock({ org: sampleOrg });
 
     render(<OrganizationSettingsPage />);
 
@@ -92,9 +130,10 @@ describe("OrganizationSettingsPage", () => {
 
   it("saves changes via PATCH and shows success toast", async () => {
     setAuth();
-    mockedApiFetch
-      .mockResolvedValueOnce(sampleOrg) // initial GET
-      .mockResolvedValueOnce({ ...sampleOrg, name: "Acme Logistics" }); // PATCH
+    setupApiMock({
+      org: sampleOrg,
+      patch: { ...sampleOrg, name: "Acme Logistics" },
+    });
 
     render(<OrganizationSettingsPage />);
 
@@ -122,9 +161,12 @@ describe("OrganizationSettingsPage", () => {
 
   it("shows error toast when save fails", async () => {
     setAuth();
-    mockedApiFetch
-      .mockResolvedValueOnce(sampleOrg)
-      .mockRejectedValueOnce(new Error("Network down"));
+    setupApiMock({
+      org: sampleOrg,
+      patch: () => {
+        throw new Error("Network down");
+      },
+    });
 
     render(<OrganizationSettingsPage />);
 

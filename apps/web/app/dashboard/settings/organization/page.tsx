@@ -10,6 +10,7 @@ import {
   type OrgBasicsInput,
   type OrgAddressInput,
   type UpdateOrgInput,
+  type Invite,
 } from "@quickroutesai/shared";
 
 const INDUSTRY_OPTIONS: { value: OrgBasicsInput["industry"]; label: string }[] = [
@@ -245,6 +246,9 @@ export default function OrganizationSettingsPage() {
         </div>
       </section>
 
+      <InviteTeamSection />
+
+
       <section className="space-y-4 rounded-xl border border-gray-200 bg-white p-6">
         <h2 className="text-base font-semibold text-gray-900">Organization details</h2>
 
@@ -341,3 +345,195 @@ export default function OrganizationSettingsPage() {
     </div>
   );
 }
+
+/**
+ * "Invite team members" panel — generates per-email invite links.
+ *
+ * Each invite is a Firestore doc whose id IS the token, e.g. the link
+ * `<APP_URL>/signup?invite=<token>` resolves the token via
+ * `GET /invites/lookup/:token` from the public signup page.
+ *
+ * The list lives here (rather than in a parent) because it's tightly coupled
+ * to the form's submit handler — keeping them together avoids prop drilling
+ * a refresh callback.
+ */
+function InviteTeamSection() {
+  const { toast } = useToast();
+  const [invites, setInvites] = useState<Invite[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<"driver" | "dispatcher">("driver");
+  const [submitting, setSubmitting] = useState(false);
+  const [origin, setOrigin] = useState("");
+
+  useEffect(() => {
+    // window is undefined in SSR; capture origin only on the client.
+    if (typeof window !== "undefined") {
+      setOrigin(window.location.origin);
+    }
+  }, []);
+
+  const refresh = async () => {
+    try {
+      const res = await apiFetch<{ data: Invite[] }>("/invites");
+      setInvites(Array.isArray(res?.data) ? res.data : []);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to load invites");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setSubmitting(true);
+    try {
+      await apiFetch<Invite>("/invites", {
+        method: "POST",
+        body: JSON.stringify({ email: email.trim(), role }),
+      });
+      toast.success("Invite created");
+      setEmail("");
+      setRole("driver");
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create invite");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCopyLink = async (token: string) => {
+    const link = `${origin}/signup?invite=${token}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast.success("Invite link copied");
+    } catch {
+      toast.error("Failed to copy link");
+    }
+  };
+
+  const handleRevoke = async (id: string) => {
+    try {
+      await apiFetch<void>(`/invites/${id}`, { method: "DELETE" });
+      toast.success("Invite revoked");
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to revoke invite");
+    }
+  };
+
+  return (
+    <section
+      aria-labelledby="invite-team-heading"
+      className="space-y-4 rounded-xl border border-gray-200 bg-white p-6"
+    >
+      <div>
+        <h2 id="invite-team-heading" className="text-base font-semibold text-gray-900">
+          Invite team members
+        </h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Generate a one-time invite link per email. Share the link via Slack,
+          email, or any other channel — the invitee&apos;s role and organization
+          are pre-filled when they open it.
+        </p>
+      </div>
+
+      <form onSubmit={handleSend} className="grid gap-3 sm:grid-cols-[1fr_auto_auto]">
+        <input
+          aria-label="Invite email"
+          type="email"
+          required
+          placeholder="teammate@company.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+        />
+        <select
+          aria-label="Invite role"
+          value={role}
+          onChange={(e) => setRole(e.target.value as "driver" | "dispatcher")}
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+        >
+          <option value="driver">Driver</option>
+          <option value="dispatcher">Dispatcher</option>
+        </select>
+        <button
+          type="submit"
+          disabled={submitting}
+          className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+        >
+          {submitting ? "Sending…" : "Send invite"}
+        </button>
+      </form>
+
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading invites…</p>
+      ) : invites.length === 0 ? (
+        <p className="text-sm text-gray-500">No pending invites.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="text-xs uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="py-2 pr-3">Email</th>
+                <th className="py-2 pr-3">Role</th>
+                <th className="py-2 pr-3">Created</th>
+                <th className="py-2 pr-3">Link</th>
+                <th className="py-2 pr-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invites.map((inv) => {
+                const link = `${origin}/signup?invite=${inv.id}`;
+                return (
+                  <tr key={inv.id} className="border-t border-gray-200">
+                    <td className="py-2 pr-3 align-top text-gray-900">{inv.email}</td>
+                    <td className="py-2 pr-3 align-top capitalize text-gray-700">{inv.role}</td>
+                    <td className="py-2 pr-3 align-top text-gray-500">
+                      {new Date(inv.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="py-2 pr-3 align-top">
+                      <code
+                        data-testid={`invite-link-${inv.id}`}
+                        className="block max-w-[18rem] truncate rounded bg-gray-50 px-2 py-1 font-mono text-xs text-gray-700"
+                        title={link}
+                      >
+                        {link}
+                      </code>
+                    </td>
+                    <td className="py-2 pr-3 align-top text-right">
+                      <div className="inline-flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCopyLink(inv.id)}
+                          className="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          Copy link
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRevoke(inv.id)}
+                          className="rounded-md border border-red-300 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                        >
+                          Revoke
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
