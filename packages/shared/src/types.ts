@@ -35,6 +35,19 @@ export interface DriverRecord {
   orgId?: string | null;
 }
 
+// ── Driver Performance ──
+export type DriverTrend = "up" | "down" | "same" | "new";
+
+export interface DriverPerformance {
+  driverId: string;
+  name: string;
+  tripCount: number;
+  avgCompletionTimeSeconds: number | null;
+  onTimePct: number | null;
+  prevTripCount: number | null;
+  trend: DriverTrend;
+}
+
 // ── Trip ──
 export type TripStatus = "draft" | "assigned" | "in_progress" | "completed" | "cancelled";
 
@@ -68,6 +81,14 @@ export interface RouteLeg {
   staticDurationSeconds?: number;  // traffic-unaware
 };
 
+export interface TimeWindowViolation {
+  stopId: string;
+  address: string;
+  window: TimeWindow;
+  estimatedArrivalAt: string; // ISO 8601
+  issue: "early" | "late";
+}
+
 export interface TripRoute {
   polyline: string; // encoded polyline from Directions API
   distanceMeters: number;
@@ -78,6 +99,8 @@ export interface TripRoute {
   fuelSavingsGallons?: number; // estimated fuel saved vs naive routing (US gallons)
   legs: RouteLeg[];
   reasoning?: string; // AI explanation of stop ordering decision
+  stopArrivalTimes?: Record<string, string>; // stopId -> ISO 8601 estimated arrival
+  timeWindowViolations?: TimeWindowViolation[];
 }
 
 export interface RouteOverride {

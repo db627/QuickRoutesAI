@@ -1,0 +1,9 @@
+{
+  "functions": [
+    {
+      "source": "apps/functions",
+      "codebase": "quickroutesai",
+      "ignore": ["node_modules", "lib"]
+    }
+  ]
+}
