@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signInWithEmailAndPassword } from "firebase/auth";
@@ -34,6 +34,14 @@ interface InviteContext {
  * the AuthProvider picks up the new user.
  */
 export default function SignupPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignupPageInner />
+    </Suspense>
+  );
+}
+
+function SignupPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const inviteToken = searchParams?.get("invite") ?? null;
