@@ -889,6 +889,10 @@ export default function TripDetailPage() {
   const [cancelling, setCancelling] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
 
+  // Manual completion (admin/dispatcher) UI state
+  const [showCompleteModal, setShowCompleteModal] = useState(false);
+  const [completing, setCompleting] = useState(false);
+
   // Subscribe to trip document in real-time
   useEffect(() => {
     if (!id) return;
@@ -1002,6 +1006,25 @@ export default function TripDetailPage() {
     }
   };
 
+  const completeTrip = async () => {
+    if (!id) return;
+    setCompleting(true);
+    try {
+      await apiFetch(`/trips/${id}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status: "completed" }),
+      });
+      toast.success("Trip marked complete");
+      setShowCompleteModal(false);
+      // The Firestore onSnapshot subscriptions on trip + stops will pick up
+      // the status flips automatically; no manual refetch needed.
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to mark trip complete");
+    } finally {
+      setCompleting(false);
+    }
+  };
+
   const duplicateTrip = async () => {
     if (!id) return;
     setDuplicating(true);
@@ -1104,6 +1127,11 @@ export default function TripDetailPage() {
   const canEdit = trip.status === "draft";
   const canCancel = trip.status === "draft" || trip.status === "assigned";
   const canDuplicate = true;
+  // Admin/dispatcher manual completion: only for in-flight trips. Drivers
+  // complete via per-stop, so they don't see this button.
+  const canManuallyComplete =
+    (role === "dispatcher" || role === "admin") &&
+    (trip.status === "assigned" || trip.status === "in_progress");
 
   // Pre-fill stops sorted by sequence
   const initialStops = stops.slice().sort((a, b) => a.sequence - b.sequence);
@@ -1173,6 +1201,17 @@ export default function TripDetailPage() {
               className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
             >
               {computing ? "Computing..." : "Compute Route"}
+            </button>
+          )}
+          {canManuallyComplete && !editing && (
+            <button
+              onClick={() => setShowCompleteModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+              </svg>
+              Mark Complete
             </button>
           )}
           {!editing && trip.status !== "cancelled" && (
@@ -1421,6 +1460,34 @@ export default function TripDetailPage() {
         <span>Created: {new Date(trip.createdAt).toLocaleString()}</span>
         <span>Updated: {new Date(trip.updatedAt).toLocaleString()}</span>
       </div>
+
+      {/* Mark Complete confirmation modal */}
+      {showCompleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-80 rounded-xl bg-white p-6 shadow-xl space-y-4">
+            <h3 className="text-base font-semibold text-gray-900">Mark Trip Complete</h3>
+            <p className="text-sm text-gray-600">
+              Mark this trip as complete? All remaining stops will also be marked completed.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowCompleteModal(false)}
+                disabled={completing}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:border-gray-300 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={completeTrip}
+                disabled={completing}
+                className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {completing ? "Completing..." : "Mark Complete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Cancel confirmation modal */}
       {showCancelModal && (

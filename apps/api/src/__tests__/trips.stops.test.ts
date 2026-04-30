@@ -85,6 +85,218 @@ function setupTripMock(
   return { tripUpdateMock, stopUpdateMock, addEventMock };
 }
 
+describe("POST /trips/:id/status (admin manual completion)", () => {
+  function setupAdminTripMock(
+    tripData: object | null,
+    stopsArray: any[] = [],
+    tripUpdateMock = jest.fn().mockResolvedValue(undefined),
+    addEventMock = jest.fn().mockResolvedValue(undefined),
+  ) {
+    // Simulates Firestore for the admin completion path. The handler reads
+    // tripRef.collection("stops").get() to enumerate stops, then commits a
+    // batch of stopRef.update() calls to flip pending stops to completed.
+    const stopRefs = new Map<string, { ref: any; updates: any[] }>();
+    stopsArray.forEach((s) => {
+      const updates: any[] = [];
+      stopRefs.set(s.stopId, {
+        ref: { __id: s.stopId, __updates: updates },
+        updates,
+      });
+    });
+
+    const batchUpdates: { stopId: string; data: any }[] = [];
+    const batchCommit = jest.fn().mockResolvedValue(undefined);
+    const batchUpdate = jest.fn((ref: any, data: any) => {
+      batchUpdates.push({ stopId: ref?.__id, data });
+    });
+    db.batch = jest.fn(() => ({ update: batchUpdate, commit: batchCommit }));
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "trips") {
+        return {
+          doc: () => ({
+            get: jest.fn().mockResolvedValue(
+              tripData
+                ? { exists: true, data: () => tripData }
+                : { exists: false },
+            ),
+            update: tripUpdateMock,
+            collection: (subCol: string) => {
+              if (subCol !== "stops") {
+                return { get: jest.fn().mockResolvedValue({ empty: true, docs: [] }) };
+              }
+              return {
+                get: jest.fn().mockResolvedValue({
+                  empty: stopsArray.length === 0,
+                  docs: stopsArray.map((s) => ({
+                    id: s.stopId,
+                    ref: stopRefs.get(s.stopId)?.ref,
+                    data: () => s,
+                  })),
+                }),
+                doc: (stopId: string) => ({
+                  get: jest.fn().mockResolvedValue({
+                    exists: !!stopsArray.find((s) => s.stopId === stopId),
+                    data: () => stopsArray.find((s) => s.stopId === stopId),
+                  }),
+                  update: jest.fn().mockResolvedValue(undefined),
+                }),
+              };
+            },
+          }),
+        };
+      }
+      if (col === "events") {
+        return { add: addEventMock };
+      }
+      return {
+        doc: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ role: "admin", orgId: "org-test" }) }),
+        set: jest.fn().mockResolvedValue(undefined),
+      };
+    });
+
+    return { tripUpdateMock, addEventMock, batchUpdate, batchCommit, batchUpdates };
+  }
+
+  const ADMIN_UID = "admin-uid";
+
+  it("admin completing an in_progress trip batch-updates pending stops to completed", async () => {
+    setupMockUser(ADMIN_UID, "admin");
+    const pendingStop = { ...STOP_A };
+    const alreadyDoneStop = { ...STOP_B, status: "completed", completedAt: "2024-01-01T00:00:00Z" };
+    const { tripUpdateMock, batchUpdate, batchCommit, batchUpdates } = setupAdminTripMock(
+      {
+        status: "in_progress",
+        driverId: DRIVER_UID,
+        orgId: "org-test",
+        createdBy: "dispatcher-uid",
+        stops: [pendingStop, alreadyDoneStop],
+      },
+      [pendingStop, alreadyDoneStop],
+    );
+
+    const res = await request(app)
+      .post(`/trips/${TRIP_ID}/status`)
+      .send({ status: "completed" })
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, status: "completed" });
+    // Only the pending stop should be batched (the already-completed one is skipped).
+    expect(batchUpdates).toHaveLength(1);
+    expect(batchUpdates[0].stopId).toBe(STOP_A.stopId);
+    expect(batchUpdates[0].data).toMatchObject({
+      status: "completed",
+      completedAt: expect.any(String),
+    });
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+    expect(batchCommit).toHaveBeenCalledTimes(1);
+    expect(tripUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "completed" }),
+    );
+  });
+
+  it("admin completing a trip with all stops already done still updates trip but skips batch commit", async () => {
+    setupMockUser(ADMIN_UID, "admin");
+    const doneA = { ...STOP_A, status: "completed", completedAt: "2024-01-01T00:00:00Z" };
+    const doneB = { ...STOP_B, status: "completed", completedAt: "2024-01-01T00:00:00Z" };
+    const { tripUpdateMock, batchCommit } = setupAdminTripMock(
+      {
+        status: "in_progress",
+        driverId: DRIVER_UID,
+        orgId: "org-test",
+        createdBy: "dispatcher-uid",
+        stops: [doneA, doneB],
+      },
+      [doneA, doneB],
+    );
+
+    const res = await request(app)
+      .post(`/trips/${TRIP_ID}/status`)
+      .send({ status: "completed" })
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(200);
+    expect(batchCommit).not.toHaveBeenCalled();
+    expect(tripUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "completed" }),
+    );
+  });
+
+  it("admin completing a draft trip → 400 (cannot complete a draft)", async () => {
+    setupMockUser(ADMIN_UID, "admin");
+    setupAdminTripMock(
+      {
+        status: "draft",
+        driverId: null,
+        orgId: "org-test",
+        createdBy: "dispatcher-uid",
+        stops: [STOP_A, STOP_B],
+      },
+      [STOP_A, STOP_B],
+    );
+
+    const res = await request(app)
+      .post(`/trips/${TRIP_ID}/status`)
+      .send({ status: "completed" })
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/cannot complete a draft/i);
+  });
+
+  it("admin completing an assigned trip → 200 (manual completion path)", async () => {
+    setupMockUser(ADMIN_UID, "admin");
+    const { tripUpdateMock, batchUpdates } = setupAdminTripMock(
+      {
+        status: "assigned",
+        driverId: DRIVER_UID,
+        orgId: "org-test",
+        createdBy: "dispatcher-uid",
+        stops: [STOP_A, STOP_B],
+      },
+      [STOP_A, STOP_B],
+    );
+
+    const res = await request(app)
+      .post(`/trips/${TRIP_ID}/status`)
+      .send({ status: "completed" })
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("completed");
+    // Both pending stops should be batch-completed when an admin manually
+    // marks an assigned trip as done.
+    expect(batchUpdates).toHaveLength(2);
+    expect(tripUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "completed" }),
+    );
+  });
+
+  it("admin completing an in_progress trip → 200", async () => {
+    setupMockUser(ADMIN_UID, "admin");
+    setupAdminTripMock(
+      {
+        status: "in_progress",
+        driverId: DRIVER_UID,
+        orgId: "org-test",
+        createdBy: "dispatcher-uid",
+        stops: [STOP_A, STOP_B],
+      },
+      [STOP_A, STOP_B],
+    );
+
+    const res = await request(app)
+      .post(`/trips/${TRIP_ID}/status`)
+      .send({ status: "completed" })
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("completed");
+  });
+});
+
 describe("POST /trips/:id/stops/:stopId/complete", () => {
   it("marks the first stop as completed with a timestamp", async () => {
     setupMockUser(DRIVER_UID, "driver");

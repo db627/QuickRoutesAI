@@ -712,7 +712,29 @@ router.post("/:id/predict-eta", requireRole("dispatcher", "admin"), async (req, 
  * Drivers can move to in_progress or completed (if assigned to them).
  * Dispatchers can set any status.
  */
-router.post("/:id/status", requireOrg, validate(updateTripStatusSchema), tripTransitionGuard, tripStopsValidationGuard, async (req, res, next) => {
+router.post("/:id/status", requireOrg, validate(updateTripStatusSchema), async (req, _res, next) => {
+  // Pre-guard: reject draft → completed with a friendlier 400 (the generic
+  // tripTransitionGuard would otherwise return a 409 with a less helpful
+  // "draft trips cannot transition to completed" message). Drafts shouldn't
+  // jump straight to completed; that path is a UX bug magnet.
+  try {
+    if (req.body?.status === "completed") {
+      const tripDoc = await db.collection("trips").doc(req.params.id).get();
+      if (tripDoc.exists && tripDoc.data()?.status === "draft") {
+        return next(
+          new AppError(
+            ErrorCode.BAD_REQUEST,
+            400,
+            "Cannot complete a draft trip — assign a driver first or use Cancel",
+          ),
+        );
+      }
+    }
+    return next();
+  } catch (err) {
+    return next(err);
+  }
+}, tripTransitionGuard, tripStopsValidationGuard, async (req, res, next) => {
   const { status, currentLocation } = req.body;
 
   try {
@@ -766,6 +788,32 @@ router.post("/:id/status", requireOrg, validate(updateTripStatusSchema), tripTra
         actualArrivalAt,
         errorMinutes,
       };
+    }
+
+    // When a trip is moved to completed, sync the per-stop subcollection so any
+    // stops still pending are also marked completed. Without this, a completed
+    // trip can leave behind stops with status !== "completed", which breaks the
+    // detail view, exports, and analytics.
+    if (status === "completed") {
+      try {
+        const stopsSnapshot = await tripRef.collection("stops").get();
+        const nowIso = new Date().toISOString();
+        const batch = db.batch();
+        let pendingCount = 0;
+        stopsSnapshot.docs.forEach((stopDoc) => {
+          const stopData = stopDoc.data() as { status?: string };
+          if (stopData?.status !== "completed") {
+            batch.update(stopDoc.ref, { status: "completed", completedAt: nowIso });
+            pendingCount += 1;
+          }
+        });
+        if (pendingCount > 0) {
+          await batch.commit();
+        }
+      } catch (syncErr) {
+        const syncMessage = syncErr instanceof Error ? syncErr.message : "Unknown stop sync error";
+        console.error("Failed to sync stops on trip completion:", syncMessage);
+      }
     }
 
     // When a driver starts a trip, optionally recompute route from their live location.

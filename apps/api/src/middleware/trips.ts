@@ -36,7 +36,10 @@ export async function tripTransitionGuard(req: Request, _res: Response, next: Ne
 
     const allowedTransitions: Record<TripStatus, TripStatus[]> = {
       draft: ["assigned", "cancelled"],
-      assigned: ["in_progress", "cancelled"],
+      // Dispatchers/admins can manually mark an assigned trip complete
+      // (e.g. driver finished but never tapped Start). The route handler is
+      // responsible for syncing per-stop status when this fires.
+      assigned: ["in_progress", "completed", "cancelled"],
       in_progress: ["completed"],
       completed: [],
       cancelled: [],

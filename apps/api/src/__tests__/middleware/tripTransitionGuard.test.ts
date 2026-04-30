@@ -126,16 +126,19 @@ describe("tripTransitionGuard middleware", () => {
     expect(response.body.body).toBeDefined();
   });
 
-  it("rejects invalid transition from assigned to completed", async () => {
+  // Admin/dispatcher manual completion path: allow assigned → completed so a
+  // dispatcher can mark a trip done when the driver finished but never tapped
+  // Start. The route handler enforces role-level authorization separately.
+  it("passes from assigned to completed (admin manual completion)", async () => {
     const response = await request(app)
       .post("/test")
       .send({
         current_status_test: "assigned",
         status_test: "completed",
       });
-    expect(response.status).toBe(409);
-    expect(response.body.error).toBe("INVALID_STATUS_TRANSITION");
-    expect(response.body.message).toBe("assigned trips cannot transition to completed");
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.body).toBeDefined();
   });
 
   /*
