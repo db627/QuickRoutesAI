@@ -22,3 +22,4 @@ docker-compose.yml
 firebase.config.js
 firestore.rules
 quickroutesai-firebase-adminsdk-fbsvc-d1eaba24f4.json
+apps/api/scripts/
