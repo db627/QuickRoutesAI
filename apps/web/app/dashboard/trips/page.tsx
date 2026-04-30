@@ -5,10 +5,11 @@ import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
-import type { Trip, TripStatus } from "@quickroutesai/shared";
+import type { Trip, TripStatus, DriverRecord } from "@quickroutesai/shared";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { TripCard } from "@/components/TripCard";
 import { useAuth } from "@/lib/auth-context";
+import { apiFetch } from "@/lib/api";
 
 type TripTab = "active" | "completed" | "cancelled" | "all";
 
@@ -20,6 +21,24 @@ const TAB_LABELS: Record<TripTab, string> = {
   cancelled: "Cancelled",
   all: "All",
 };
+
+// Sentinel value for the driver filter when the user wants to see only
+// trips that have no driver assigned (drafts). Anything else is either
+// "" (any driver) or an actual driver uid.
+const DRIVER_UNASSIGNED = "unassigned";
+
+interface DriverOption {
+  uid: string;
+  name?: string;
+  isOnline?: boolean;
+}
+
+function parseDriver(raw: string | null): string {
+  if (!raw) return "";
+  // We accept any non-empty string as a possible driver uid; the filter
+  // logic naturally produces an empty result if the uid no longer exists.
+  return raw;
+}
 
 // Which trip statuses belong to each tab. "active" means the trip is still
 // moving through the pipeline (draft, assigned, in_progress) — the opposite
@@ -58,6 +77,12 @@ function TripsPageInner() {
   // Tab presets replace the old per-status dropdown. Default is "active" so
   // completed + cancelled trips don't clutter the primary view.
   const [tab, setTab] = useState<TripTab>(parseTab(searchParams.get("tab")));
+  // Driver filter: "" (any driver, default), "unassigned" (driverId: null),
+  // or a specific driver uid.
+  const [driverFilter, setDriverFilter] = useState<string>(
+    parseDriver(searchParams.get("driver")),
+  );
+  const [drivers, setDrivers] = useState<DriverOption[]>([]);
 
   useEffect(() => {
     // Without an orgId we have no scope to filter by — bail rather than
@@ -84,28 +109,76 @@ function TripsPageInner() {
     return unsub;
   }, [orgId]);
 
-  function updateUrl(nextSearch: string, nextTab: TripTab) {
+  // Fetch the org's drivers for the filter dropdown. Mirrors the pattern in
+  // AssignDriverDropdown on the trip detail page: prefer the API (which
+  // already returns names), with a Firestore subscription fallback so the
+  // dropdown stays usable if the API is unreachable. The API result is
+  // already org-scoped server-side, so no extra orgId guard is needed.
+  useEffect(() => {
+    if (!orgId) {
+      setDrivers([]);
+      return;
+    }
+    let cancelled = false;
+    let unsub: (() => void) | undefined;
+
+    apiFetch<{ data: DriverOption[] }>("/drivers")
+      .then((res) => {
+        if (!cancelled) setDrivers(res.data);
+      })
+      .catch(() => {
+        // Fallback: subscribe directly to the drivers collection. Names
+        // won't be available here (driver docs don't store name); the
+        // dropdown will fall back to a uid prefix label.
+        const q = query(
+          collection(firestore, "drivers"),
+          where("orgId", "==", orgId),
+        );
+        unsub = onSnapshot(q, (snap) => {
+          if (cancelled) return;
+          setDrivers(
+            snap.docs.map((d) => ({
+              uid: d.id,
+              isOnline: (d.data() as DriverRecord).isOnline,
+            })),
+          );
+        });
+      });
+
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
+  }, [orgId]);
+
+  function updateUrl(nextSearch: string, nextTab: TripTab, nextDriver: string) {
     const params = new URLSearchParams();
     if (nextSearch) params.set("search", nextSearch);
     // Default tab is "active"; omit it to keep URLs clean.
     if (nextTab !== "active") params.set("tab", nextTab);
+    if (nextDriver) params.set("driver", nextDriver);
     const qs = params.toString();
     router.replace(`${pathname}${qs ? `?${qs}` : ""}`);
   }
 
   function handleSearchChange(value: string) {
     setSearch(value);
-    updateUrl(value, tab);
+    updateUrl(value, tab, driverFilter);
   }
 
   function handleTabChange(nextTab: TripTab) {
     setTab(nextTab);
-    updateUrl(search, nextTab);
+    updateUrl(search, nextTab, driverFilter);
+  }
+
+  function handleDriverChange(nextDriver: string) {
+    setDriverFilter(nextDriver);
+    updateUrl(search, tab, nextDriver);
   }
 
   function clearSearch() {
     setSearch("");
-    updateUrl("", tab);
+    updateUrl("", tab, driverFilter);
   }
 
   const filteredTrips = useMemo(
@@ -113,6 +186,12 @@ function TripsPageInner() {
       trips
         .filter((trip) => {
           if (!matchesTab(tab, trip.status)) return false;
+          // Driver filter combines with tab + search. "" means any driver.
+          if (driverFilter === DRIVER_UNASSIGNED) {
+            if (trip.driverId != null) return false;
+          } else if (driverFilter !== "") {
+            if (trip.driverId !== driverFilter) return false;
+          }
           const term = search.trim().toLowerCase();
           if (term === "") return true;
           // Match against stop addresses (when available on the detail shape)
@@ -128,8 +207,29 @@ function TripsPageInner() {
         // the source data arrives in a different order (ISO 8601 sorts
         // lexicographically).
         .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")),
-    [trips, search, tab],
+    [trips, search, tab, driverFilter],
   );
+
+  // Drivers sorted alphabetically by display name (falling back to uid).
+  const sortedDrivers = useMemo(
+    () =>
+      [...drivers].sort((a, b) => {
+        const an = (a.name || a.uid).toLowerCase();
+        const bn = (b.name || b.uid).toLowerCase();
+        return an.localeCompare(bn);
+      }),
+    [drivers],
+  );
+
+  // Map of uid -> display name, so TripCard can render a friendly driver
+  // label without each card making its own /users/{uid} read.
+  const driverNameByUid = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of drivers) {
+      if (d.name) m.set(d.uid, d.name);
+    }
+    return m;
+  }, [drivers]);
 
   const hasSearch = search.trim() !== "";
 
@@ -172,7 +272,7 @@ function TripsPageInner() {
         </nav>
       </div>
 
-      {/* Search toolbar */}
+      {/* Search + driver filter toolbar */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[200px] flex-1">
           <svg
@@ -197,6 +297,20 @@ function TripsPageInner() {
             aria-label="Search trips by trip id or stop address"
           />
         </div>
+        <select
+          value={driverFilter}
+          onChange={(e) => handleDriverChange(e.target.value)}
+          aria-label="Filter trips by driver"
+          className="rounded-lg border border-gray-200 bg-white py-2 pl-3 pr-8 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        >
+          <option value="">All drivers</option>
+          <option value={DRIVER_UNASSIGNED}>Unassigned</option>
+          {sortedDrivers.map((d) => (
+            <option key={d.uid} value={d.uid}>
+              {d.name || `${d.uid.slice(0, 8)}…`}
+            </option>
+          ))}
+        </select>
         {hasSearch && (
           <button
             onClick={clearSearch}
@@ -235,9 +349,9 @@ function TripsPageInner() {
       ) : filteredTrips.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center">
           <p className="text-sm font-medium text-gray-500">No trips found</p>
-          {(hasSearch || tab !== "active") && (
+          {(hasSearch || tab !== "active" || driverFilter !== "") && (
             <p className="mt-1 text-xs text-gray-400">
-              Try a different tab{hasSearch ? " or clear your search" : ""}.
+              Try a different tab{driverFilter !== "" ? ", clear the driver filter" : ""}{hasSearch ? " or clear your search" : ""}.
               {hasSearch && (
                 <>
                   {" "}
@@ -258,7 +372,11 @@ function TripsPageInner() {
           className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
         >
           {filteredTrips.map((trip) => (
-            <TripCard key={trip.id} trip={trip} />
+            <TripCard
+              key={trip.id}
+              trip={trip}
+              driverName={trip.driverId ? driverNameByUid.get(trip.driverId) : undefined}
+            />
           ))}
         </div>
       )}
