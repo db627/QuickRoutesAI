@@ -36,7 +36,7 @@ type MockQuery = {
 
 // Helper to mock driver documents
 function mockDriverDoc(id: string, overrides: Partial<any> = {}) {
-  return { id, isOnline: false, updatedAt: new Date().toISOString(), ...overrides };
+  return { id, isOnline: false, orgId: "org-test", updatedAt: new Date().toISOString(), ...overrides };
 }
 
 describe("GET /drivers", () => {
@@ -121,7 +121,7 @@ describe("GET /drivers", () => {
                 return {
                     get: jest.fn().mockResolvedValue({
                     exists: true,
-                    data: () => ({ role: "dispatcher", active: true }),
+                    data: () => ({ role: "dispatcher", active: true, orgId: "org-test" }),
                     }),
                 };
                 }
@@ -268,7 +268,7 @@ describe("GET /drivers", () => {
                 return {
                     get: jest.fn().mockResolvedValue({
                     exists: true,
-                    data: () => ({ role: "dispatcher", active: true }),
+                    data: () => ({ role: "dispatcher", active: true, orgId: "org-test" }),
                     }),
                 };
                 }
@@ -280,9 +280,12 @@ describe("GET /drivers", () => {
       }
 
       if (col === "trips") {
-        return {
-          where: jest.fn(() => ({ get: jest.fn().mockResolvedValue({ docs: trips.map(t => ({ data: () => t })) }) })),
+        // Chainable where() so .where("orgId").where("status") works
+        const tripsQuery: any = {
+          where: jest.fn(() => tripsQuery),
+          get: jest.fn().mockResolvedValue({ docs: trips.map((t) => ({ data: () => t })) }),
         };
+        return tripsQuery;
       }
 
       return { 
@@ -410,7 +413,7 @@ describe("GET /drivers", () => {
                 return {
                     get: jest.fn().mockResolvedValue({
                     exists: true,
-                    data: () => ({ role: "dispatcher", active: true }),
+                    data: () => ({ role: "dispatcher", active: true, orgId: "org-test" }),
                     }),
                 };
                 }
@@ -422,9 +425,12 @@ describe("GET /drivers", () => {
       }
 
       if (col === "trips") {
-        return {
-          where: jest.fn(() => ({ get: jest.fn().mockResolvedValue({ docs: trips.map(t => ({ data: () => t })) }) })),
+        // Chainable where() so .where("orgId").where("status") works
+        const tripsQuery: any = {
+          where: jest.fn(() => tripsQuery),
+          get: jest.fn().mockResolvedValue({ docs: trips.map((t) => ({ data: () => t })) }),
         };
+        return tripsQuery;
       }
 
       return { 
@@ -546,7 +552,7 @@ describe("GET /drivers", () => {
                 return {
                     get: jest.fn().mockResolvedValue({
                     exists: true,
-                    data: () => ({ role: "dispatcher", active: true }),
+                    data: () => ({ role: "dispatcher", active: true, orgId: "org-test" }),
                     }),
                 };
                 }
@@ -558,9 +564,12 @@ describe("GET /drivers", () => {
       }
 
       if (col === "trips") {
-        return {
-          where: jest.fn(() => ({ get: jest.fn().mockResolvedValue({ docs: trips.map(t => ({ data: () => t })) }) })),
+        // Chainable where() so .where("orgId").where("status") works
+        const tripsQuery: any = {
+          where: jest.fn(() => tripsQuery),
+          get: jest.fn().mockResolvedValue({ docs: trips.map((t) => ({ data: () => t })) }),
         };
+        return tripsQuery;
       }
 
       return { 
@@ -586,4 +595,221 @@ describe("GET /drivers", () => {
         .set("Authorization", "Bearer valid-token");
         expect(res.status).toBe(403);
     });
+
+    it("returns 403 when dispatcher has no orgId", async () => {
+        setupMockUser(uid, "dispatcher", "Test Dispatcher", null);
+
+        const res = await request(app)
+        .get("/drivers")
+        .set("Authorization", "Bearer valid-token");
+        expect(res.status).toBe(403);
+        expect(res.body.error).toBe("FORBIDDEN");
+        expect(res.body.message).toMatch(/not linked to an organization/i);
+    });
+
+    it("filters out drivers from other organizations", async () => {
+        setupMockUser(uid, "dispatcher", "Test Dispatcher", "org-alpha");
+
+        // Mix of own-org and foreign-org drivers; where-filter must exclude the foreign ones.
+        const drivers = [
+            mockDriverDoc("own-1", { orgId: "org-alpha", updatedAt: new Date(Date.now()).toISOString() }),
+            mockDriverDoc("own-2", { orgId: "org-alpha", updatedAt: new Date(Date.now() - 1000).toISOString() }),
+            mockDriverDoc("foreign-1", { orgId: "org-beta", updatedAt: new Date(Date.now() - 2000).toISOString() }),
+        ];
+
+        const users: Record<string, { name: string; email: string }> = {
+            "own-1": { name: "Alice", email: "a@example.com" },
+            "own-2": { name: "Bob", email: "b@example.com" },
+        };
+
+        db.collection.mockImplementation((col: string) => {
+            if (col === "drivers") {
+                let driverDocs = [...drivers];
+                let collectionMock: MockQuery;
+                collectionMock = {
+                    count: jest.fn(() => ({
+                        get: jest.fn().mockResolvedValue({ data: () => ({ count: driverDocs.length }) }),
+                    })),
+                    where: jest.fn((field: string, op: string, value: any) => {
+                        driverDocs = driverDocs.filter((doc) => {
+                            const fieldValue = (doc as any)[field];
+                            return op === "==" ? fieldValue === value : true;
+                        });
+                        return collectionMock;
+                    }),
+                    orderBy: jest.fn(() => collectionMock),
+                    offset: jest.fn((n: number) => {
+                        driverDocs = driverDocs.slice(n);
+                        return collectionMock;
+                    }),
+                    limit: jest.fn((n: number) => {
+                        driverDocs = driverDocs.slice(0, n);
+                        return collectionMock;
+                    }),
+                    startAfter: jest.fn(() => collectionMock),
+                    get: jest.fn(() =>
+                        Promise.resolve({
+                            docs: driverDocs.map((d) => ({ id: d.id, data: () => d })),
+                        }),
+                    ),
+                };
+                return collectionMock;
+            }
+            if (col === "users") {
+                return {
+                    doc: (id: string) => {
+                        if (id === uid) {
+                            return {
+                                get: jest.fn().mockResolvedValue({
+                                    exists: true,
+                                    data: () => ({ role: "dispatcher", active: true, orgId: "org-alpha" }),
+                                }),
+                            };
+                        }
+                        return {
+                            get: jest.fn().mockResolvedValue({ exists: users[id] !== undefined, data: () => users[id] }),
+                        };
+                    },
+                };
+            }
+            return { doc: jest.fn().mockReturnThis(), get: jest.fn(), set: jest.fn() };
+        });
+
+        const res = await request(app)
+            .get("/drivers")
+            .set("Authorization", "Bearer valid-token");
+
+        expect(res.status).toBe(200);
+        expect(res.body.data.length).toBe(2);
+        expect(res.body.data.map((d: any) => d.uid)).toEqual(["own-1", "own-2"]);
+    });
+});
+
+describe("POST /drivers/claim-unlinked", () => {
+  const uid = "dispatcher-123";
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    db.batch = jest.fn();
+  });
+
+  it("attaches all unlinked drivers to the caller's org", async () => {
+    setupMockUser(uid, "dispatcher", "Test Dispatcher", "org-alpha");
+
+    // All three "unlinked" — the endpoint's where(orgId==null) returns them.
+    const unlinked = [
+      { id: "driver-1", orgId: null },
+      { id: "driver-2", orgId: null },
+      { id: "driver-3", orgId: null },
+    ];
+
+    const batchUpdateMock = jest.fn();
+    const batchSetMock = jest.fn();
+    const batchCommitMock = jest.fn().mockResolvedValue(undefined);
+    db.batch.mockReturnValue({
+      update: batchUpdateMock,
+      set: batchSetMock,
+      commit: batchCommitMock,
+    });
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "drivers") {
+        const driversQuery: any = {
+          where: jest.fn(() => driversQuery),
+          get: jest.fn().mockResolvedValue({
+            docs: unlinked.map((d) => ({
+              id: d.id,
+              ref: { id: d.id },
+              data: () => d,
+            })),
+          }),
+        };
+        return driversQuery;
+      }
+      if (col === "users") {
+        return {
+          doc: (id: string) => {
+            if (id === uid) {
+              return {
+                get: jest.fn().mockResolvedValue({
+                  exists: true,
+                  data: () => ({ role: "dispatcher", active: true, orgId: "org-alpha" }),
+                }),
+              };
+            }
+            // Return a ref object that batch.set receives
+            return { id };
+          },
+        };
+      }
+      return { doc: jest.fn().mockReturnThis(), get: jest.fn(), set: jest.fn() };
+    });
+
+    const res = await request(app)
+      .post("/drivers/claim-unlinked")
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(200);
+    expect(res.body.claimed).toBe(3);
+    expect(res.body.driverIds).toEqual(["driver-1", "driver-2", "driver-3"]);
+    // One update per driver (orgId patch on drivers/*)
+    expect(batchUpdateMock).toHaveBeenCalledTimes(3);
+    expect(batchUpdateMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ orgId: "org-alpha" }),
+    );
+    // One set-merge per driver (orgId mirror on users/*)
+    expect(batchSetMock).toHaveBeenCalledTimes(3);
+    expect(batchCommitMock).toHaveBeenCalled();
+  });
+
+  it("returns claimed:0 when no drivers are unlinked", async () => {
+    setupMockUser(uid, "dispatcher", "Test Dispatcher", "org-alpha");
+
+    const batchCommitMock = jest.fn().mockResolvedValue(undefined);
+    db.batch.mockReturnValue({
+      update: jest.fn(),
+      set: jest.fn(),
+      commit: batchCommitMock,
+    });
+
+    db.collection.mockImplementation((col: string) => {
+      if (col === "drivers") {
+        const driversQuery: any = {
+          where: jest.fn(() => driversQuery),
+          get: jest.fn().mockResolvedValue({ docs: [] }),
+        };
+        return driversQuery;
+      }
+      if (col === "users") {
+        return {
+          doc: (id: string) => ({
+            get: jest.fn().mockResolvedValue({
+              exists: id === uid,
+              data: () => ({ role: "dispatcher", active: true, orgId: "org-alpha" }),
+            }),
+          }),
+        };
+      }
+      return { doc: jest.fn().mockReturnThis(), get: jest.fn(), set: jest.fn() };
+    });
+
+    const res = await request(app)
+      .post("/drivers/claim-unlinked")
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ claimed: 0, driverIds: [] });
+    expect(batchCommitMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for non-admin/non-dispatcher", async () => {
+    setupMockUser(uid, "driver", "Test Driver");
+
+    const res = await request(app)
+      .post("/drivers/claim-unlinked")
+      .set("Authorization", "Bearer valid-token");
+
+    expect(res.status).toBe(403);
+  });
 });

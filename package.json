@@ -1,6 +1,7 @@
 {
   "name": "quickroutesai",
   "private": true,
+  "packageManager": "pnpm@10.33.2",
   "scripts": {
     "dev": "concurrently \"pnpm --filter api dev\" \"pnpm --filter web dev\"",
     "lint": "eslint . --ext .ts,.tsx",
@@ -8,6 +9,8 @@
   },
   "pnpm": {
     "overrides": {
+      "next>react": "^18.3.1",
+      "next>react-dom": "^18.3.1",
       "@types/react": "^18.3.3",
       "@types/react-dom": "^18.3.0"
     }

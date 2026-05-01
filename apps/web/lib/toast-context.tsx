@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useMemo,
   useState,
   ReactNode,
 } from "react";
@@ -85,11 +86,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 export function useToast() {
   const { addToast } = useContext(ToastContext);
 
-  const toast = {
-    success: (message: string) => addToast(message, "success"),
-    error: (message: string) => addToast(message, "error"),
-    info: (message: string) => addToast(message, "info"),
-  };
+  const toast = useMemo(
+    () => ({
+      success: (message: string) => addToast(message, "success"),
+      error: (message: string) => addToast(message, "error"),
+      info: (message: string) => addToast(message, "info"),
+    }),
+    [addToast],
+  );
 
   return { toast };
 }

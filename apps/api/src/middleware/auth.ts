@@ -11,6 +11,7 @@ declare global {
       uid: string;
       userRole: UserRole;
       userEmail: string;
+      orgId?: string;
     }
   }
 }
@@ -32,10 +33,16 @@ export async function verifyFirebaseToken(req: Request, _res: Response, next: Ne
     req.uid = decoded.uid;
     req.userEmail = decoded.email || "";
 
-    // Fetch role from Firestore users collection
+    // Fetch role + orgId from Firestore users collection
     const userDoc = await db.collection("users").doc(decoded.uid).get();
     if (userDoc.exists) {
-      req.userRole = userDoc.data()?.role || "driver";
+      const data = userDoc.data();
+      req.userRole = data?.role || "driver";
+      // orgId may be absent on drivers/dispatchers who haven't been linked to
+      // an org yet, or on admins who haven't completed the setup wizard.
+      // Individual routes decide how to handle absence (requireOrg middleware
+      // 403s; routes that opt out accept unlinked users).
+      req.orgId = data?.orgId;
       next();
       return;
     }
@@ -44,6 +51,7 @@ export async function verifyFirebaseToken(req: Request, _res: Response, next: Ne
     const driverDoc = await db.collection("drivers").doc(decoded.uid).get();
     if (driverDoc.exists) {
       req.userRole = "driver";
+      req.orgId = driverDoc.data()?.orgId ?? undefined;
       next();
       return;
     }
@@ -66,4 +74,22 @@ export function requireRole(...roles: UserRole[]) {
     }
     next();
   };
+}
+
+/**
+ * Require that the authenticated user is linked to an organization.
+ * 403s if req.orgId is absent. Use this on any route that reads/writes
+ * per-org scoped data (trips, drivers, users).
+ */
+export function requireOrg(req: Request, _res: Response, next: NextFunction) {
+  if (!req.orgId) {
+    return next(
+      new AppError(
+        ErrorCode.FORBIDDEN,
+        403,
+        "Your account is not linked to an organization",
+      ),
+    );
+  }
+  next();
 }

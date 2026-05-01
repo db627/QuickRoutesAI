@@ -10,8 +10,18 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
  * total driving distance/time while respecting delivery time windows.
  * The first stop (origin) stays fixed; all other stops are reordered.
  */
-export async function optimizeStopOrder(stops: TripStop[], weatherInfo?: any, driverId?: string): Promise<{ stops: TripStop[]; reasoning: string }> {
-  if (stops.length <= 2) return { stops, reasoning: "" };
+export interface OptimizerViolationFlag {
+  stopIndex: number; // index into the reorderable stops array (origin excluded)
+  window: string;    // "HH:mm - HH:mm"
+  issue: "early" | "late";
+}
+
+export async function optimizeStopOrder(
+  stops: TripStop[],
+  weatherInfo?: any,
+  driverId?: string
+): Promise<{ stops: TripStop[]; reasoning: string; violations: OptimizerViolationFlag[] }> {
+  if (stops.length <= 2) return { stops, reasoning: "", violations: [] };
 
   const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
   const origin = sorted[0];
@@ -40,19 +50,17 @@ export async function optimizeStopOrder(stops: TripStop[], weatherInfo?: any, dr
   driverFeedbackStr = JSON.stringify(retrievedRouteFeedback, null, 2);
 }
   
-  const prompt = `You are an intelligent delivery route optimization engine.
+  const timeWindowSection = hasTimeWindows
+    ? `CRITICAL TIME WINDOW CONSTRAINTS:
+Stops marked [DELIVER BETWEEN ...] MUST be visited within that window. Prioritize these stops over distance minimization — sequence them so time-sensitive deliveries arrive on time. Only flag a violation if the constraint is physically impossible to satisfy given travel distances.
 
-Your job is to determine the best visiting order for ALL stops.
+`
+    : "";
 
-Optimization priorities (highest to lowest):
-1. Respect required delivery time windows.
-2. Minimize total driving distance and backtracking.
-3. Reduce expected delay risk from weather or traffic.
-4. Use historical driver performance only to improve ETA realism and robustness.
-5. Keep route practical and geographically efficient.
+  const prompt = `You are a route optimization engine. Given a starting point and a list of delivery stops, return the optimal order to visit ALL stops.
 
-Starting point (fixed, always first):
-"${origin.address}" (lat: ${origin.lat}, lng: ${origin.lng})
+${timeWindowSection}${hasTimeWindows && weatherInfo ? "If weather information is provided, consider it in your reasoning.\n\n" : ""}Starting point (fixed, always first):
+  "${origin.address}" (lat: ${origin.lat}, lng: ${origin.lng})
 
 Stops to reorder:
 ${stopList}
@@ -74,17 +82,14 @@ How to use weather:
 - Heavy rain / low visibility / wind may slow travel.
 - If multiple stops are similar distance, prefer the lower-risk weather order.
 - Weather should adjust route timing realism, not replace geography.
-
-Return ONLY valid JSON:
-
-{
-  "order": [2,0,4,1,3],
-  "reasoning": "Stops 2 and 0 cluster geographically, reducing backtracking. Rain and lower visibility in the western segment make it better to service eastern stops first. Driver history showed longer dwell times, so tighter clustering improves schedule reliability."
-}
-
-No markdown. No extra text.`;
   
-  console.log("Route Optimization Prompt:\n", prompt);
+Return ONLY a JSON object with THREE keys:
+- "order": array of the stop indices in optimal visiting order (e.g. [2, 0, 4, 1, 3])
+- "reasoning": one or two sentences explaining why this order minimizes travel time/distance while respecting time windows
+- "violations": array of stops that CANNOT meet their time window given this order — each entry must be { "stopIndex": <number>, "window": "<start>-<end>", "issue": "early" | "late" }. Use an empty array if there are no violations.
+
+Example: {"order": [2, 0, 4, 1, 3], "reasoning": "Stops 2 and 0 cluster in the north end.", "violations": [{"stopIndex": 3, "window": "09:00-10:00", "issue": "late"}]}
+No other text — just the JSON object.`;
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
@@ -98,14 +103,14 @@ No markdown. No extra text.`;
     throw new Error("Empty response from OpenAI");
   }
 
-  let parsed: { order: number[]; reasoning: string };
+  let parsed: { order: number[]; reasoning: string; violations?: OptimizerViolationFlag[] };
   try {
     parsed = JSON.parse(content);
   } catch {
     throw new Error(`Failed to parse OpenAI response: ${content}`);
   }
 
-  const { order: indices, reasoning } = parsed;
+  const { order: indices, reasoning, violations = [] } = parsed;
 
   if (!Array.isArray(indices) || indices.length !== rest.length) {
     throw new Error(`Invalid indices from OpenAI: expected ${rest.length} items, got ${JSON.stringify(indices)}`);
@@ -123,5 +128,5 @@ No markdown. No extra text.`;
     optimized.push({ ...rest[idx], sequence: seq + 1 });
   });
 
-  return { stops: optimized, reasoning: reasoning ?? "" };
+  return { stops: optimized, reasoning: reasoning ?? "", violations: Array.isArray(violations) ? violations : [] };
 }

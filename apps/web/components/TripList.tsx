@@ -1,28 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { collection, doc, getDoc, onSnapshot, orderBy, query, limit } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, orderBy, query, limit, where } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import type { Trip } from "@quickroutesai/shared";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
-
-const statusColors: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-600",
-  assigned: "bg-blue-50 text-blue-600",
-  in_progress: "bg-green-50 text-green-600",
-  completed: "bg-purple-50 text-purple-600",
-  cancelled: "bg-red-50 text-red-600",
-};
+import { TripCard } from "@/components/TripCard";
+import { useAuth } from "@/lib/auth-context";
 
 export default function TripList() {
+  const { orgId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [driverNames, setDriverNames] = useState<Record<string, string>>({});
   const requestedDriverIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
-    const q = query(collection(firestore, "trips"), orderBy("createdAt", "desc"), limit(20));
+    // Without an orgId we have no scope to filter by — bail rather than
+    // subscribing to the entire cross-org trips collection.
+    if (!orgId) {
+      setTrips([]);
+      setLoading(false);
+      return;
+    }
+    const q = query(
+      collection(firestore, "trips"),
+      where("orgId", "==", orgId),
+      orderBy("createdAt", "desc"),
+      limit(20),
+    );
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map((d) => ({
         id: d.id,
@@ -45,60 +52,59 @@ export default function TripList() {
       });
     });
     return unsub;
-  }, []);
+  }, [orgId]);
+
+  // Defensive: API already sorts desc, but we guarantee newest-first here too.
+  // ISO 8601 strings sort lexicographically in createdAt order.
+  const sortedTrips = useMemo(
+    () => [...trips].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")),
+    [trips],
+  );
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white">
       <div className="border-b border-gray-200 px-5 py-3">
         <h2 className="font-semibold text-gray-900">Recent Trips</h2>
       </div>
-      <div className="divide-y divide-gray-200">
+      <div className="p-4">
         {loading ? (
-          Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="flex items-center justify-between px-5 py-3">
-              <div className="space-y-1.5">
-                <SkeletonBlock className="h-3.5 w-20" />
-                <SkeletonBlock className="h-3 w-28" />
-              </div>
-              <SkeletonBlock className="h-5 w-16 rounded-full" />
-            </div>
-          ))
-        ) : trips.length === 0 ? (
-          <p className="px-5 py-6 text-center text-sm text-gray-400">No trips yet</p>
-        ) : (
-          trips.map((trip) => (
-          <Link
-            key={trip.id}
-            href={`/dashboard/trips/${trip.id}`}
-            className="flex items-center justify-between px-5 py-3 transition hover:bg-gray-50"
+          <div
+            data-testid="trip-card-grid"
+            className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
           >
-            <div>
-              <p className="text-sm font-medium text-gray-900">
-                {(trip.stops ?? []).length} stop{(trip.stops ?? []).length !== 1 && "s"}
-                {trip.route && (
-                  <span className="ml-2 text-xs font-normal text-gray-400">
-                    {(trip.route.distanceMeters / 1609.344).toFixed(1)} mi
-                  </span>
-                )}
-              </p>
-              <p className="text-xs text-gray-400">
-                {trip.driverId
-                  ? `Driver: ${driverNames[trip.driverId] || trip.driverId.slice(0, 8) + "..."}`
-                  : "Unassigned"}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {trip.route?.fuelSavingsGallons != null && trip.route.fuelSavingsGallons > 0 && (
-                <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-600">
-                  {trip.route.fuelSavingsGallons.toFixed(1)} gal saved
-                </span>
-              )}
-              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[trip.status] || ""}`}>
-                {trip.status.replace("_", " ")}
-              </span>
-            </div>
-          </Link>
-          ))
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div
+                key={i}
+                className="rounded-lg border border-gray-200 bg-white p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <SkeletonBlock className="h-3 w-16" />
+                  <SkeletonBlock className="h-5 w-16 rounded-full" />
+                </div>
+                <SkeletonBlock className="h-4 w-24" />
+                <SkeletonBlock className="h-3 w-full" />
+                <div className="flex items-center justify-between pt-1">
+                  <SkeletonBlock className="h-3 w-20" />
+                  <SkeletonBlock className="h-3 w-12" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : sortedTrips.length === 0 ? (
+          <p className="py-6 text-center text-sm text-gray-400">No trips yet</p>
+        ) : (
+          <div
+            data-testid="trip-card-grid"
+            className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
+          >
+            {sortedTrips.map((trip) => (
+              <TripCard
+                key={trip.id}
+                trip={trip}
+                driverName={trip.driverId ? driverNames[trip.driverId] : undefined}
+              />
+            ))}
+          </div>
         )}
       </div>
     </div>

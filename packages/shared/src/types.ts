@@ -10,6 +10,10 @@ export interface UserProfile {
   role: UserRole;
   status?: UserStatus; // omitted on legacy documents — treat as "active"
   createdAt: string; // ISO 8601
+  orgId?: string;
+  phone?: string;
+  timezone?: string;
+  wizardProgress?: WizardProgress;
 }
 
 // ── Driver ──
@@ -25,6 +29,24 @@ export interface DriverRecord {
   lastSpeedMps: number;
   lastHeading: number;
   updatedAt: string;
+  // Optional for backward compatibility with legacy documents that predate
+  // org-based tenancy. New driver records are always written with orgId once
+  // the driver is linked to an organization (currently only via admin signup;
+  // a driver invite flow is planned as a follow-up).
+  orgId?: string | null;
+}
+
+// ── Driver Performance ──
+export type DriverTrend = "up" | "down" | "same" | "new";
+
+export interface DriverPerformance {
+  driverId: string;
+  name: string;
+  tripCount: number;
+  avgCompletionTimeSeconds: number | null;
+  onTimePct: number | null;
+  prevTripCount: number | null;
+  trend: DriverTrend;
 }
 
 // ── Trip ──
@@ -61,6 +83,14 @@ export interface RouteLeg {
   polyline?: string; // encoded polyline from Directions API
 };
 
+export interface TimeWindowViolation {
+  stopId: string;
+  address: string;
+  window: TimeWindow;
+  estimatedArrivalAt: string; // ISO 8601
+  issue: "early" | "late";
+}
+
 export interface TripRoute {
   polyline: string; // encoded polyline from Directions API
   distanceMeters: number;
@@ -71,6 +101,33 @@ export interface TripRoute {
   fuelSavingsGallons?: number; // estimated fuel saved vs naive routing (US gallons)
   legs: RouteLeg[];
   reasoning?: string; // AI explanation of stop ordering decision
+  stopArrivalTimes?: Record<string, string>; // stopId -> ISO 8601 estimated arrival
+  timeWindowViolations?: TimeWindowViolation[];
+}
+
+export interface RouteOverride {
+  active: boolean;
+  reason: string;
+  overriddenAt: string; // ISO 8601
+  overriddenBy: string; // uid
+}
+
+// ── Predictive ETA ──
+export interface PredictedEta {
+  predictedArrivalAt: string;
+  baselineDurationSeconds: number;
+  adjustedDurationSeconds: number;
+  confidence: "low" | "medium" | "high";
+  reasoning: string;
+  factors: {
+    dayOfWeek: number;
+    timeOfDayHour: number;
+    historicalSampleSize: number;
+    weatherSummary?: string;
+  };
+  generatedAt: string;
+  actualArrivalAt?: string;
+  errorMinutes?: number;
 }
 
 export interface Trip {
@@ -83,6 +140,22 @@ export interface Trip {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+  orgId?: string;
+  stopCount?: number;
+  routeOverride?: RouteOverride;
+  predictedEta?: PredictedEta;
+}
+
+// ── Notification ──
+export type NotificationType = "trip_assigned" | "trip_completed" | "driver_offline";
+
+export interface Notification {
+  id: string;
+  type: NotificationType;
+  message: string;
+  read: boolean;
+  userId: string; // recipient uid
+  createdAt: string; // ISO 8601
 }
 
 // ── Event ──
@@ -94,6 +167,36 @@ export interface DriverEvent {
   driverId: string;
   payload: Record<string, unknown>;
   createdAt: string;
+}
+
+// ── Insights ──
+export interface DailyInsights {
+  date: string;
+  highlights: string[];
+  concerns: string[];
+  recommendations: string[];
+  generatedAt: string;
+  stats: {
+    tripsCompleted: number;
+    tripsCancelled: number;
+    activeDrivers: number;
+    avgDurationSeconds?: number;
+    avgEtaErrorMinutes?: number;
+  };
+}
+
+// ── Multi-driver optimization ──
+export interface MultiDriverPlan {
+  driverId: string;
+  driverName: string;
+  tripId: string;
+  stops: TripStop[];
+  reasoning: string;
+}
+
+export interface MultiDriverOptimizationResult {
+  plans: MultiDriverPlan[];
+  overallReasoning: string;
 }
 
 // ── API Responses ──
@@ -108,4 +211,63 @@ export interface ApiError {
 export interface HealthResponse {
   ok: boolean;
   service: string;
+}
+
+// ── Organization ──
+export type OrgIndustry = "delivery" | "logistics" | "field_service" | "other";
+export type FleetSizeBucket = "1-5" | "6-20" | "21-50" | "51-200" | "200+";
+
+export interface OrgAddress {
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+  country: string; // ISO-3166 alpha-2
+}
+
+export interface Org {
+  id: string;
+  name: string;
+  industry: OrgIndustry;
+  fleetSize: FleetSizeBucket;
+  address: OrgAddress;
+  ownerUid: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Invites ──
+export type InviteRole = "driver" | "dispatcher";
+export type InviteStatus = "pending" | "used" | "revoked";
+
+export interface Invite {
+  id: string; // == doc id == the token shown in URL
+  orgId: string;
+  email: string; // lowercased on write
+  role: InviteRole;
+  status: InviteStatus;
+  createdBy: string; // admin uid
+  createdAt: string; // ISO 8601
+  usedAt?: string; // ISO 8601 when accepted
+  usedByUid?: string; // uid that accepted
+}
+
+// Public lookup payload: a deliberately minimal projection, returned by the
+// unauthenticated GET /invites/lookup/:token endpoint.
+export interface InviteLookup {
+  email: string;
+  role: InviteRole;
+  orgId: string;
+  status: "pending";
+}
+
+// ── Wizard ──
+export interface WizardProgress {
+  currentStep: 1 | 2 | 3;
+  data: {
+    orgBasics?: { name: string; industry: OrgIndustry; fleetSize: FleetSizeBucket };
+    address?: OrgAddress;
+    adminProfile?: { name: string; phone: string; timezone: string };
+  };
+  updatedAt: string;
 }

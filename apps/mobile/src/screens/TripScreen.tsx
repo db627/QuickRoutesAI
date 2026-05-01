@@ -122,9 +122,9 @@ export default function TripScreen({ navigation }: Props) {
 
           <View className="mt-3 flex-row items-center gap-4">
             <View className="flex-row items-center gap-1">
-              <Text className="text-base font-bold text-gray-900">{item.stops.length}</Text>
+              <Text className="text-base font-bold text-gray-900">{item.stopCount ?? 0}</Text>
               <Text className="text-sm text-gray-500">
-                stop{item.stops.length !== 1 ? "s" : ""}
+                stop{(item.stopCount ?? 0) !== 1 ? "s" : ""}
               </Text>
             </View>
             {item.route && (
@@ -139,12 +139,6 @@ export default function TripScreen({ navigation }: Props) {
             <Text className="text-xs text-gray-400">Scheduled</Text>
             <Text className="text-xs font-medium text-gray-600">{formatDate(item.createdAt)}</Text>
           </View>
-
-          {item.stops.length > 0 && (
-            <Text className="mt-2 text-sm text-gray-500" numberOfLines={1}>
-              {[...item.stops].sort((a, b) => a.sequence - b.sequence)[0].address}
-            </Text>
-          )}
         </TouchableOpacity>
       )}
     />

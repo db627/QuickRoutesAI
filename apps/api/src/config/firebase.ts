@@ -12,4 +12,10 @@ if (!admin.apps.length) {
 
 export const auth = admin.auth();
 export const db = admin.firestore();
+
+// Drop undefined fields silently instead of throwing. Without this, any
+// optional field that wasn't set (e.g. route.timeWindowViolations) crashes
+// .update() / .set() with "Cannot use 'undefined' as a Firestore value".
+db.settings({ ignoreUndefinedProperties: true });
+
 export default admin;

@@ -5,6 +5,7 @@ import { APIProvider, Map, AdvancedMarker, Pin } from "@vis.gl/react-google-maps
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import type { DriverRecord } from "@quickroutesai/shared";
+import { useAuth } from "@/lib/auth-context";
 
 const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || "";
 
@@ -16,11 +17,20 @@ interface Props {
 }
 
 export default function DriverMap({ onSelectDriver }: Props) {
+  const { orgId } = useAuth();
   const [drivers, setDrivers] = useState<(DriverRecord & { uid: string })[]>([]);
 
   useEffect(() => {
-    // Subscribe to all online drivers in real time
-    const q = query(collection(firestore, "drivers"), where("isOnline", "==", true));
+    if (!orgId) {
+      setDrivers([]);
+      return;
+    }
+    // Subscribe to all online drivers in the current org in real time
+    const q = query(
+      collection(firestore, "drivers"),
+      where("orgId", "==", orgId),
+      where("isOnline", "==", true),
+    );
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map((doc) => ({
         uid: doc.id,
@@ -29,7 +39,7 @@ export default function DriverMap({ onSelectDriver }: Props) {
       setDrivers(list);
     });
     return unsub;
-  }, []);
+  }, [orgId]);
 
   if (!MAPS_KEY) {
     return (

@@ -185,17 +185,45 @@ function makeTripData(overrides: Record<string, unknown> = {}) {
 }
 
 /**
+ * Converts a stops array into a QuerySnapshot-like object for the subcollection mock.
+ */
+function makeStopsSnap(stops: ReturnType<typeof makeStop>[]) {
+  return {
+    docs: stops.map((s) => ({
+      id: s.stopId,
+      data: () => {
+        const { stopId: _id, ...rest } = s;
+        return rest;
+      },
+    })),
+  };
+}
+
+/**
  * Renders TripDetailPage with a Firestore snapshot that immediately fires
- * with the given trip data.
+ * with the given trip data. Stops are delivered via the subcollection mock.
  */
 function renderWithTrip(tripOverrides: Record<string, unknown> = {}) {
+  const tripData = makeTripData(tripOverrides);
+  // Extract stops to serve via subcollection; remove from trip doc data
+  const stops = (tripData.stops ?? []) as ReturnType<typeof makeStop>[];
+  const { stops: _stops, ...tripDocData } = tripData;
+
+  // 1st onSnapshot: trip document
   mockOnSnapshot.mockImplementationOnce(
     (_: unknown, cb: (snap: unknown) => void) => {
       cb({
         exists: () => true,
         id: "trip-123",
-        data: () => makeTripData(tripOverrides),
+        data: () => tripDocData,
       });
+      return jest.fn();
+    },
+  );
+  // 2nd onSnapshot: stops subcollection
+  mockOnSnapshot.mockImplementationOnce(
+    (_: unknown, cb: (snap: unknown) => void) => {
+      cb(makeStopsSnap(stops));
       return jest.fn();
     },
   );

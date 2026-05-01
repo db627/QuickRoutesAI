@@ -1,20 +1,17 @@
 "use client";
 
-import { useState } from "react";
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
-import { auth, firestore } from "@/lib/firebase";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { useEffect } from "react";
 
 export default function LoginPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [isRegister, setIsRegister] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -30,18 +27,7 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      if (isRegister) {
-        const cred = await createUserWithEmailAndPassword(auth, email, password);
-        // Create user profile in Firestore
-        await setDoc(doc(firestore, "users", cred.user.uid), {
-          email,
-          name,
-          role: "dispatcher", // Default role for web registrations
-          createdAt: new Date().toISOString(),
-        });
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
-      }
+      await signInWithEmailAndPassword(auth, email, password);
       router.replace("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed");
@@ -57,20 +43,10 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <h1 className="mb-1 text-3xl font-bold text-gray-900">QuickRoutesAI</h1>
         <p className="mb-8 text-sm text-gray-500">
-          {isRegister ? "Create a dispatcher account" : "Sign in to the dispatcher dashboard"}
+          Sign in to the dispatcher dashboard
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {isRegister && (
-            <input
-              type="text"
-              placeholder="Full Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none"
-            />
-          )}
           <input
             type="email"
             placeholder="Email"
@@ -96,19 +72,16 @@ export default function LoginPage() {
             disabled={submitting}
             className="w-full rounded-lg bg-brand-600 py-3 font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
           >
-            {submitting ? "Please wait..." : isRegister ? "Create Account" : "Sign In"}
+            {submitting ? "Please wait..." : "Sign In"}
           </button>
         </form>
 
-        <button
-          onClick={() => {
-            setIsRegister(!isRegister);
-            setError("");
-          }}
-          className="mt-4 w-full text-center text-sm text-gray-500 hover:text-gray-900"
-        >
-          {isRegister ? "Already have an account? Sign in" : "Need an account? Register"}
-        </button>
+        <p className="mt-4 text-center text-sm text-gray-500">
+          Need an account?{" "}
+          <Link href="/signup" className="text-gray-900 hover:underline">
+            Create one
+          </Link>
+        </p>
       </div>
     </div>
   );

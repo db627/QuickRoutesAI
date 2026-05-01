@@ -1,138 +1,54 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import StatsCards from "@/components/StatsCards";
-import { apiFetch } from "@/lib/api";
+import { onSnapshot } from "firebase/firestore";
+import { useAuth } from "@/lib/auth-context";
 
-jest.mock("@/lib/api", () => ({
-  apiFetch: jest.fn(),
+jest.mock("@/lib/firebase", () => ({ firestore: {} }));
+
+jest.mock("firebase/firestore", () => ({
+  collection: jest.fn(() => ({})),
+  query: jest.fn(() => ({})),
+  where: jest.fn(() => ({})),
+  onSnapshot: jest.fn(),
 }));
 
-// lucide-react renders SVGs which jsdom handles fine — no mock needed.
+jest.mock("@/lib/auth-context", () => ({
+  useAuth: jest.fn(),
+}));
 
-const mockedApiFetch = apiFetch as jest.MockedFunction<typeof apiFetch>;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeDriver(uid = "d1") {
-  return { uid, isOnline: true, lastLocation: null, lastSpeedMps: 0, lastHeading: 0, updatedAt: "" };
-}
-
-function makeTripStats(overrides: Partial<{ totalTrips: number; inProgressTrips: number; completedToday: number }> = {}) {
-  return { totalTrips: 0, inProgressTrips: 0, completedToday: 0, ...overrides };
-}
-
-/**
- * Sets up apiFetch mock for the two parallel calls made by StatsCards:
- *   GET /drivers/active  →  DriverRecord[]
- *   GET /trips/stats     →  { totalTrips, inProgressTrips, completedToday }
- */
-function mockSuccessfulFetch({
-  drivers = [] as object[],
-  tripStats = makeTripStats(),
-} = {}) {
-  mockedApiFetch.mockImplementation((path: string) => {
-    if (path === "/drivers/active") return Promise.resolve(drivers);
-    if (path === "/trips/stats") return Promise.resolve(tripStats);
-    return Promise.resolve({});
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+const mockOnSnapshot = onSnapshot as jest.MockedFunction<typeof onSnapshot>;
+const mockedUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
 
 describe("StatsCards", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedUseAuth.mockReturnValue({
+      user: {} as any,
+      role: "dispatcher",
+      orgId: "org-test",
+      loading: false,
+      logout: jest.fn(),
+      refresh: jest.fn(),
+    });
   });
 
-  // ── Loading state ──────────────────────────────────────────────────────────
+  it("shows skeletons while listeners have not fired", () => {
+    mockOnSnapshot.mockImplementation(() => jest.fn() as any);
 
-  it("renders 4 loading skeletons before data resolves", () => {
-    // Never-resolving promise keeps the component in the loading state
-    mockedApiFetch.mockReturnValue(new Promise(() => {}));
+    const { container } = render(<StatsCards />);
 
-    render(<StatsCards />);
-
-    const skeletons = document.querySelectorAll(".animate-pulse");
-    // Each of the 4 skeleton cards contains 3 animate-pulse blocks (label, icon, number)
-    expect(skeletons).toHaveLength(12);
-
-    // No card labels should be visible yet
+    expect(container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
     expect(screen.queryByText("Active Drivers")).not.toBeInTheDocument();
-    expect(screen.queryByText("Total Trips")).not.toBeInTheDocument();
   });
 
-  // ── Card rendering ─────────────────────────────────────────────────────────
-
-  it("renders all 4 stat cards with correct labels after data loads", async () => {
-    mockSuccessfulFetch();
-
-    render(<StatsCards />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Active Drivers")).toBeInTheDocument();
-      expect(screen.getByText("Total Trips")).toBeInTheDocument();
-      expect(screen.getByText("In-Progress Trips")).toBeInTheDocument();
-      expect(screen.getByText("Completed Today")).toBeInTheDocument();
+  it("renders all 4 stat cards with correct counts after listeners fire", async () => {
+    // listeners fire in registration order: activeDrivers, totalTrips, inProgress, completedToday
+    let call = 0;
+    const sizes = [3, 42, 7, 2];
+    mockOnSnapshot.mockImplementation((_: any, cb: any) => {
+      cb({ size: sizes[call++] });
+      return jest.fn();
     });
-
-    // Skeletons are gone
-    expect(document.querySelectorAll(".animate-pulse")).toHaveLength(0);
-  });
-
-  // ── Data display ───────────────────────────────────────────────────────────
-
-  it("displays the correct count for each stat card", async () => {
-    mockSuccessfulFetch({
-      drivers: [makeDriver("d1"), makeDriver("d2"), makeDriver("d3")],
-      tripStats: makeTripStats({ totalTrips: 42, inProgressTrips: 7, completedToday: 2 }),
-    });
-
-    render(<StatsCards />);
-
-    await waitFor(() => expect(screen.getByText("Active Drivers")).toBeInTheDocument());
-
-    expect(screen.getByText("3")).toBeInTheDocument();  // active drivers
-    expect(screen.getByText("42")).toBeInTheDocument(); // total trips
-    expect(screen.getByText("7")).toBeInTheDocument();  // in-progress
-    expect(screen.getByText("2")).toBeInTheDocument();  // completed today
-  });
-
-  it("shows zero completed today when the API returns zero", async () => {
-    mockSuccessfulFetch({
-      tripStats: makeTripStats({ completedToday: 0 }),
-    });
-
-    render(<StatsCards />);
-
-    await waitFor(() => expect(screen.getByText("Completed Today")).toBeInTheDocument());
-
-    const completedTodayLabel = screen.getByText("Completed Today");
-    const card = completedTodayLabel.closest("div.rounded-xl") as HTMLElement;
-    expect(card.querySelector("p.text-3xl")?.textContent).toBe("0");
-  });
-
-  // ── API calls ──────────────────────────────────────────────────────────────
-
-  it("fetches from the correct API endpoints", async () => {
-    mockSuccessfulFetch();
-
-    render(<StatsCards />);
-
-    await waitFor(() => expect(screen.getByText("Active Drivers")).toBeInTheDocument());
-
-    const calledPaths = mockedApiFetch.mock.calls.map(([path]) => path);
-    expect(calledPaths).toContain("/drivers/active");
-    expect(calledPaths).toContain("/trips/stats");
-    expect(mockedApiFetch).toHaveBeenCalledTimes(2);
-  });
-
-  // ── Error handling ─────────────────────────────────────────────────────────
-
-  it("still renders all 4 cards showing zeros when the API calls fail", async () => {
-    mockedApiFetch.mockRejectedValue(new Error("Network error"));
 
     render(<StatsCards />);
 
@@ -141,21 +57,45 @@ describe("StatsCards", () => {
     expect(screen.getByText("Total Trips")).toBeInTheDocument();
     expect(screen.getByText("In-Progress Trips")).toBeInTheDocument();
     expect(screen.getByText("Completed Today")).toBeInTheDocument();
-
-    const zeros = screen.getAllByText("0");
-    expect(zeros).toHaveLength(4);
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("42")).toBeInTheDocument();
+    expect(screen.getByText("7")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
   });
 
-  // ── Responsive grid ────────────────────────────────────────────────────────
+  it("unsubscribes all 4 listeners on unmount", () => {
+    const unsubs = [jest.fn(), jest.fn(), jest.fn(), jest.fn()];
+    let call = 0;
+    mockOnSnapshot.mockImplementation(() => unsubs[call++]);
 
-  it("renders the responsive grid container with correct Tailwind classes", () => {
-    mockedApiFetch.mockReturnValue(new Promise(() => {}));
+    const { unmount } = render(<StatsCards />);
+    unmount();
 
-    const { container } = render(<StatsCards />);
+    unsubs.forEach((unsub) => expect(unsub).toHaveBeenCalledTimes(1));
+  });
 
-    const grid = container.firstElementChild;
-    expect(grid?.className).toContain("grid-cols-1");
-    expect(grid?.className).toContain("sm:grid-cols-2");
-    expect(grid?.className).toContain("lg:grid-cols-4");
+  it("updates a stat in real time when a listener fires after initial load", async () => {
+    const callbacks: ((snap: { size: number }) => void)[] = [];
+    mockOnSnapshot.mockImplementation((_: any, cb: any) => {
+      callbacks.push(cb);
+      return jest.fn();
+    });
+
+    render(<StatsCards />);
+
+    act(() => {
+      callbacks[0]?.({ size: 2 }); // activeDrivers
+      callbacks[1]?.({ size: 10 }); // totalTrips
+      callbacks[2]?.({ size: 1 }); // inProgress
+      callbacks[3]?.({ size: 0 }); // completedToday
+    });
+
+    await waitFor(() => expect(screen.getByText("2")).toBeInTheDocument());
+
+    act(() => {
+      callbacks[0]?.({ size: 5 }); // a new driver comes online
+    });
+
+    await waitFor(() => expect(screen.getByText("5")).toBeInTheDocument());
   });
 });

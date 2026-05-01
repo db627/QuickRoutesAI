@@ -1,6 +1,6 @@
 import { auth } from "./firebase";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(/\/$/, "");
+export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(/\/$/, "");
 
 /**
  * Authenticated fetch wrapper — attaches Firebase ID token to every request.

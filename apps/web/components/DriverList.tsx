@@ -5,19 +5,32 @@ import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import type { DriverRecord, UserProfile } from "@quickroutesai/shared";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+import { useAuth } from "@/lib/auth-context";
 
 interface Props {
   onSelectDriver?: (uid: string) => void;
 }
 
 export default function DriverList({ onSelectDriver }: Props) {
+  const { orgId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [drivers, setDrivers] = useState<(DriverRecord & { uid: string })[]>([]);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    // Subscribe to online drivers
-    const q = query(collection(firestore, "drivers"), where("isOnline", "==", true));
+    // Without an orgId we have no scope to filter by — bail rather than
+    // subscribing to the entire cross-org drivers collection.
+    if (!orgId) {
+      setDrivers([]);
+      setLoading(false);
+      return;
+    }
+    // Subscribe to online drivers in the current org
+    const q = query(
+      collection(firestore, "drivers"),
+      where("orgId", "==", orgId),
+      where("isOnline", "==", true),
+    );
     const unsub = onSnapshot(q, (snapshot) => {
       setDrivers(
         snapshot.docs.map((doc) => ({
@@ -28,11 +41,16 @@ export default function DriverList({ onSelectDriver }: Props) {
       setLoading(false);
     });
     return unsub;
-  }, []);
+  }, [orgId]);
 
   useEffect(() => {
-    // Subscribe to all users to get display names
-    const unsub = onSnapshot(collection(firestore, "users"), (snapshot) => {
+    if (!orgId) {
+      setUserNames({});
+      return;
+    }
+    // Subscribe to org users to get display names
+    const q = query(collection(firestore, "users"), where("orgId", "==", orgId));
+    const unsub = onSnapshot(q, (snapshot) => {
       const names: Record<string, string> = {};
       snapshot.docs.forEach((doc) => {
         const data = doc.data() as UserProfile;
@@ -43,7 +61,7 @@ export default function DriverList({ onSelectDriver }: Props) {
       setUserNames(names);
     });
     return unsub;
-  }, []);
+  }, [orgId]);
 
   const isStale = (updatedAt: string) => {
     const diff = Date.now() - new Date(updatedAt).getTime();

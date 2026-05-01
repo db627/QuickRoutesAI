@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, TouchableOpacity, ActivityIndicator, ScrollView } from "react-native";
 import MapView, { Polyline, Marker, PROVIDER_GOOGLE } from "react-native-maps";
-import { doc, getDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs } from "firebase/firestore";
 import { firestore } from "../config/firebase";
-import type { Trip } from "@quickroutesai/shared";
+import type { Trip, TripStop } from "@quickroutesai/shared";
 
 function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
   const points: { latitude: number; longitude: number }[] = [];
@@ -44,12 +44,32 @@ export default function TripCompletionScreen({ route, navigation }: Props) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getDoc(doc(firestore, "trips", tripId)).then((snapshot) => {
-      if (snapshot.exists()) {
-        setTrip({ id: snapshot.id, ...(snapshot.data() as Omit<Trip, "id">) });
+    let cancelled = false;
+    (async () => {
+      try {
+        const [tripSnap, stopsSnap] = await Promise.all([
+          getDoc(doc(firestore, "trips", tripId)),
+          getDocs(collection(firestore, "trips", tripId, "stops")),
+        ]);
+        if (cancelled) return;
+        if (tripSnap.exists()) {
+          const stops: TripStop[] = stopsSnap.docs.map((d) => ({
+            stopId: d.id,
+            ...(d.data() as Omit<TripStop, "stopId">),
+          }));
+          setTrip({
+            id: tripSnap.id,
+            ...(tripSnap.data() as Omit<Trip, "id">),
+            stops,
+          });
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      setLoading(false);
-    });
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [tripId]);
 
   if (loading) {
@@ -60,10 +80,11 @@ export default function TripCompletionScreen({ route, navigation }: Props) {
     );
   }
 
-  const sortedStops = trip ? [...trip.stops].sort((a, b) => a.sequence - b.sequence) : [];
+  const sortedStops = trip ? [...(trip.stops ?? [])].sort((a, b) => a.sequence - b.sequence) : [];
   const routeCoords = trip?.route?.polyline ? decodePolyline(trip.route.polyline) : [];
   const distanceKm = trip?.route ? (trip.route.distanceMeters / 1000).toFixed(1) : null;
   const durationMin = trip?.route ? Math.round(trip.route.durationSeconds / 60) : null;
+  const stopCountDisplay = trip?.stopCount ?? sortedStops.length;
 
   return (
     <ScrollView className="flex-1 bg-gray-50" contentContainerStyle={{ padding: 24 }}>
@@ -79,7 +100,7 @@ export default function TripCompletionScreen({ route, navigation }: Props) {
       {/* Stats */}
       <View className="mb-5 flex-row gap-3">
         <View className="flex-1 items-center rounded-xl border border-gray-200 bg-white py-4">
-          <Text className="text-2xl font-bold text-gray-900">{trip?.stops.length ?? 0}</Text>
+          <Text className="text-2xl font-bold text-gray-900">{stopCountDisplay}</Text>
           <Text className="mt-1 text-xs text-gray-500">Stops</Text>
         </View>
         <View className="flex-1 items-center rounded-xl border border-gray-200 bg-white py-4">

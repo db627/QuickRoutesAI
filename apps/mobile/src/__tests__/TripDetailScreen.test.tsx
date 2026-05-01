@@ -5,7 +5,7 @@ import TripDetailScreen from '../screens/TripDetailScreen';
 import { apiFetch } from '../services/api';
 import { startTracking, stopTracking } from '../services/location';
 import { openNavigation } from '../services/navigation';
-import { onSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
 
 let mockIsConnected = true;
 
@@ -15,7 +15,8 @@ jest.mock('../config/firebase', () => ({
 }));
 
 jest.mock('firebase/firestore', () => ({
-  doc: jest.fn().mockReturnValue({}),
+  doc: jest.fn(),
+  collection: jest.fn(),
   onSnapshot: jest.fn(),
 }));
 
@@ -47,12 +48,14 @@ jest.mock('react-native-maps', () => ({
 const mockRoute = { params: { tripId: 'trip1' } };
 const mockNavigation = { navigate: jest.fn() };
 
+const baseStops = [
+  { stopId: 's1', address: '123 Main St', lat: 40.7128, lng: -74.006, sequence: 1, notes: '' },
+  { stopId: 's2', address: '456 Oak Ave', lat: 40.72, lng: -74.01, sequence: 2, notes: 'Ring bell' },
+];
+
 const baseTrip = {
   driverId: 'driver123',
-  stops: [
-    { stopId: 's1', address: '123 Main St', lat: 40.7128, lng: -74.006, sequence: 1, notes: '' },
-    { stopId: 's2', address: '456 Oak Ave', lat: 40.72, lng: -74.01, sequence: 2, notes: 'Ring bell' },
-  ],
+  stopCount: 2,
   route: null,
   createdAt: '2026-03-22T00:00:00Z',
   updatedAt: '2026-03-22T00:00:00Z',
@@ -62,9 +65,16 @@ const baseTrip = {
 const assignedTrip = { ...baseTrip, status: 'assigned' };
 const inProgressTrip = { ...baseTrip, status: 'in_progress' };
 
-function mockDocSnapshot(tripData: object | null) {
-  (onSnapshot as jest.Mock).mockImplementation((_ref, callback) => {
-    if (tripData === null) {
+function mockDocSnapshot(tripData: object | null, stops: typeof baseStops = baseStops) {
+  (onSnapshot as jest.Mock).mockImplementation((ref, callback) => {
+    if (ref && ref.__kind === 'collection') {
+      callback({
+        docs: stops.map((s) => {
+          const { stopId, ...rest } = s;
+          return { id: stopId, data: () => rest };
+        }),
+      });
+    } else if (tripData === null) {
       callback({ exists: () => false, id: 'trip1', data: () => ({}) });
     } else {
       callback({ exists: () => true, id: 'trip1', data: () => tripData });
@@ -81,6 +91,8 @@ describe('TripDetailScreen', () => {
     (apiFetch as jest.Mock).mockResolvedValue({});
     (startTracking as jest.Mock).mockResolvedValue(true);
     (stopTracking as jest.Mock).mockResolvedValue(undefined);
+    (doc as jest.Mock).mockReturnValue({ __kind: 'doc' });
+    (collection as jest.Mock).mockReturnValue({ __kind: 'collection' });
   });
 
   it('shows trip not found when document does not exist', () => {
@@ -124,8 +136,12 @@ describe('TripDetailScreen', () => {
     // Last Navigate button is the footer one
     fireEvent.press(navigateButtons[navigateButtons.length - 1]);
     await waitFor(() => {
-      expect(openNavigation).toHaveBeenCalledWith(tripWithRoute.stops);
+      expect(openNavigation).toHaveBeenCalled();
     });
+    const passedStops = (openNavigation as jest.Mock).mock.calls[0][0];
+    expect(passedStops).toHaveLength(2);
+    expect(passedStops[0].address).toBe('123 Main St');
+    expect(passedStops[1].address).toBe('456 Oak Ave');
   });
 
   it('calls apiFetch and startTracking when Start Trip is tapped', async () => {

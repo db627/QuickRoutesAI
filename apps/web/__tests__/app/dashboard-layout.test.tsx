@@ -39,9 +39,11 @@ describe("DashboardLayout", () => {
     mockedUseAuth.mockReturnValue({
       user: { uid: "u1" } as never,
       role: "admin",
+      orgId: "org-default",
       loading: false,
       logout: jest.fn(),
-    });
+      refresh: jest.fn(),
+    } as any);
   });
 
   it("opens drawer from hamburger button and closes on route change", async () => {
@@ -68,7 +70,7 @@ describe("DashboardLayout", () => {
     });
   });
 
-  it("uses overflow-safe container and mobile-only hamburger header classes", () => {
+  it("renders top bar on all screen sizes with overflow-safe container", () => {
     const { container } = render(
       <DashboardLayout>
         <div>child</div>
@@ -76,9 +78,72 @@ describe("DashboardLayout", () => {
     );
 
     const header = container.querySelector("header");
-    expect(header?.className).toContain("md:hidden");
+    expect(header).toBeInTheDocument();
+    // hamburger button is mobile-only; bell is always visible
+    const hamburger = header?.querySelector("button[aria-label='Open navigation menu']");
+    expect(hamburger?.className).toContain("md:hidden");
 
     const overflowRow = container.querySelector("div.flex.flex-1.overflow-hidden");
     expect(overflowRow).toBeInTheDocument();
+  });
+
+  it("redirects admin without orgId to /onboarding", () => {
+    const replace = jest.fn();
+    mockedUseRouter.mockReturnValue({ replace } as any);
+    mockedUseAuth.mockReturnValue({
+      user: { uid: "u1" } as never,
+      role: "admin",
+      orgId: null,
+      loading: false,
+      logout: jest.fn(),
+      refresh: jest.fn(),
+    } as any);
+
+    render(
+      <DashboardLayout>
+        <div>child</div>
+      </DashboardLayout>,
+    );
+
+    expect(replace).toHaveBeenCalledWith("/onboarding");
+  });
+
+  it("renders NoOrgNotice for non-admin without orgId", () => {
+    mockedUseAuth.mockReturnValue({
+      user: { uid: "u1" } as never,
+      role: "driver",
+      orgId: null,
+      loading: false,
+      logout: jest.fn(),
+      refresh: jest.fn(),
+    } as any);
+
+    render(
+      <DashboardLayout>
+        <div data-testid="protected-child">child</div>
+      </DashboardLayout>,
+    );
+
+    expect(screen.getByText(/Waiting for organization setup/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("protected-child")).not.toBeInTheDocument();
+  });
+
+  it("renders children when admin has orgId", () => {
+    mockedUseAuth.mockReturnValue({
+      user: { uid: "u1" } as never,
+      role: "admin",
+      orgId: "org-abc",
+      loading: false,
+      logout: jest.fn(),
+      refresh: jest.fn(),
+    } as any);
+
+    render(
+      <DashboardLayout>
+        <div data-testid="protected-child">child</div>
+      </DashboardLayout>,
+    );
+
+    expect(screen.getByTestId("protected-child")).toBeInTheDocument();
   });
 });

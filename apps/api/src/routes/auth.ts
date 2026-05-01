@@ -8,7 +8,9 @@ import {
   createUserProfileSchema,
   signupSchema,
   loginSchema,
+  ErrorCode,
 } from "@quickroutesai/shared";
+import { AppError } from "../utils/AppError";
 
 const router = Router();
 
@@ -60,28 +62,149 @@ async function signInWithFirebase(
  */
 router.post("/signup", signupLimiter, validate(signupSchema), async (req, res) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, orgCode, inviteToken } = req.body as {
+      email: string;
+      password: string;
+      name: string;
+      role?: "driver" | "dispatcher" | "admin";
+      orgCode?: string;
+      inviteToken?: string;
+    };
+
+    // ── Invite-driven signup ────────────────────────────────────────────
+    // If an inviteToken is supplied we IGNORE the body's role/orgCode and use
+    // the values stamped on the invite. This prevents an attacker from
+    // upgrading their own role by passing role=admin alongside a driver
+    // invite. The invite is consumed in the same Firestore transaction that
+    // creates the user / driver docs so we don't end up with an orphaned
+    // user when the invite write races.
+    if (inviteToken) {
+      const inviteRef = db.collection("invites").doc(inviteToken);
+      const inviteSnap = await inviteRef.get();
+      if (!inviteSnap.exists) {
+        return res.status(400).json({ error: "Invalid or expired invite" });
+      }
+      const invite = inviteSnap.data() as {
+        email: string;
+        role: "driver" | "dispatcher";
+        orgId: string;
+        status: string;
+      };
+      if (invite.status !== "pending") {
+        return res.status(400).json({ error: "Invalid or expired invite" });
+      }
+      if (invite.email.toLowerCase() !== email.toLowerCase()) {
+        return res
+          .status(400)
+          .json({ error: "Email does not match invite" });
+      }
+
+      // Create user in Firebase Auth first; if this fails we abort before
+      // touching Firestore.
+      const userRecord = await auth.createUser({ email, password });
+
+      const now = new Date().toISOString();
+      const userRef = db.collection("users").doc(userRecord.uid);
+      const driverRef = db.collection("drivers").doc(userRecord.uid);
+
+      await db.runTransaction(async (tx) => {
+        // Re-read the invite inside the transaction so a concurrent acceptance
+        // / revoke can't sneak past the earlier check.
+        const fresh = await tx.get(inviteRef);
+        if (!fresh.exists || fresh.data()?.status !== "pending") {
+          throw new AppError(
+            ErrorCode.BAD_REQUEST,
+            400,
+            "Invalid or expired invite",
+          );
+        }
+
+        tx.set(userRef, {
+          email,
+          name,
+          role: invite.role,
+          active: true,
+          orgId: invite.orgId,
+          createdAt: now,
+        });
+
+        if (invite.role === "driver") {
+          tx.set(driverRef, {
+            isOnline: false,
+            lastLocation: null,
+            lastSpeedMps: 0,
+            lastHeading: 0,
+            orgId: invite.orgId,
+            updatedAt: now,
+          });
+        }
+
+        tx.update(inviteRef, {
+          status: "used",
+          usedAt: now,
+          usedByUid: userRecord.uid,
+        });
+      });
+
+      const signInResult = await signInWithFirebase(email, password);
+
+      return res.status(201).json({
+        token: signInResult.idToken,
+        refreshToken: signInResult.refreshToken,
+        expiresIn: signInResult.expiresIn,
+        user: {
+          uid: userRecord.uid,
+          email,
+          name,
+          role: invite.role,
+        },
+      });
+    }
+
+    const resolvedRole = role || "driver";
+
+    // Two-path signup: either the signup creates a new business (admin without
+    // orgCode; they'll run the onboarding wizard on first dashboard visit) or
+    // joins an existing one (orgCode required). Non-admin roles can only exist
+    // within an org, so we reject driver/dispatcher signups that omit orgCode.
+    if (orgCode) {
+      const orgSnap = await db.collection("orgs").doc(orgCode).get();
+      if (!orgSnap.exists) {
+        return res.status(400).json({ error: "Invalid organization code" });
+      }
+    } else if (resolvedRole !== "admin") {
+      return res.status(400).json({
+        error:
+          "Organization code is required when signing up as driver or dispatcher",
+      });
+    }
 
     // Create user in Firebase Auth
     const userRecord = await auth.createUser({ email, password });
 
-    // Create user profile in Firestore
-    const profile = {
+    // Create user profile in Firestore — stamp orgId iff an orgCode was provided.
+    const profile: Record<string, unknown> = {
       email,
       name,
-      role: role || "driver",
+      role: resolvedRole,
       active: true,
       createdAt: new Date().toISOString(),
     };
+    if (orgCode) profile.orgId = orgCode;
+
     await db.collection("users").doc(userRecord.uid).set(profile);
 
-    // If driver, also create driver document
-    if (profile.role === "driver") {
+    // If driver, also create driver document. If orgCode was supplied, stamp
+    // it on the driver doc so the driver is immediately visible to org-scoped
+    // listings. If not (shouldn't happen now that we reject driver-without-
+    // orgCode above, but defensive), leave orgId null.
+    if (resolvedRole === "driver") {
       await db.collection("drivers").doc(userRecord.uid).set({
         isOnline: false,
         lastLocation: null,
         lastSpeedMps: 0,
         lastHeading: 0,
+        orgId: orgCode ?? null,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -97,10 +220,14 @@ router.post("/signup", signupLimiter, validate(signupSchema), async (req, res) =
         uid: userRecord.uid,
         email,
         name,
-        role: profile.role,
+        role: resolvedRole,
       },
     });
   } catch (err: unknown) {
+    if (err instanceof AppError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+
     const message =
       err instanceof Error ? err.message : "Failed to create account";
 
@@ -194,13 +321,16 @@ router.post(
 
       await userRef.set(profile);
 
-      // If driver, also create driver document
+      // If driver, also create driver document.
+      // See POST /auth/signup — orgId is explicitly null until a driver
+      // invite flow links them to an org.
       if (profile.role === "driver") {
         await db.collection("drivers").doc(req.uid).set({
           isOnline: false,
           lastLocation: null,
           lastSpeedMps: 0,
           lastHeading: 0,
+          orgId: null,
           updatedAt: new Date().toISOString(),
         });
       }

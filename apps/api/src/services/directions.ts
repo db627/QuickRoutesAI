@@ -1,6 +1,6 @@
 import { Client, TravelMode, Status } from "@googlemaps/google-maps-services-js";
 import { decode, encode } from "@googlemaps/polyline-codec";
-import type { TripRoute, TripStop, RouteLeg } from "@quickroutesai/shared";
+import type { TripRoute, TripStop, RouteLeg, TimeWindowViolation } from "@quickroutesai/shared";
 import { optimizeStopOrder } from "./routeOptimizer";
 import { computeWeather } from "./weather";
 const client = new Client({});
@@ -109,12 +109,89 @@ function durationStrToSeconds(v?: string): number {
 }
 
 /**
+ * Compute estimated arrival ISO timestamps for each stop from the departure time and leg durations.
+ * Returns a map of stopId -> ISO 8601 arrival time.
+ */
+export function computeStopArrivalTimes(
+  legs: RouteLeg[],
+  orderedStops: TripStop[],
+  departureMs: number,
+  hasOriginOverride: boolean,
+): Record<string, string> {
+  const arrivals: Record<string, string> = {};
+  let cumulativeMs = 0;
+  for (let i = 0; i < legs.length; i++) {
+    cumulativeMs += legs[i].durationSeconds * 1000;
+    // With originOverride: leg[i] ends at orderedStops[i]; without: leg[i] ends at orderedStops[i+1]
+    const stop = hasOriginOverride ? orderedStops[i] : orderedStops[i + 1];
+    if (stop?.stopId) {
+      arrivals[stop.stopId] = new Date(departureMs + cumulativeMs).toISOString();
+    }
+  }
+  return arrivals;
+}
+
+/**
+ * Check per-stop arrival times against time windows and return violations.
+ */
+export function detectTimeWindowViolations(
+  stops: TripStop[],
+  arrivalTimes: Record<string, string>,
+): TimeWindowViolation[] {
+  const violations: TimeWindowViolation[] = [];
+  for (const stop of stops) {
+    if (!stop.timeWindow || !arrivalTimes[stop.stopId]) continue;
+    const arrivalDate = new Date(arrivalTimes[stop.stopId]);
+    const arrivalMinutes = arrivalDate.getUTCHours() * 60 + arrivalDate.getUTCMinutes();
+    const [startH, startM] = stop.timeWindow.start.split(":").map(Number);
+    const [endH, endM] = stop.timeWindow.end.split(":").map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+    if (arrivalMinutes < startMinutes) {
+      violations.push({ stopId: stop.stopId, address: stop.address, window: stop.timeWindow, estimatedArrivalAt: arrivalTimes[stop.stopId], issue: "early" });
+    } else if (arrivalMinutes > endMinutes) {
+      violations.push({ stopId: stop.stopId, address: stop.address, window: stop.timeWindow, estimatedArrivalAt: arrivalTimes[stop.stopId], issue: "late" });
+    }
+  }
+  return violations;
+}
+
+export interface ComputeRouteOptions {
+  /** When true, skip the AI optimizeStopOrder call and use the input order directly. */
+  skipOptimization?: boolean;
+  /** Optional driver origin to use as the route starting point. */
+  originOverride?: RouteOrigin;
+}
+
+/**
  * Compute an optimized route through stops.
  * 1. OpenAI reorders stops for the best driving order (origin stays first).
  * 2. Google Directions computes the actual route along the optimized order.
  * Returns both the route and the reordered stops with updated sequence numbers.
+ *
+ * Pass `{ skipOptimization: true }` to bypass AI reordering and preserve the
+ * input stop order (used by the manual override endpoint).
  */
-export async function computeRoute(stops: TripStop[], originOverride?: RouteOrigin, driverId:string = "no user"): Promise<ComputeRouteResult> {
+export async function computeRoute(
+  stops: TripStop[],
+  optionsOrOrigin?: ComputeRouteOptions | RouteOrigin,
+  driverId:string = "no user"
+): Promise<ComputeRouteResult> {
+  // Support legacy call signature: computeRoute(stops, originOverride)
+  // as well as new options object: computeRoute(stops, { skipOptimization, originOverride })
+  let skipOptimization = false;
+  let originOverride: RouteOrigin | undefined;
+  if (optionsOrOrigin) {
+    if ("skipOptimization" in optionsOrOrigin || ("originOverride" in optionsOrOrigin && !("lat" in optionsOrOrigin))) {
+      // It's a ComputeRouteOptions object
+      const opts = optionsOrOrigin as ComputeRouteOptions;
+      skipOptimization = opts.skipOptimization ?? false;
+      originOverride = opts.originOverride;
+    } else {
+      // Legacy: plain RouteOrigin { lat, lng }
+      originOverride = optionsOrOrigin as RouteOrigin;
+    }
+  }
   const apiKey = getApiKey();
 
   const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
@@ -147,46 +224,49 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
 
   const naiveDistanceMeters = Math.round(naiveTotalDistance(naivePath));
 
-  // Step 1: Use OpenAI to find the optimal stop order
+  // Step 1: Use OpenAI to find the optimal stop order (skipped when skipOptimization is true)
   let optimizedStops: TripStop[];
   let optimizationReasoning = "";
-  try {
-    const weatherInfo = await computeWeather(stops) || undefined;
 
-    
-    if (originOverride) {
-      const syntheticOrigin: TripStop = {
-        contactName: "Driver Current Location",
-        stopId: "__driver_origin__",
-        address: "Driver Current Location",
-        lat: originOverride.lat,
-        lng: originOverride.lng,
-        sequence: -1,
-        notes: "",
-      };
-
-  
-      const withOrigin = sorted.map((s, idx) => ({ ...s, sequence: idx + 1 }));
-      const result = await optimizeStopOrder([syntheticOrigin, ...withOrigin], weatherInfo, driverId);
-
-      optimizedStops = result.stops
-        .slice(1)
-        .map((s, idx) => ({ ...s, sequence: idx }));
-
-      optimizationReasoning = result.reasoning;
-
-    } else {
-      const result = await optimizeStopOrder(sorted, weatherInfo, driverId);
-      optimizedStops = result.stops;
-      optimizationReasoning = result.reasoning;
-    }
-    console.log("OpenAI optimized stop order:", optimizedStops.map((s) => `${s.sequence}: ${s.address}`));
-  } catch (err) {
-    console.error("OpenAI optimization failed, using original order:", err);
+  if (skipOptimization) {
+    // Manual override — preserve the caller's stop order exactly.
     optimizedStops = sorted.map((s, i) => ({ ...s, sequence: i }));
+    optimizationReasoning = "Manual override — AI optimization skipped";
+    console.log("Skipping AI optimization, using input order:", optimizedStops.map((s) => `${s.sequence}: ${s.address}`));
+  } else {
+    try {
+      const weatherInfo = await computeWeather(stops) || undefined;
+
+      if (originOverride) {
+        const syntheticOrigin: TripStop = {
+          stopId: "__driver_origin__",
+          address: "Driver Current Location",
+          contactName: "",
+          lat: originOverride.lat,
+          lng: originOverride.lng,
+          sequence: -1,
+          notes: "",
+        };
+
+        const withOrigin = sorted.map((s, idx) => ({ ...s, sequence: idx + 1 }));
+        const optimizedWithOrigin = await optimizeStopOrder([syntheticOrigin, ...withOrigin], weatherInfo);
+
+        optimizedStops = optimizedWithOrigin.stops.slice(1).map((s, idx) => ({ ...s, sequence: idx }));
+        optimizationReasoning = optimizedWithOrigin.reasoning;
+      } else {
+        const result = await optimizeStopOrder(sorted, weatherInfo);
+        optimizedStops = result.stops;
+        optimizationReasoning = result.reasoning;
+      }
+      console.log("OpenAI optimized stop order:", optimizedStops.map((s) => `${s.sequence}: ${s.address}`));
+    } catch (err) {
+      console.error("OpenAI optimization failed, using original order:", err);
+      optimizedStops = sorted.map((s, i) => ({ ...s, sequence: i }));
+    }
   }
 
   // Step 2: Compute the actual route via Google Directions using optimized order
+  const departureMs = Date.now() + 2 * 60 * 1000;
   const origin = originOverride ?? optimizedStops[0];
   const destination = optimizedStops[optimizedStops.length - 1];
   const intermediates = originOverride
@@ -220,7 +300,7 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
     })),
     travelMode: "DRIVE",
     routingPreference: "TRAFFIC_AWARE",
-    departureTime: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
+    departureTime: new Date(departureMs).toISOString(),
     computeAlternativeRoutes: false,
   };
 
@@ -290,6 +370,9 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
   const fuelSavingsGallons =
     Math.round(distanceSavedMeters * FUEL_CONSUMPTION_GAL_PER_M * 100) / 100;
 
+  const stopArrivalTimes = computeStopArrivalTimes(legs, optimizedStops, departureMs, !!originOverride);
+  const timeWindowViolations = detectTimeWindowViolations(optimizedStops, stopArrivalTimes);
+
   const result: ComputeRouteResult = {
     route: {
       polyline: route.polyline?.encodedPolyline ?? "",
@@ -300,6 +383,8 @@ export async function computeRoute(stops: TripStop[], originOverride?: RouteOrig
       legs,
       reasoning: optimizationReasoning,
       createdAt: new Date().toISOString(),
+      stopArrivalTimes,
+      timeWindowViolations: timeWindowViolations.length > 0 ? timeWindowViolations : undefined,
     },
     optimizedStops,
   };

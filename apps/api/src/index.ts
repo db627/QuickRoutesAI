@@ -3,7 +3,7 @@ import { env } from "./config/env";
 import express from "express";
 import cors from "cors";
 import { requestLogger } from "./middleware/logger";
-import { globalLimiter, quoteLimiter } from "./middleware/rateLimiter";
+import { globalLimiter, quoteLimiter, telemetryLimiter } from "./middleware/rateLimiter";
 import { verifyFirebaseToken } from "./middleware/auth";
 import healthRoutes from "./routes/health";
 import meRoutes from "./routes/me";
@@ -12,7 +12,11 @@ import driverRoutes from "./routes/drivers";
 import tripRoutes from "./routes/trips";
 import userRoutes from "./routes/users";
 import aiRoutes from "./routes/ai";
+import insightsRoutes from "./routes/insights";
 import quoteRoutes from "./routes/quote";
+import orgRoutes from "./routes/orgs";
+import inviteRoutes from "./routes/invites";
+import telemetryRoutes from "./routes/telemetry";
 import { errorHandler } from "./middleware/errorHandler";
 const app = express();
 
@@ -25,6 +29,7 @@ app.use(globalLimiter);
 // Public routes
 app.use("/health", healthRoutes);
 app.use("/auth", authRoutes); // login & signup are public; setup applies its own middleware
+app.use("/invites", inviteRoutes); // GET /invites/lookup/:token is public; other endpoints apply auth inside the router
 app.use("/quote", quoteLimiter, quoteRoutes);
 
 // Protected routes (require Firebase auth)
@@ -33,6 +38,9 @@ app.use("/drivers", verifyFirebaseToken, driverRoutes);
 app.use("/trips", verifyFirebaseToken, tripRoutes);
 app.use("/users", verifyFirebaseToken, userRoutes);
 app.use("/ai", verifyFirebaseToken, aiRoutes);
+app.use("/orgs", verifyFirebaseToken, orgRoutes);
+app.use("/insights", verifyFirebaseToken, insightsRoutes);
+app.use("/telemetry", verifyFirebaseToken, telemetryLimiter, telemetryRoutes);
 
 // Global error handler
 app.use(errorHandler);

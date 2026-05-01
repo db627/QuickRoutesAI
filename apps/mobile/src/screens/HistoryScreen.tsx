@@ -70,7 +70,7 @@ export default function HistoryScreen() {
           <View className="mb-3 rounded-xl border border-gray-200 bg-white p-4">
             <View className="flex-row items-center justify-between mb-2">
               <Text className="font-semibold text-gray-900">
-                {item.stops.length} stop{item.stops.length !== 1 && "s"}
+                {item.stopCount ?? 0} stop{(item.stopCount ?? 0) !== 1 && "s"}
               </Text>
               <Text className="text-xs text-gray-400">
                 {new Date(item.updatedAt).toLocaleDateString()}
@@ -87,9 +87,6 @@ export default function HistoryScreen() {
                 </Text>
               </View>
             )}
-            <Text className="text-xs text-gray-400 mt-1" numberOfLines={1}>
-              {item.stops[0]?.address || "Unknown"} &rarr; {item.stops[item.stops.length - 1]?.address || "Unknown"}
-            </Text>
           </View>
         )}
       />
