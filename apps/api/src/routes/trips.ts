@@ -681,4 +681,49 @@ router.post("/:id/cancel", requireRole("dispatcher", "admin"), async (req, res, 
   }
 });
 
+
+/**
+ *  POST to mock a quick completed trip for testing analytics and AI features without going through the full workflow.
+ */
+
+router.post("/completed-trip", requireRole("admin"), async (req, res) => {
+  try {
+    const tripId = req.body.tripId ?? "test_completed_trip_001";
+
+    const tripRef = db.collection("trips").doc(tripId);
+
+    const stops = req.body.stops ?? [];
+
+    const { stops: _stops, ...tripData } = req.body;
+
+    await tripRef.set({
+      ...tripData,
+      status: "completed",
+      createdAt: tripData.createdAt ?? new Date().toISOString(),
+      updatedAt: tripData.updatedAt ?? new Date().toISOString(),
+    });
+
+    const batch = db.batch();
+
+    for (const stop of stops) {
+      const stopRef = tripRef.collection("stops").doc(stop.stopId);
+      batch.set(stopRef, {
+        ...stop,
+        start_time: Timestamp.fromDate(new Date(stop.start_time)),
+        end_time: Timestamp.fromDate(new Date(stop.end_time)),
+      });
+    }
+
+    await batch.commit();
+
+    res.status(201).json({
+      message: "Mock completed trip created",
+      tripId,
+      stopsCreated: stops.length,
+    });
+  } catch (err) {
+    console.error("Failed to create mock trip:", err);
+    res.status(500).json({ error: "Failed to create mock trip" });
+  }
+});
 export default router;

@@ -1468,7 +1468,7 @@ export async function retrieveRouteFeedback(
 }
 
 
-// ───  AI-powered Driver Performance ─────────────────────────
+// ─── AI-powered Driver Performance ─────────────────────────
 
 type TrendDirection = "improving" | "declining" | "stable";
 
@@ -1506,49 +1506,14 @@ function clampScore(score: number): number {
   return Math.max(1, Math.min(100, Math.round(score)));
 }
 
-async function fetchTripStops(tripId: string): Promise<RouteStopLike[]> {
-  const stopsSnapshot = await db
-    .collection("trips")
-    .doc(tripId)
-    .collection("stops")
-    .orderBy("sequence")
-    .get();
-
-  return stopsSnapshot.docs.map((doc) => ({
-    stopId: doc.id,
-    ...doc.data(),
-  })) as RouteStopLike[];
+function avg(nums: number[]): number {
+  return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
 }
 
-function computeDwellMinutes(stops: RouteStopLike[]): number[] {
-  return stops
-    .map((s) => {
-      if (!s.start_time || !s.end_time) return 0;
-
-      const start = toTimestamp(s.start_time);
-      const end = toTimestamp(s.end_time);
-
-      return Math.max(0, (end.seconds - start.seconds) / 60);
-    })
-    .filter((minutes) => minutes > 0);
+function sum(nums: number[]): number {
+  return nums.reduce((a, b) => a + b, 0);
 }
 
-function computeOnTimeRatePercent(trips: any[]): number {
-  const feedbackTrips = trips.filter((t) => t.feedbackAnalysis);
-  if (!feedbackTrips.length) return 0;
-
-  const onTimeTrips = feedbackTrips.filter((t) => {
-    const feedback = t.feedbackAnalysis;
-    const predicted = feedback?.overallPredictedMinutes ?? 0;
-    const actual = feedback?.overallActualMinutes ?? 0;
-
-    if (!predicted || !actual) return false;
-
-    return actual <= predicted * 1.1;
-  });
-
-  return Number(((onTimeTrips.length / feedbackTrips.length) * 100).toFixed(2));
-}
 
 function determineTrend(values: number[]): TrendDirection {
   if (values.length < 2) return "stable";
@@ -1557,18 +1522,34 @@ function determineTrend(values: number[]): TrendDirection {
   const firstHalf = values.slice(0, midpoint);
   const secondHalf = values.slice(midpoint);
 
-  const avg = (nums: number[]) =>
-    nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
-
   const firstAvg = avg(firstHalf);
   const secondAvg = avg(secondHalf);
 
   if (secondAvg > firstAvg * 1.05) return "improving";
   if (secondAvg < firstAvg * 0.95) return "declining";
+
   return "stable";
 }
 
-function computeBasePerformanceScore(metrics: DriverAssessment["metrics"]): number {
+function computeOnTimeRatePercent(trips: any[]): number {
+  const feedbackTrips = trips.filter((t) => t.feedbackAnalysis);
+  if (!feedbackTrips.length) return 0;
+
+  const onTimeTrips = feedbackTrips.filter((t) => {
+    const predicted = t.feedbackAnalysis?.overallPredictedMinutes ?? 0;
+    const actual = t.feedbackAnalysis?.overallActualMinutes ?? 0;
+
+    if (!predicted || !actual) return false;
+
+    return actual <= predicted * 1.1;
+  });
+
+  return round2((onTimeTrips.length / feedbackTrips.length) * 100);
+}
+
+function computeBasePerformanceScore(
+  metrics: DriverAssessment["metrics"]
+): number {
   let score = 100;
 
   score -= metrics.speedingEventCount * 2;
@@ -1578,6 +1559,148 @@ function computeBasePerformanceScore(metrics: DriverAssessment["metrics"]): numb
   score -= Math.max(0, 85 - metrics.avgRouteAccuracyPercent) * 0.5;
 
   return clampScore(score);
+}
+
+function summarizeDelayCauses(trips: any[]) {
+  const dominantDelayCauses = {
+    traffic: 0,
+    weather: 0,
+    dwell_time: 0,
+    route_inefficiency: 0,
+    normal_operations: 0,
+  };
+
+  const tripDelayReasoning = trips.map((trip) => {
+    const delayReasons =
+      Array.isArray(trip.delayAnalysis)
+        ? trip.delayAnalysis
+            .map((d: any) => d?.summary)
+            .filter(Boolean)
+            .map((reason: string) => ({ reason }))
+        : [];
+
+    for (const d of trip.delayAnalysis ?? []) {
+      if (d?.delayCause && d.delayCause in dominantDelayCauses) {
+        dominantDelayCauses[
+          d.delayCause as keyof typeof dominantDelayCauses
+        ]++;
+      }
+    }
+
+    return {
+      tripId: trip.id ?? trip.tripId ?? "",
+      delayReasons,
+    };
+  });
+
+  return {
+    dominantDelayCauses,
+    tripDelayReasoning,
+  };
+}
+
+function buildWeeklyMetrics(trips: any[]): DriverAssessment["metrics"] {
+  const feedbackTrips = trips.filter((t) => t.feedbackAnalysis);
+
+  const avgSpeedMph = avg(
+    feedbackTrips.map((t) => t.feedbackAnalysis?.avgSpeedMph ?? 0)
+  );
+
+  const maxSpeedMph = Math.max(
+    0,
+    ...feedbackTrips.map((t) => t.feedbackAnalysis?.maxSpeedMph ?? 0)
+  );
+
+  const speedingEventCount = sum(
+    feedbackTrips.map((t) => t.feedbackAnalysis?.speedingEventCount ?? 0)
+  );
+
+  const totalDwellMinutes = sum(
+    feedbackTrips.map((t) => t.feedbackAnalysis?.totalDwellMinutes ?? 0)
+  );
+
+  const avgDwellMinutes =
+    feedbackTrips.length > 0 ? totalDwellMinutes / feedbackTrips.length : 0;
+
+  const avgRouteAccuracyPercent = avg(
+    feedbackTrips.map((t) => t.feedbackAnalysis?.routeAccuracyPercent ?? 0)
+  );
+
+  const avgLegErrorMinutes = avg(
+    feedbackTrips.map(
+      (t) => t.feedbackAnalysis?.promptContextFeedback?.avgLegErrorMinutes ?? 0
+    )
+  );
+
+  const onTimeRatePercent = computeOnTimeRatePercent(trips);
+
+  return {
+    completedTrips: trips.length,
+    avgSpeedMph: round2(avgSpeedMph),
+    maxSpeedMph: round2(maxSpeedMph),
+    speedingEventCount,
+    avgDwellMinutes: round2(avgDwellMinutes),
+    totalDwellMinutes: round2(totalDwellMinutes),
+    onTimeRatePercent,
+    avgRouteAccuracyPercent: round2(avgRouteAccuracyPercent),
+    avgLegErrorMinutes: round2(avgLegErrorMinutes),
+  };
+}
+
+function buildLocalWeeklyFallback(params: {
+  driverId: string;
+  startDate: Date;
+  endDate: Date;
+  trips: any[];
+  metrics: DriverAssessment["metrics"];
+  baseScore: number;
+}): DriverAssessment {
+  const { driverId, startDate, endDate, trips, metrics, baseScore } = params;
+
+  const onTimeRatesByTrip = trips
+    .filter((t) => t.feedbackAnalysis)
+    .map((t) => {
+      const predicted = t.feedbackAnalysis?.overallPredictedMinutes ?? 0;
+      const actual = t.feedbackAnalysis?.overallActualMinutes ?? 0;
+      return predicted && actual && actual <= predicted * 1.1 ? 100 : 0;
+    });
+
+  return {
+    driverId,
+    weekStart: startDate.toISOString(),
+    weekEnd: endDate.toISOString(),
+    createdAt: new Date().toISOString(),
+
+    performanceScore: baseScore,
+
+    metrics,
+
+    trends: {
+      speedPatterns:
+        metrics.speedingEventCount > 0
+          ? `${metrics.speedingEventCount} speeding events were recorded this week.`
+          : "No major speeding pattern detected.",
+      dwellTimes:
+        metrics.avgDwellMinutes > 8
+          ? `Average dwell time was high at ${metrics.avgDwellMinutes} minutes.`
+          : "Dwell time appears within a normal range.",
+      onTimeRate: determineTrend(onTimeRatesByTrip),
+    },
+
+    recommendations: [
+      metrics.speedingEventCount > 0
+        ? "Reduce speeding events and review high-speed trip segments."
+        : "Maintain current safe driving patterns.",
+      metrics.avgDwellMinutes > 8
+        ? "Review long stops and reduce unnecessary dwell time."
+        : "Maintain current stop efficiency.",
+      metrics.onTimeRatePercent < 90
+        ? "Improve route timing consistency and reduce late arrivals."
+        : "Maintain current on-time performance.",
+    ],
+
+    summary: `Driver completed ${metrics.completedTrips} trips with a ${metrics.onTimeRatePercent}% on-time rate and a base performance score of ${baseScore}.`,
+  };
 }
 
 export async function analyzeWeeklyDriverPerformance(
@@ -1599,54 +1722,36 @@ export async function analyzeWeeklyDriverPerformance(
     .where("updatedAt", "<=", endDate.toISOString())
     .get();
 
+  
+
   const trips = tripsSnapshot.docs.map((doc) => ({
     id: doc.id,
     ...doc.data(),
   }));
 
-
-  const dwellMinutesByTrip = await Promise.all(
-  trips.map(async (trip) => {
-    const stops = await fetchTripStops(trip.id);
-    return computeDwellMinutes(stops);
-    })
-  );
-
-  const dwellMinutes = dwellMinutesByTrip.flat();
-
-  const totalDwellMinutes = dwellMinutes.reduce((a, b) => a + b, 0);
-  const avgDwellMinutes =
-    dwellMinutes.length > 0 ? totalDwellMinutes / dwellMinutes.length : 0;
-
-  const history = summarizeDriverHistory(trips);
-
-  const onTimeRatePercent = computeOnTimeRatePercent(trips);
-
-  const onTimeRatesByTrip = trips
-    .filter((t) => t.feedbackAnalysis)
-    .map((t) => {
-      const predicted = t.feedbackAnalysis?.overallPredictedMinutes ?? 0;
-      const actual = t.feedbackAnalysis?.overallActualMinutes ?? 0;
-      return predicted && actual && actual <= predicted * 1.1 ? 100 : 0;
-    });
-
-  const metrics: DriverAssessment["metrics"] = {
-    completedTrips: trips.length,
-    avgSpeedMph: Number(avgSpeedMph.toFixed(2)),
-    maxSpeedMph: Number(maxSpeedMph.toFixed(2)),
-    speedingEventCount,
-    avgDwellMinutes: Number(avgDwellMinutes.toFixed(2)),
-    totalDwellMinutes: Number(totalDwellMinutes.toFixed(2)),
-    onTimeRatePercent,
-    avgRouteAccuracyPercent: history.avgRouteAccuracyPercent,
-    avgLegErrorMinutes: history.avgLegErrorMinutes,
-  };
-
+  console.log(`Found ${trips.length} completed trips for driver ${driverId} between ${startDate.toISOString()} and ${endDate.toISOString()}`);
+  console.log(trips);
+  const metrics = buildWeeklyMetrics(trips);
   const baseScore = computeBasePerformanceScore(metrics);
 
-  const prompt = `You are a fleet operations analyst.
+  const { dominantDelayCauses, tripDelayReasoning } =
+    summarizeDelayCauses(trips);
 
-Analyze this driver's weekly performance.
+  const fallbackAssessment = buildLocalWeeklyFallback({
+    driverId,
+    startDate,
+    endDate,
+    trips,
+    metrics,
+    baseScore,
+  });
+
+  let assessment: DriverAssessment = fallbackAssessment;
+
+  try {
+    const prompt = `You are a fleet operations analyst.
+
+Analyze this driver's weekly performance using only the provided saved analytics.
 
 Driver ID: ${driverId}
 Week: ${startDate.toISOString()} to ${endDate.toISOString()}
@@ -1655,10 +1760,10 @@ Metrics:
 ${JSON.stringify(metrics, null, 2)}
 
 Delay cause counts:
-${JSON.stringify(history.dominantDelayCauses, null, 2)}
+${JSON.stringify(dominantDelayCauses, null, 2)}
 
 Trip delay reasoning:
-${JSON.stringify(history.tripDelayReasoning, null, 2)}
+${JSON.stringify(tripDelayReasoning, null, 2)}
 
 Base performance score calculated from real metrics: ${baseScore}
 
@@ -1674,40 +1779,42 @@ Return ONLY this JSON object:
   "recommendations": ["<specific recommendation>", "<specific recommendation>", "<specific recommendation>"]
 }`;
 
-  const aiResult = await aiJson<{
-    performanceScore: number;
-    summary: string;
-    trends: {
-      speedPatterns: string;
-      dwellTimes: string;
-      onTimeRate: TrendDirection;
+    const aiResult = await aiJson<{
+      performanceScore: number;
+      summary: string;
+      trends: {
+        speedPatterns: string;
+        dwellTimes: string;
+        onTimeRate: TrendDirection;
+      };
+      recommendations: string[];
+    }>(prompt, 700);
+
+    console.log("AI Weekly Assessment Result:", aiResult);
+    assessment = {
+      ...fallbackAssessment,
+      performanceScore: clampScore(
+        aiResult.performanceScore ?? baseScore
+      ),
+      trends: {
+        speedPatterns:
+          aiResult.trends?.speedPatterns ??
+          fallbackAssessment.trends.speedPatterns,
+        dwellTimes:
+          aiResult.trends?.dwellTimes ??
+          fallbackAssessment.trends.dwellTimes,
+        onTimeRate:
+          aiResult.trends?.onTimeRate ??
+          fallbackAssessment.trends.onTimeRate,
+      },
+      recommendations: Array.isArray(aiResult.recommendations)
+        ? aiResult.recommendations
+        : fallbackAssessment.recommendations,
+      summary: aiResult.summary ?? fallbackAssessment.summary,
     };
-    recommendations: string[];
-  }>(prompt, 700);
-
-  const assessment: DriverAssessment = {
-    driverId,
-    weekStart: startDate.toISOString(),
-    weekEnd: endDate.toISOString(),
-    createdAt: new Date().toISOString(),
-
-    performanceScore: clampScore(aiResult.performanceScore ?? baseScore),
-
-    metrics,
-
-    trends: {
-      speedPatterns: aiResult.trends?.speedPatterns ?? "No clear speed trend found.",
-      dwellTimes: aiResult.trends?.dwellTimes ?? "No clear dwell time trend found.",
-      onTimeRate:
-        aiResult.trends?.onTimeRate ?? determineTrend(onTimeRatesByTrip),
-    },
-
-    recommendations: Array.isArray(aiResult.recommendations)
-      ? aiResult.recommendations
-      : [],
-
-    summary: aiResult.summary ?? "",
-  };
+  } catch (err) {
+    console.warn("AI weekly analysis failed, using local fallback:", err);
+  }
 
   await db.collection("driver_assessments").add(assessment);
 

@@ -7,7 +7,9 @@ import {
   generateDailySummary,
   detectAnomalies,
   predictETA,
+  analyzeWeeklyDriverPerformance,
 } from "../services/ai";
+import { Timestamp } from "firebase-admin/firestore";
 
 const router = Router();
 
@@ -294,5 +296,19 @@ router.post("/eta", async (req, res) => {
     res.status(500).json({ error: "Internal Error", message });
   }
 });
+
+// ─── Weekly Driver Assessment ───────────────────────────────────────
+router.post("/weekly-assessment", requireRole("dispatcher", "admin"), async (req, res) => {
+  const { driverId } = req.body;
+  try {
+    const assessment = await analyzeWeeklyDriverPerformance(driverId);
+    console.log("Weekly Driver Assessment:", assessment);
+    res.json({ ok: true, driverId, assessment });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Driver assessment failed";
+    res.status(500).json({ error: "Internal Error", message });
+  }
+});
+
 
 export default router;
