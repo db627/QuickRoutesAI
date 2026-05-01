@@ -607,7 +607,8 @@ async function buildEtaSummaryForLeg(
   tripId: string,
   leg: RouteLeg,
   routeStops: RouteStopLike[],
-  legGpsPoints: GpsPoint[]
+  legGpsPoints: GpsPoint[],
+  stopEta?: { stopIndex: number; address: string; etaMinutes: number }
 ): Promise<EtaInputSummary | null> {
   const toStop = getStopById(routeStops, leg.toStopId);
   const fromStop = getStopById(routeStops, leg.fromStopId);
@@ -645,18 +646,121 @@ async function buildEtaSummaryForLeg(
       : "",
   };
 
-  const etaPrediction = await predictETA(etaLegInput);
+  if (!stopEta) return null;
 
   return {
     startLat: etaLegInput.currentLat,
     startLng: etaLegInput.currentLng,
     avgSpeed: etaLegInput.currentSpeedMps,
     stopSequence: toStop.sequence,
-    estimatedArrivalMinutes: etaPrediction.estimatedArrivalMinutes,
-    confidence: etaPrediction.confidence,
-    factors: etaPrediction.factors,
-    perStopETA: etaPrediction.perStopETA,
+    estimatedArrivalMinutes: stopEta.etaMinutes,
+    confidence: 0.8,
+    factors: [`Based on current speed of ${(avgSpeed * 2.237).toFixed(1)} mph`, `Distance to stop is ${leg.distanceMeters ? (leg.distanceMeters / 1609.344).toFixed(2) + " mi" : "unknown"}`, `Time of day is ${etaLegInput.timeOfDay} on ${etaLegInput.dayOfWeek}`],
+    perStopETA: [stopEta],
   };
+}
+
+// Functions to detect dwell times and anmoalies per leg without using AI, just based on GPS data patterns.
+// Good so that no excessive API calls are made
+function detectDwellPeriods(points: GpsPoint[]): {
+  totalDwellMinutes: number;
+  maxDwellMinutes: number;
+} {
+  if (points.length < 2) {
+    return { totalDwellMinutes: 0, maxDwellMinutes: 0 };
+  }
+
+  const DIST_THRESHOLD_METERS = 20;
+  const SPEED_THRESHOLD_MPS = 0.9; // ~2 mph
+
+  let totalDwellMs = 0;
+  let currentDwellStart: number | null = null;
+  let maxDwellMs = 0;
+
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+
+    const distance = haversineMeters(prev, curr);
+    const isStationary =
+      curr.speedMps < SPEED_THRESHOLD_MPS &&
+      distance < DIST_THRESHOLD_METERS;
+
+    if (isStationary) {
+      if (currentDwellStart === null) {
+        currentDwellStart = prev.timestamp;
+      }
+    } else {
+      if (currentDwellStart !== null) {
+        const dwellMs = curr.timestamp - currentDwellStart;
+        totalDwellMs += dwellMs;
+        maxDwellMs = Math.max(maxDwellMs, dwellMs);
+        currentDwellStart = null;
+      }
+    }
+  }
+
+  if (currentDwellStart !== null) {
+    const dwellMs = points[points.length - 1].timestamp - currentDwellStart;
+    totalDwellMs += dwellMs;
+    maxDwellMs = Math.max(maxDwellMs, dwellMs);
+  }
+
+  return {
+    totalDwellMinutes: totalDwellMs / 60000,
+    maxDwellMinutes: maxDwellMs / 60000,
+  };
+}
+
+function detectAnomaliesLocal(
+  driverId: string,
+  legGpsPoints: GpsPoint[]
+): Anomaly[] {
+  const anomalies: Anomaly[] = [];
+
+  const speedingCount = legGpsPoints.filter(
+    (p) => p.speedMps * 2.237 > 75
+  ).length;
+
+  if (speedingCount >= 3) {
+    anomalies.push({
+      driverId,
+      driverName: "",
+      type: "speeding",
+      severity: "medium",
+      description: `${speedingCount} GPS points exceeded 75 mph.`,
+    });
+  }
+
+  const avgSpeedMph =
+    legGpsPoints.length > 0
+      ? legGpsPoints.reduce((sum, p) => sum + p.speedMps * 2.237, 0) /
+        legGpsPoints.length
+      : 0;
+
+  if (legGpsPoints.length > 0 && avgSpeedMph < 10) {
+    anomalies.push({
+      driverId,
+      driverName: "",
+      type: "slow",
+      severity: "low",
+      description: `Average speed was ${avgSpeedMph.toFixed(1)} mph.`,
+    });
+  }
+
+  const dwell = detectDwellPeriods(legGpsPoints);
+
+  if (dwell.maxDwellMinutes > 8) {
+    anomalies.push({
+      driverId,
+      driverName: "",
+      type: "idle",
+      severity: "medium",
+      description: `Driver was stationary for up to ${dwell.maxDwellMinutes.toFixed(1)} minutes.`,
+    });
+  }
+
+  return anomalies;
 }
 
 async function buildLegAnomalies(
@@ -664,19 +768,8 @@ async function buildLegAnomalies(
   legIndex: number,
   legGpsPoints: GpsPoint[]
 ): Promise<LegAnomalySummary> {
-  const legDriverActivity: DriverActivity = {
-    driverId,
-    driverName: "",
-    events: legGpsPoints.map((p) => ({
-      type: "location_ping",
-      lat: p.lat,
-      lng: p.lng,
-      speedMps: p.speedMps,
-      timestamp: new Date(p.timestamp).toISOString(),
-    })),
-  };
-
-  const anomalies = await detectAnomalies([legDriverActivity]);
+  
+  const anomalies = detectAnomaliesLocal(driverId, legGpsPoints);
 
   return {
     legIndex,
@@ -843,6 +936,39 @@ async function buildLegAnalytics(params: {
   const legDistances: LegDistanceSummary[] = [];
   const legPoints: LegPointSummary[] = [];
 
+
+
+  
+  const startDate = routeStops[0]?.start_time ? toTimestamp(routeStops[0]?.start_time).toDate() : null;
+
+
+  const input = {
+    tripId: tripId,
+    currentLat: gpsData[0]?.lat ?? 0,
+    currentLng: gpsData[0]?.lng ?? 0,
+    remainingStops: routeStops
+      .filter((s) => s.stopId !== "__driver_origin__")
+      .map((s) => ({
+        address: s.address,
+        lat: s.lat,
+        lng: s.lng,
+        sequence: s.sequence,
+      })),
+    routeDistanceMeters: legs.map((leg) => leg.distanceMeters).reduce((sum, d) => sum + (d ?? 0), 0),
+    routeDurationSeconds: legs.map((leg) => leg.durationSeconds).reduce((sum, d) => sum + (d ?? 0), 0),
+    currentSpeedMps: 40,
+    timeOfDay: startDate
+      ? startDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "",
+    dayOfWeek: startDate
+          ? startDate.toLocaleDateString([], { weekday: "long" })
+          : "",
+  }
+
+  const etaPrediction = await predictETA(input);
+  console.log("ETA Prediction:", etaPrediction);
+
+  let totalEstimatedMinutes = 0;
   for (let index = 0; index < legs.length; index++) {
     const leg = legs[index];
     const legWindow = getLegTimeWindow(leg, routeStops);
@@ -850,12 +976,29 @@ async function buildLegAnalytics(params: {
 
     const legGpsPoints = getGpsPointsForLeg(gpsData, legWindow);
 
+    const toStop = getStopById(routeStops, leg.toStopId);
+
+    const stopEta = etaPrediction.perStopETA.find(
+      (eta) => eta.stopIndex === toStop?.sequence
+    );
+
+    if (!stopEta) continue;
+
+    const temp = (stopEta?.etaMinutes || 0) - totalEstimatedMinutes;
+
+    totalEstimatedMinutes += (stopEta?.etaMinutes || 0) > 0 ? (stopEta?.etaMinutes || 0) : 0;
+
+    stopEta.etaMinutes = temp > 0 ? temp : 0;
+
+    console.log(`Leg ${index} ETA TIME TEST:`, stopEta);
     const etaSummary = await buildEtaSummaryForLeg(
       tripId,
       leg,
       routeStops,
-      legGpsPoints
+      legGpsPoints,
+      stopEta
     );
+
     if (etaSummary) etaInputs.push(etaSummary);
 
     const anomalySummary = await buildLegAnomalies(
@@ -863,8 +1006,8 @@ async function buildLegAnalytics(params: {
       index,
       legGpsPoints
     );
-    anomaliesPerLeg.push(anomalySummary);
 
+    anomaliesPerLeg.push(anomalySummary);
     legDistances.push(buildLegDistanceSummary(index, legGpsPoints));
     legPoints.push(buildLegPointSummary(index, leg, legGpsPoints));
   }
@@ -966,6 +1109,11 @@ interface RouteAccuracyFeedback {
     overPredictedLegs: number;
     likelyBias: "optimistic" | "pessimistic" | "balanced";
   };
+  avgSpeedMph?: number;
+  maxSpeedMph?: number;
+  speedingEventCount?: number;
+  totalDwellMinutes?: number;
+  maxDwellMinutes?: number;
 }
 
 function round2(n: number): number {
@@ -1051,6 +1199,11 @@ function buildRouteAccuracyFeedback(params: {
   legs: RouteLeg[];
   legCompletionTimes: LegTimingSummary[];
   etaInputs: EtaInputSummary[];
+  avgSpeedMph?: number;
+  maxSpeedMph?: number;
+  speedingEventCount?: number;
+  totalDwellMinutes?: number;
+  maxDwellMinutes?: number;
 }): RouteAccuracyFeedback {
   const { tripId, driverId, currentRoute, legs, legCompletionTimes, etaInputs } =
     params;
@@ -1089,6 +1242,11 @@ function buildRouteAccuracyFeedback(params: {
     routeAccuracyPercent,
     legFeedback,
     promptContextFeedback: buildPromptContextFeedback(legFeedback),
+    avgSpeedMph: params.avgSpeedMph,
+    maxSpeedMph: params.maxSpeedMph,
+    speedingEventCount: params.speedingEventCount,
+    totalDwellMinutes: params.totalDwellMinutes,
+    maxDwellMinutes: params.maxDwellMinutes,
   };
 }
 
@@ -1115,6 +1273,15 @@ export async function postTripAnalytic(
 
   const gpsData = await fetchGpsData(driverId, timeWindow);
   const routeContext = buildRouteContext(tripData, sortedStops, gpsData);
+  const tripDwellTimeMinutes = detectDwellPeriods(gpsData);
+  const speedsMph = gpsData.map((p) => p.speedMps * 2.237);
+  const avgSpeedMph =
+    speedsMph.length > 0
+      ? speedsMph.reduce((a, b) => a + b, 0) / speedsMph.length
+      : 0;
+
+  const maxSpeedMph = speedsMph.length > 0 ? Math.max(...speedsMph) : 0;
+  const speedingEventCount = speedsMph.filter((speed) => speed > 75).length;
 
   const { etaInputs } = await buildLegAnalytics({
     tripId,
@@ -1133,6 +1300,11 @@ export async function postTripAnalytic(
     legs: routeContext.legs,
     legCompletionTimes,
     etaInputs,
+    avgSpeedMph: round2(avgSpeedMph),
+    maxSpeedMph: round2(maxSpeedMph),
+    speedingEventCount,
+    totalDwellMinutes: round2(tripDwellTimeMinutes.totalDwellMinutes),
+    maxDwellMinutes: round2(tripDwellTimeMinutes.maxDwellMinutes),
   });
 
 
@@ -1432,19 +1604,6 @@ export async function analyzeWeeklyDriverPerformance(
     ...doc.data(),
   }));
 
-  const gpsData = await fetchGpsData(driverId, {
-    startTime: Timestamp.fromDate(startDate),
-    endTime: Timestamp.fromDate(endDate),
-  });
-
-  const speedsMph = gpsData.map((p) => p.speedMps * 2.237);
-  const avgSpeedMph =
-    speedsMph.length > 0
-      ? speedsMph.reduce((a, b) => a + b, 0) / speedsMph.length
-      : 0;
-
-  const maxSpeedMph = speedsMph.length > 0 ? Math.max(...speedsMph) : 0;
-  const speedingEventCount = speedsMph.filter((speed) => speed > 75).length;
 
   const dwellMinutesByTrip = await Promise.all(
   trips.map(async (trip) => {
