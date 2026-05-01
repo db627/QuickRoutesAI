@@ -500,7 +500,7 @@ function getTripTimeWindow(sortedStops: RouteStopLike[]): TripTimeWindow | null 
 
   if (!rawStart || !rawEnd) return null;
 
-  return { b
+  return { 
     startTime: toTimestamp(rawStart),
     endTime: toTimestamp(rawEnd),
   };
