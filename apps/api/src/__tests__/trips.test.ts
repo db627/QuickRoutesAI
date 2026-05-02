@@ -151,6 +151,7 @@ describe("PATCH /trips/:id", () => {
             lat: 40,
             lng: -74,
             sequence: 0,
+            contactName: "",
             notes: "",
         },
         {
@@ -159,6 +160,7 @@ describe("PATCH /trips/:id", () => {
             lat: 41,
             lng: -75,
             sequence: 1,
+            contactName: "",
             notes: "Pickup",
         },
         ];
@@ -474,6 +476,12 @@ describe("POST /trips/:id/route", () => {
     computeRoute.mockResolvedValue({ route: mockRoute, optimizedStops: mockStops });
 
     const updateMock = jest.fn().mockResolvedValue(undefined);
+    const stopUpdateMock = jest.fn().mockResolvedValue(undefined);
+    const batchCommitMock = jest.fn().mockResolvedValue(undefined);
+    db.batch = jest.fn(() => ({
+      update: stopUpdateMock,
+      commit: batchCommitMock,
+    }));
 
     db.collection.mockImplementation((col: string) => {
       if (col === "trips") {
@@ -481,6 +489,18 @@ describe("POST /trips/:id/route", () => {
           doc: () => ({
             get: jest.fn().mockResolvedValue({ exists: true, data: () => mockTripData({ stops: mockStops }) }),
             update: updateMock,
+            collection: (subcol: string) => {
+              if (subcol === "stops") {
+                return {
+                  get: jest.fn().mockResolvedValue({
+                    empty: false,
+                    docs: mockStops.map((s) => ({ data: () => s })),
+                  }),
+                  doc: () => ({}),
+                };
+              }
+              return {};
+            },
           }),
         };
       }
@@ -498,7 +518,7 @@ describe("POST /trips/:id/route", () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.route).toMatchObject({ reasoning: "Visiting stop 2 before stop 1 minimizes backtracking." });
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ route: mockRoute, stops: mockStops }));
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ route: mockRoute }));
   });
 
   it("returns 404 if trip does not exist", async () => {
@@ -524,7 +544,7 @@ describe("POST /trips/:id/route", () => {
       .set("Authorization", "Bearer valid-token");
 
     expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: "Not Found", message: "Trip not found" });
+    expect(res.body).toEqual({ error: "TRIP_NOT_FOUND", message: "Trip not found" });
   });
 
   it("returns 400 if trip has fewer than 2 stops", async () => {
@@ -538,6 +558,17 @@ describe("POST /trips/:id/route", () => {
               exists: true,
               data: () => mockTripData({ stops: [mockStops[0]] }),
             }),
+            collection: (subcol: string) => {
+              if (subcol === "stops") {
+                return {
+                  get: jest.fn().mockResolvedValue({
+                    empty: false,
+                    docs: [{ data: () => mockStops[0] }],
+                  }),
+                };
+              }
+              return {};
+            },
           }),
         };
       }
@@ -553,7 +584,7 @@ describe("POST /trips/:id/route", () => {
       .set("Authorization", "Bearer valid-token");
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: "Bad Request", message: "Need at least 2 stops to compute route" });
+    expect(res.body).toEqual({ error: "BAD_REQUEST", message: "Need at least 2 stops to compute route" });
   });
 
   it("returns 403 if user is a driver", async () => {

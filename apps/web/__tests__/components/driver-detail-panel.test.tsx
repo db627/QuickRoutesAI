@@ -33,7 +33,7 @@ jest.mock("next/link", () => {
     "data-testid": testId,
   }: {
     href: string;
-    children: unknown;
+    children: React.ReactNode;
     className?: string;
     "data-testid"?: string;
   }) {
@@ -49,7 +49,13 @@ jest.mock("next/link", () => {
 
 const DRIVER_UID = "driver-abc-123";
 
-const mockDriverDoc = {
+const mockDriverDoc: {
+  isOnline: boolean;
+  lastLocation: { lat: number; lng: number } | null;
+  lastSpeedMps: number;
+  lastHeading: number;
+  updatedAt: string;
+} = {
   isOnline: true,
   lastLocation: { lat: 40.7128, lng: -74.006 },
   lastSpeedMps: 10,
@@ -113,6 +119,7 @@ function setupOnSnapshot({
         })),
       });
     }
+    return () => {};
   };
 }
 

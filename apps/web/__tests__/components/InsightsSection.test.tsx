@@ -46,8 +46,10 @@ function mockAdmin() {
   mockedUseAuth.mockReturnValue({
     user: { uid: "u1" } as never,
     role: "admin",
+    orgId: null,
     loading: false,
     logout: jest.fn(),
+    refresh: jest.fn(),
   });
 }
 
@@ -55,8 +57,10 @@ function mockDriver() {
   mockedUseAuth.mockReturnValue({
     user: { uid: "u2" } as never,
     role: "driver",
+    orgId: null,
     loading: false,
     logout: jest.fn(),
+    refresh: jest.fn(),
   });
 }
 

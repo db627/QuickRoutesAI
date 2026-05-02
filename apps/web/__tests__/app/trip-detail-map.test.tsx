@@ -211,21 +211,21 @@ function renderWithTrip(tripOverrides: Record<string, unknown> = {}) {
 
   // 1st onSnapshot: trip document
   mockOnSnapshot.mockImplementationOnce(
-    (_: unknown, cb: (snap: unknown) => void) => {
+    ((_: unknown, cb: (snap: unknown) => void) => {
       cb({
         exists: () => true,
         id: "trip-123",
         data: () => tripDocData,
       });
       return jest.fn();
-    },
+    }) as unknown as Parameters<typeof mockOnSnapshot.mockImplementationOnce>[0],
   );
   // 2nd onSnapshot: stops subcollection
   mockOnSnapshot.mockImplementationOnce(
-    (_: unknown, cb: (snap: unknown) => void) => {
+    ((_: unknown, cb: (snap: unknown) => void) => {
       cb(makeStopsSnap(stops));
       return jest.fn();
-    },
+    }) as unknown as Parameters<typeof mockOnSnapshot.mockImplementationOnce>[0],
   );
   // Any subsequent onSnapshot calls (driver position, etc.) — no-op.
   mockOnSnapshot.mockImplementation(() => jest.fn() as any);
