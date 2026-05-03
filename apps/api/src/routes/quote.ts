@@ -1,7 +1,8 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
+import admin from "firebase-admin";
+import { db } from "../config/firebase";
 import { sendQuoteEmail } from "../services/email";
-import { verifyRecaptcha } from "../services/recaptcha";
 
 const router = Router();
 
@@ -11,7 +12,6 @@ const quoteSchema = z.object({
   company: z.string().min(1).max(200),
   fleetSize: z.string().min(1).max(50),
   message: z.string().max(2000).optional(),
-  recaptchaToken: z.string().min(1),
 });
 
 router.post("/", async (req: Request, res: Response) => {
@@ -25,31 +25,33 @@ router.post("/", async (req: Request, res: Response) => {
     return;
   }
 
-  const { recaptchaToken, ...quoteData } = parsed.data;
+  const quoteData = parsed.data;
 
-  // Verify reCAPTCHA
-  const captcha = await verifyRecaptcha(recaptchaToken);
-  if (!captcha.valid) {
-    console.warn(`reCAPTCHA rejected: score=${captcha.score}`);
-    res.status(403).json({
-      error: "Captcha Failed",
-      message:
-        "We couldn't verify you're human. Please try again.",
+  // Persist the lead so it isn't lost if the email send fails
+  try {
+    await db.collection("quoteRequests").add({
+      ...quoteData,
+      source: "landing-page",
+      status: "new",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    console.error("Failed to persist quote request:", err);
+    res.status(500).json({
+      error: "Storage Error",
+      message: "Failed to save your request. Please try again later.",
     });
     return;
   }
 
-  // Send the email
+  // Send the email (best-effort; the lead is already saved)
   try {
     await sendQuoteEmail(quoteData);
-    res.status(200).json({ success: true });
   } catch (err) {
     console.error("Failed to send quote email:", err);
-    res.status(500).json({
-      error: "Email Error",
-      message: "Failed to send your request. Please try again later.",
-    });
   }
+
+  res.status(200).json({ success: true });
 });
 
 export default router;
