@@ -1,44 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, CheckCircle, Loader2, AlertCircle } from "lucide-react";
 
-const RECAPTCHA_SITE_KEY = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY ?? "";
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
-
-/** Load the reCAPTCHA v3 script once. */
-function loadRecaptchaScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (document.getElementById("recaptcha-v3")) {
-      resolve();
-      return;
-    }
-    const script = document.createElement("script");
-    script.id = "recaptcha-v3";
-    script.src = `https://www.google.com/recaptcha/api.js?render=${RECAPTCHA_SITE_KEY}`;
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load reCAPTCHA"));
-    document.head.appendChild(script);
-  });
-}
-
-/** Get a reCAPTCHA v3 token for an action. */
-function getRecaptchaToken(action: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const g = (window as unknown as { grecaptcha: { ready: (cb: () => void) => void; execute: (key: string, opts: { action: string }) => Promise<string> } }).grecaptcha;
-    if (!g) {
-      reject(new Error("reCAPTCHA not loaded"));
-      return;
-    }
-    g.ready(() => {
-      g.execute(RECAPTCHA_SITE_KEY, { action })
-        .then(resolve)
-        .catch(reject);
-    });
-  });
-}
+const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001").replace(/\/+$/, "");
 
 interface QuoteModalProps {
   open: boolean;
@@ -50,15 +16,6 @@ export default function QuoteModal({ open, onClose }: QuoteModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load reCAPTCHA script when modal opens
-  useEffect(() => {
-    if (open && RECAPTCHA_SITE_KEY) {
-      loadRecaptchaScript().catch(() =>
-        setError("Failed to load reCAPTCHA. Please refresh the page."),
-      );
-    }
-  }, [open]);
-
   const handleSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
@@ -69,22 +26,15 @@ export default function QuoteModal({ open, onClose }: QuoteModalProps) {
       const formData = new FormData(form);
 
       try {
-        // Get reCAPTCHA token
-        let recaptchaToken = "";
-        if (RECAPTCHA_SITE_KEY) {
-          recaptchaToken = await getRecaptchaToken("submit_quote");
-        }
-
         const res = await fetch(`${API_URL}/quote`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            name: formData.get("name"),
-            email: formData.get("email"),
-            company: formData.get("company"),
-            fleetSize: formData.get("fleetSize"),
-            message: formData.get("message") || undefined,
-            recaptchaToken,
+            name: String(formData.get("name") ?? ""),
+            email: String(formData.get("email") ?? ""),
+            company: String(formData.get("company") ?? ""),
+            fleetSize: String(formData.get("fleetSize") ?? ""),
+            message: String(formData.get("message") ?? "") || undefined,
           }),
         });
 
@@ -259,29 +209,6 @@ export default function QuoteModal({ open, onClose }: QuoteModalProps) {
                       </>
                     )}
                   </button>
-
-                  {/* reCAPTCHA notice */}
-                  <p className="text-center text-[11px] leading-relaxed text-gray-400">
-                    Protected by reCAPTCHA.{" "}
-                    <a
-                      href="https://policies.google.com/privacy"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline hover:text-gray-500"
-                    >
-                      Privacy
-                    </a>{" "}
-                    &{" "}
-                    <a
-                      href="https://policies.google.com/terms"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline hover:text-gray-500"
-                    >
-                      Terms
-                    </a>{" "}
-                    apply.
-                  </p>
                 </form>
               </div>
             ) : (
