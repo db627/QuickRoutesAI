@@ -8,6 +8,7 @@ import type { Trip, TripStop } from "@quickroutesai/shared";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import { openNavigation } from "../services/navigation";
 import { startTracking, stopTracking } from "../services/location";
+import TripETA from "../components/TripETA";
 
 function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
   const points: { latitude: number; longitude: number }[] = [];
@@ -213,17 +214,11 @@ export default function TripDetailScreen({ route, navigation }: Props) {
               {(trip.route.distanceMeters / 1000).toFixed(1)} km &middot;{" "}
               {Math.round(trip.route.durationSeconds / 60)} min
             </Text>
-            <Text className="text-xs text-gray-400">&middot;</Text>
-            <Text className="text-xs font-medium text-blue-600">
-              ETA{" "}
-              {new Date(Date.now() + trip.route.durationSeconds * 1000).toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </Text>
           </View>
         )}
       </View>
+
+      <TripETA trip={trip} />
 
       {/* Stop list */}
       <FlatList
