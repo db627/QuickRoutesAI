@@ -249,8 +249,8 @@ export default function TripDetailScreen({ route, navigation }: Props) {
                 <Text className={`text-sm font-medium ${isCompleted ? "text-gray-400 line-through" : "text-gray-900"}`}>
                   {item.address}
                 </Text>
-                {item.contact ? (
-                  <Text className="text-xs text-gray-500">{item.contact}</Text>
+                {item.contactName ? (
+                  <Text className="text-xs text-gray-500">{item.contactName}</Text>
                 ) : null}
                 {item.timeWindow ? (
                   <Text className="text-xs text-amber-600">
