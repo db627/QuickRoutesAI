@@ -21,6 +21,7 @@ const mockStops = [
     lat: 40.744,
     lng: -74.1901,
     address: '150 Bergen St, Newark, NJ',
+    contactName: '',
     notes: '',
   },
   {
@@ -29,6 +30,7 @@ const mockStops = [
     lat: 40.7347,
     lng: -74.1645,
     address: '1 Raymond Plaza W, Newark, NJ',
+    contactName: '',
     notes: '',
   },
 ];

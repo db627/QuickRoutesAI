@@ -34,12 +34,12 @@ function TripNavigator() {
       <TripStack.Screen name="TripList" component={TripScreen} options={{ title: "My Trips" }} />
       <TripStack.Screen
         name="TripDetail"
-        component={TripDetailScreen}
+        component={TripDetailScreen as React.ComponentType}
         options={{ title: "Trip Detail" }}
       />
       <TripStack.Screen
         name="TripCompletion"
-        component={TripCompletionScreen}
+        component={TripCompletionScreen as React.ComponentType}
         options={{ title: "Summary", headerBackVisible: false }}
       />
     </TripStack.Navigator>
