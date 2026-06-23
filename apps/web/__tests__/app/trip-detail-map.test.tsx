@@ -305,15 +305,15 @@ describe("Numbered stop markers", () => {
     expect(screen.getByTitle("Stop 3: Stop C")).toBeInTheDocument();
   });
 
-  it("renders the first stop with a green pin", async () => {
+  it("renders the first pending stop with an orange pulsing marker instead of a Pin", async () => {
     renderWithTrip();
 
     await waitFor(() => screen.getByText("Trip Detail"));
 
+    // With no status on any stop, stop 1 is the next pending stop → orange pulse
     const firstMarker = screen.getByTitle("Stop 1: Stop A");
-    const pin = within(firstMarker).getByTestId("pin");
-    expect(pin).toHaveAttribute("data-bg", "#22c55e");
-    expect(pin).toHaveAttribute("data-border", "#16a34a");
+    expect(within(firstMarker).queryByTestId("pin")).not.toBeInTheDocument();
+    expect(firstMarker.querySelector(".animate-ping")).toBeInTheDocument();
   });
 
   it("renders the last stop with a red pin", async () => {
@@ -327,15 +327,16 @@ describe("Numbered stop markers", () => {
     expect(pin).toHaveAttribute("data-border", "#dc2626");
   });
 
-  it("renders intermediate stops with blue pins", async () => {
+  it("renders remaining stops (after the next stop) with red pins", async () => {
     renderWithTrip();
 
     await waitFor(() => screen.getByText("Trip Detail"));
 
+    // Stop 2 is remaining (not next, not completed) → red Pin
     const midMarker = screen.getByTitle("Stop 2: Stop B");
     const pin = within(midMarker).getByTestId("pin");
-    expect(pin).toHaveAttribute("data-bg", "#3b82f6");
-    expect(pin).toHaveAttribute("data-border", "#2563eb");
+    expect(pin).toHaveAttribute("data-bg", "#ef4444");
+    expect(pin).toHaveAttribute("data-border", "#dc2626");
   });
 });
 
