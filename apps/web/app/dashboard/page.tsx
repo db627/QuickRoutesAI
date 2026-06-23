@@ -5,17 +5,15 @@ import DriverMap from "@/components/DriverMap";
 import DriverList from "@/components/DriverList";
 import DriverDetailPanel from "@/components/DriverDetailPanel";
 import TripList from "@/components/TripList";
-import TripForm from "@/components/TripForm";
 import StatsCards from "@/components/StatsCards";
 import InsightsSection from "@/components/InsightsSection";
-import MultiDriverOptimizer from "@/components/MultiDriverOptimizer";
 import DriverLeaderboard from "@/components/DriverLeaderboard";
+import { useQuickActions } from "@/lib/quick-actions-context";
 import { useState } from "react";
 
 export default function DashboardPage() {
   const { role } = useAuth();
-  const [showTripForm, setShowTripForm] = useState(false);
-  const [showMultiOptimizer, setShowMultiOptimizer] = useState(false);
+  const { openNewTrip, openMultiOptimizer } = useQuickActions();
   const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null);
 
   if (role === "driver") {
@@ -40,27 +38,19 @@ export default function DashboardPage() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => { setShowMultiOptimizer(!showMultiOptimizer); setShowTripForm(false); }}
+            onClick={openMultiOptimizer}
             className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-900 hover:border-gray-300"
           >
-            {showMultiOptimizer ? "Close" : "Multi-Driver"}
+            Multi-Driver
           </button>
           <button
-            onClick={() => { setShowTripForm(!showTripForm); setShowMultiOptimizer(false); }}
+            onClick={openNewTrip}
             className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
           >
-            {showTripForm ? "Close" : "Create Trip"}
+            Create Trip
           </button>
         </div>
       </div>
-
-      {showTripForm && (
-        <TripForm onCreated={() => setShowTripForm(false)} />
-      )}
-
-      {showMultiOptimizer && (
-        <MultiDriverOptimizer onClose={() => setShowMultiOptimizer(false)} />
-      )}
 
       {/* AI Insights */}
       <InsightsSection />
