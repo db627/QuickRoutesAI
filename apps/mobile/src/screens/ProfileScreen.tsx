@@ -13,8 +13,13 @@ import {
   flushQueue,
 } from "../services/offlineQueue";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
+import { Ionicons } from "@expo/vector-icons";
 
-export default function ProfileScreen() {
+interface Props {
+  navigation?: { navigate: (screen: string) => void };
+}
+
+export default function ProfileScreen({ navigation }: Props = {}) {
   const uid = auth.currentUser?.uid;
   const { isConnected } = useNetworkStatus();
 
@@ -22,6 +27,7 @@ export default function ProfileScreen() {
   const [isOnline, setIsOnline] = useState(false);
   const [stats, setStats] = useState({ tripsCompleted: 0, totalDistanceMiles: 0 });
   const [queueSize, setQueueSize] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
@@ -50,6 +56,22 @@ export default function ProfileScreen() {
       unsub();
     };
   }, []);
+
+  // Live unread notification count
+  useEffect(() => {
+    if (!uid) return;
+    const q = query(
+      collection(firestore, "notifications"),
+      where("userId", "==", uid),
+      where("read", "==", false),
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => setUnreadCount(snap.size),
+      () => setUnreadCount(0),
+    );
+    return unsub;
+  }, [uid]);
 
   // Sync optimistic online status everywhere
   useEffect(() => {
@@ -183,6 +205,25 @@ export default function ProfileScreen() {
             <Text className="text-xs text-gray-500 mt-1">Miles Driven</Text>
           </View>
         </View>
+
+        {/* Notifications row */}
+        {navigation && (
+          <TouchableOpacity
+            onPress={() => navigation.navigate("Notifications")}
+            className="flex-row items-center rounded-xl border border-gray-200 bg-white px-4 py-3.5 mb-3"
+          >
+            <Ionicons name="notifications-outline" size={20} color="#3b82f6" />
+            <Text className="flex-1 ml-3 font-medium text-gray-900">Notifications</Text>
+            {unreadCount > 0 && (
+              <View className="mr-2 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5">
+                <Text className="text-[11px] font-bold text-white">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </Text>
+              </View>
+            )}
+            <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
+          </TouchableOpacity>
+        )}
 
         {/* Actions */}
         <TouchableOpacity

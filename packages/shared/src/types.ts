@@ -154,6 +154,7 @@ export interface Notification {
   read: boolean;
   userId: string; // recipient uid
   createdAt: string; // ISO 8601
+  tripId?: string; // present on trip-related notifications so clients can navigate
 }
 
 // ── Event ──
