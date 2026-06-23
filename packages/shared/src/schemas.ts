@@ -26,6 +26,8 @@ export const tripStopSchema = z.object({
   sequence: z.number().int().min(0).optional(),
   notes: z.string().default(""),
   timeWindow: timeWindowSchema.optional(),
+  start_time: z.string().datetime().optional(),
+  end_time: z.string().datetime().optional(),
 });
 export type TripStopInput = z.infer<typeof tripStopSchema>;
 

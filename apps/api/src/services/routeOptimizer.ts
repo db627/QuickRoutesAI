@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 import type { TripStop } from "@quickroutesai/shared";
+import { retrieveRouteFeedback } from "./ai";
+import { Timestamp } from "firebase-admin/firestore";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -17,13 +19,16 @@ export interface OptimizerViolationFlag {
 export async function optimizeStopOrder(
   stops: TripStop[],
   weatherInfo?: any,
+  driverId?: string
 ): Promise<{ stops: TripStop[]; reasoning: string; violations: OptimizerViolationFlag[] }> {
   if (stops.length <= 2) return { stops, reasoning: "", violations: [] };
 
   const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
   const origin = sorted[0];
   const rest = sorted.slice(1);
-
+  
+  const retrievedRouteFeedback = await retrieveRouteFeedback(Timestamp.now(), driverId || ""); 
+  console.log("Test \n", retrievedRouteFeedback);
   const stopList = rest
     .map((s, i) => {
       let line = `  ${i}: "${s.address}" (lat: ${s.lat}, lng: ${s.lng})`;
@@ -40,6 +45,10 @@ export async function optimizeStopOrder(
   if (weatherInfo !== undefined) {
     weatherDataStr = weatherInfo.stops.map((w: any) => `Stop ${w.address} -- Current: ${w.current.main}, Temperature: ${w.current.temperatureF}°F, Precipitation Chance: ${w.current.precipitationChance}%, Visibility: ${w.current.visibilityMiles} miles, Wind Speed: ${w.current.windSpeedMph} mph, -- Forecast: ${w.forecast.map((f: any) => `${new Date(f.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} Time: ${f.main}, Temperature: ${f.temperatureF}°F, Wind Speed: ${f.windSpeedMph} mph, Precipitation Chance: ${f.precipitationChance}%`).join("; ")}`).join("\n\n");
   }
+  let driverFeedbackStr = "No driver historical feedback available for the last 30 days.";
+  if (retrievedRouteFeedback.completedTrips > 0) {
+  driverFeedbackStr = JSON.stringify(retrievedRouteFeedback, null, 2);
+}
   
   const timeWindowSection = hasTimeWindows
     ? `CRITICAL TIME WINDOW CONSTRAINTS:
@@ -56,9 +65,24 @@ ${timeWindowSection}${hasTimeWindows && weatherInfo ? "If weather information is
 Stops to reorder:
 ${stopList}
 
-Weather information for stops (if available):
+Weather conditions by stop:
 ${weatherDataStr}
 
+Driver historical performance context (last 30 days):
+${driverFeedbackStr}
+
+How to use driver history:
+- If historical ETA accuracy was low, choose simpler/more robust routes.
+- If driver often has long dwell times, prefer clustered stops.
+- If traffic is the most common historical delay, favor routes with less cross-city movement.
+- If weather delays are common and current weather is poor, favor safer/tighter sequencing.
+- Do NOT ignore geography because of driver history.
+
+How to use weather:
+- Heavy rain / low visibility / wind may slow travel.
+- If multiple stops are similar distance, prefer the lower-risk weather order.
+- Weather should adjust route timing realism, not replace geography.
+  
 Return ONLY a JSON object with THREE keys:
 - "order": array of the stop indices in optimal visiting order (e.g. [2, 0, 4, 1, 3])
 - "reasoning": one or two sentences explaining why this order minimizes travel time/distance while respecting time windows

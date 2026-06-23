@@ -1,3 +1,4 @@
+import { Timestamp } from "firebase-admin/firestore";
 // ── User ──
 export type UserRole = "driver" | "dispatcher" | "admin";
 export type UserStatus = "active" | "deactivated";
@@ -68,8 +69,8 @@ export interface TripStop {
   notes: string;
   contact?: string;
   timeWindow?: TimeWindow;
-  status?: StopStatus;
-  completedAt?: string; // ISO 8601
+  start_time?: Timestamp; // ISO 8601 when driver starts heading to stop
+  end_time?: Timestamp;   // ISO 8601 when driver marks stop completed
 }
 export interface RouteLeg {
   fromStopId?: string;
@@ -79,6 +80,7 @@ export interface RouteLeg {
   distanceMeters: number;
   durationSeconds: number;         // traffic-aware
   staticDurationSeconds?: number;  // traffic-unaware
+  polyline?: string; // encoded polyline from Directions API
 };
 
 export interface TimeWindowViolation {

@@ -1,4 +1,10 @@
 import OpenAI from "openai";
+import { db } from "../config/firebase";
+import { Timestamp } from "firebase-admin/firestore";
+import { decodePolyline } from "./directions";
+import { computeHistoricalWeather } from "./weather";
+import { start } from "repl";
+
 
 let _client: OpenAI | null = null;
 function client(): OpenAI {
@@ -389,6 +395,42 @@ interface ETAPrediction {
   perStopETA: { stopIndex: number; address: string; etaMinutes: number }[];
 }
 
+type Point = {
+  lat: number;
+  lng: number;
+};
+
+function haversineMeters(a: Point, b: Point): number {
+  const R = 6371000; // Earth radius in meters
+  const toRad = (deg: number) => deg * Math.PI / 180;
+
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) *
+    Math.cos(lat2) *
+    Math.sin(dLng / 2) ** 2;
+
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function totalDistanceMeters(points: Point[]): number {
+  if (points.length < 2) return 0;
+
+  let total = 0;
+
+  for (let i = 1; i < points.length; i++) {
+    total += haversineMeters(points[i - 1], points[i]);
+  }
+
+  return total;
+}
+
 export async function predictETA(input: ETAInput): Promise<ETAPrediction> {
   const stopList = input.remainingStops
     .map(
@@ -425,4 +467,1447 @@ Return ONLY a JSON object:
 }`;
 
   return aiJson<ETAPrediction>(prompt, 600);
+}
+
+// ─── Feature: AI-Powered Route Optimization ─────────────────────────
+
+type PrimaryDelayCause =
+  | "traffic"
+  | "weather"
+  | "dwell_time"
+  | "route_inefficiency"
+  | "normal_operations";
+
+interface DelayAnalysisResult {
+  delayCause: PrimaryDelayCause;
+  confidence: number;
+  summary: string;
+  factors: string[];
+  estimatedDelayMinutes: number;
+  recommendations: string[];
+}
+
+interface RouteLeg {
+  fromStopId: string;
+  toStopId: string;
+  distanceMeters: number;
+  durationSeconds: number;
+  polyline?: string;
+}
+
+interface GpsPoint {
+  lat: number;
+  lng: number;
+  timestamp: number; // ms
+  speedMps: number;
+}
+
+interface TripTimeWindow {
+  startTime: Timestamp;
+  endTime: Timestamp;
+}
+
+interface RouteStopLike {
+  stopId: string;
+  address: string;
+  lat: number;
+  lng: number;
+  sequence: number;
+  start_time?: Timestamp | string | Date;
+  end_time?: Timestamp | string | Date;
+}
+
+interface EtaInputSummary {
+  startLat: number;
+  startLng: number;
+  avgSpeed: number;
+  stopSequence: number;
+  estimatedArrivalMinutes: number;
+  confidence: number;
+  factors: string[];
+  perStopETA: { stopIndex: number; address: string; etaMinutes: number }[];
+}
+
+interface LegAnomalySummary {
+  legIndex: number;
+  anomalies: Anomaly[];
+}
+
+interface LegDistanceSummary {
+  legIndex: number;
+  distance: number;
+}
+
+interface LegPointSummary {
+  legIndex: number;
+  points: GpsPoint[];
+  decodedRoute: { lat: number; lng: number }[];
+}
+
+interface LegTimingSummary {
+  legIndex: number;
+  minutes: number;
+}
+
+interface BuiltRouteContext {
+  routeStops: RouteStopLike[];
+  route: any;
+  currentRoute: any;
+  legs: RouteLeg[];
+}
+
+function fallbackDelayResult(): DelayAnalysisResult[] {
+  return [
+    {
+      delayCause: "normal_operations",
+      confidence: -1,
+      summary: "-1",
+      factors: [],
+      estimatedDelayMinutes: -1,
+      recommendations: ["-1"],
+    },
+  ];
+}
+
+function toTimestamp(value: Timestamp | string | Date): Timestamp {
+  return value instanceof Timestamp
+    ? value
+    : Timestamp.fromDate(new Date(value));
+}
+
+function toUnixSeconds(value: Timestamp | string | Date): number {
+  return value instanceof Timestamp
+    ? value.seconds
+    : Math.floor(new Date(value).getTime() / 1000);
+}
+
+function sortStops(stops: any[]): RouteStopLike[] {
+  return [...stops].sort((a, b) => a.sequence - b.sequence);
+}
+
+function getTripTimeWindow(sortedStops: RouteStopLike[]): TripTimeWindow | null {
+  const rawStart = sortedStops[0]?.start_time;
+  const rawEnd = sortedStops[sortedStops.length - 1]?.end_time;
+
+  if (!rawStart || !rawEnd) return null;
+
+  return { 
+    startTime: toTimestamp(rawStart),
+    endTime: toTimestamp(rawEnd),
+  };
+}
+
+async function fetchTripDoc(tripId: string) {
+  return db.collection("trips").doc(tripId).get();
+}
+
+async function fetchGpsData(
+  driverId: string,
+  window: TripTimeWindow
+): Promise<GpsPoint[]> {
+  const geopointData = await db
+    .collection("events")
+    .where("type", "==", "location_ping")
+    .where("driverId", "==", driverId)
+    .where("createdAt", ">=", window.startTime)
+    .where("createdAt", "<=", window.endTime)
+    .orderBy("createdAt")
+    .get();
+
+  return geopointData.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      lat: data.payload.lat,
+      lng: data.payload.lng,
+      timestamp: data.createdAt.toDate().getTime(),
+      speedMps: data.payload.speedMps,
+    } satisfies GpsPoint;
+  });
+}
+
+function buildRouteContext(
+  tripData: any,
+  sortedStops: RouteStopLike[],
+  gpsData: GpsPoint[]
+): BuiltRouteContext {
+  const route = tripData?.route || [];
+  const currentRoute = route[route.length - 1] || {};
+  const legs: RouteLeg[] = currentRoute.legs ?? [];
+
+  const needsDriverOrigin =
+    legs.length > 0 && legs[0]?.fromStopId === "__driver_origin__";
+
+  const routeStops: RouteStopLike[] = needsDriverOrigin
+    ? [
+        {
+          stopId: "__driver_origin__",
+          address: "Driver's starting location",
+          lat: gpsData[0]?.lat || 0,
+          lng: gpsData[0]?.lng || 0,
+          sequence: -1,
+        },
+        ...sortedStops,
+      ]
+    : sortedStops;
+
+  return {
+    routeStops,
+    route,
+    currentRoute,
+    legs,
+  };
+}
+
+function getStopById(routeStops: RouteStopLike[], stopId?: string | null) {
+  if (!stopId) return undefined;
+  return routeStops.find((s) => s.stopId === stopId);
+}
+
+function getLegTimeWindow(
+  leg: RouteLeg,
+  routeStops: RouteStopLike[]
+): TripTimeWindow | null {
+  const toStop = getStopById(routeStops, leg.toStopId);
+
+  if (!toStop?.start_time || !toStop?.end_time) return null;
+
+  return {
+    startTime: toTimestamp(toStop.start_time),
+    endTime: toTimestamp(toStop.end_time),
+  };
+}
+
+function getGpsPointsForLeg(
+  gpsData: GpsPoint[],
+  legWindow: TripTimeWindow
+): GpsPoint[] {
+  const startMs = legWindow.startTime.toDate().getTime();
+  const endMs = legWindow.endTime.toDate().getTime();
+
+  return gpsData.filter((point) => {
+    return point.timestamp >= startMs && point.timestamp <= endMs;
+  });
+}
+
+function averageLegSpeedMps(points: GpsPoint[]): number {
+  const avg = points.reduce((sum, p) => sum + p.speedMps, 0) / (points.length || 1);
+  return avg < 0.1 ? 20 : avg;
+}
+
+async function buildEtaSummaryForLeg(
+  tripId: string,
+  leg: RouteLeg,
+  routeStops: RouteStopLike[],
+  legGpsPoints: GpsPoint[],
+  stopEta?: { stopIndex: number; address: string; etaMinutes: number }
+): Promise<EtaInputSummary | null> {
+  const toStop = getStopById(routeStops, leg.toStopId);
+  const fromStop = getStopById(routeStops, leg.fromStopId);
+
+  if (!toStop) return null;
+
+  const currentLat = legGpsPoints[0]?.lat ?? fromStop?.lat ?? 0;
+  const currentLng = legGpsPoints[0]?.lng ?? fromStop?.lng ?? 0;
+  const avgSpeed = averageLegSpeedMps(legGpsPoints);
+
+  const legStartRaw = toStop.start_time;
+  const legStartTs =
+    legStartRaw instanceof Timestamp ? legStartRaw : legStartRaw ? toTimestamp(legStartRaw) : null;
+
+  const etaLegInput = {
+    tripId,
+    currentLat,
+    currentLng,
+    remainingStops: [
+      {
+        address: toStop.address,
+        lat: toStop.lat,
+        lng: toStop.lng,
+        sequence: toStop.sequence,
+      },
+    ],
+    currentSpeedMps: avgSpeed,
+    routeDistanceMeters: leg.distanceMeters,
+    routeDurationSeconds: leg.durationSeconds,
+    timeOfDay: legStartTs
+      ? legStartTs.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "",
+    dayOfWeek: legStartTs
+      ? legStartTs.toDate().toLocaleDateString([], { weekday: "long" })
+      : "",
+  };
+
+  if (!stopEta) return null;
+
+  return {
+    startLat: etaLegInput.currentLat,
+    startLng: etaLegInput.currentLng,
+    avgSpeed: etaLegInput.currentSpeedMps,
+    stopSequence: toStop.sequence,
+    estimatedArrivalMinutes: stopEta.etaMinutes,
+    confidence: 0.8,
+    factors: [`Based on current speed of ${(avgSpeed * 2.237).toFixed(1)} mph`, `Distance to stop is ${leg.distanceMeters ? (leg.distanceMeters / 1609.344).toFixed(2) + " mi" : "unknown"}`, `Time of day is ${etaLegInput.timeOfDay} on ${etaLegInput.dayOfWeek}`],
+    perStopETA: [stopEta],
+  };
+}
+
+// Functions to detect dwell times and anmoalies per leg without using AI, just based on GPS data patterns.
+// Good so that no excessive API calls are made
+function detectDwellPeriods(points: GpsPoint[]): {
+  totalDwellMinutes: number;
+  maxDwellMinutes: number;
+} {
+  if (points.length < 2) {
+    return { totalDwellMinutes: 0, maxDwellMinutes: 0 };
+  }
+
+  const DIST_THRESHOLD_METERS = 20;
+  const SPEED_THRESHOLD_MPS = 0.9; // ~2 mph
+
+  let totalDwellMs = 0;
+  let currentDwellStart: number | null = null;
+  let maxDwellMs = 0;
+
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+
+    const distance = haversineMeters(prev, curr);
+    const isStationary =
+      curr.speedMps < SPEED_THRESHOLD_MPS &&
+      distance < DIST_THRESHOLD_METERS;
+
+    if (isStationary) {
+      if (currentDwellStart === null) {
+        currentDwellStart = prev.timestamp;
+      }
+    } else {
+      if (currentDwellStart !== null) {
+        const dwellMs = curr.timestamp - currentDwellStart;
+        totalDwellMs += dwellMs;
+        maxDwellMs = Math.max(maxDwellMs, dwellMs);
+        currentDwellStart = null;
+      }
+    }
+  }
+
+  if (currentDwellStart !== null) {
+    const dwellMs = points[points.length - 1].timestamp - currentDwellStart;
+    totalDwellMs += dwellMs;
+    maxDwellMs = Math.max(maxDwellMs, dwellMs);
+  }
+
+  return {
+    totalDwellMinutes: totalDwellMs / 60000,
+    maxDwellMinutes: maxDwellMs / 60000,
+  };
+}
+
+function detectAnomaliesLocal(
+  driverId: string,
+  legGpsPoints: GpsPoint[]
+): Anomaly[] {
+  const anomalies: Anomaly[] = [];
+
+  const speedingCount = legGpsPoints.filter(
+    (p) => p.speedMps * 2.237 > 75
+  ).length;
+
+  if (speedingCount >= 3) {
+    anomalies.push({
+      driverId,
+      driverName: "",
+      type: "speeding",
+      severity: "medium",
+      description: `${speedingCount} GPS points exceeded 75 mph.`,
+    });
+  }
+
+  const avgSpeedMph =
+    legGpsPoints.length > 0
+      ? legGpsPoints.reduce((sum, p) => sum + p.speedMps * 2.237, 0) /
+        legGpsPoints.length
+      : 0;
+
+  if (legGpsPoints.length > 0 && avgSpeedMph < 10) {
+    anomalies.push({
+      driverId,
+      driverName: "",
+      type: "slow",
+      severity: "low",
+      description: `Average speed was ${avgSpeedMph.toFixed(1)} mph.`,
+    });
+  }
+
+  const dwell = detectDwellPeriods(legGpsPoints);
+
+  if (dwell.maxDwellMinutes > 8) {
+    anomalies.push({
+      driverId,
+      driverName: "",
+      type: "idle",
+      severity: "medium",
+      description: `Driver was stationary for up to ${dwell.maxDwellMinutes.toFixed(1)} minutes.`,
+    });
+  }
+
+  return anomalies;
+}
+
+async function buildLegAnomalies(
+  driverId: string,
+  legIndex: number,
+  legGpsPoints: GpsPoint[]
+): Promise<LegAnomalySummary> {
+  
+  const anomalies = detectAnomaliesLocal(driverId, legGpsPoints);
+
+  return {
+    legIndex,
+    anomalies,
+  };
+}
+
+function buildLegDistanceSummary(
+  legIndex: number,
+  legGpsPoints: GpsPoint[]
+): LegDistanceSummary {
+  return {
+    legIndex,
+    distance: totalDistanceMeters(legGpsPoints),
+  };
+}
+
+function buildLegPointSummary(
+  legIndex: number,
+  leg: RouteLeg,
+  legGpsPoints: GpsPoint[]
+): LegPointSummary {
+  return {
+    legIndex,
+    points: legGpsPoints,
+    decodedRoute: decodePolyline(leg.polyline || ""),
+  };
+}
+
+function buildLegCompletionTimes(routeStops: RouteStopLike[]): LegTimingSummary[] {
+  return routeStops
+    .filter((s) => s.stopId !== "__driver_origin__")
+    .map((s) => {
+      const start = s.start_time instanceof Timestamp ? s.start_time : s.start_time ? toTimestamp(s.start_time) : null;
+      const end = s.end_time instanceof Timestamp ? s.end_time : s.end_time ? toTimestamp(s.end_time) : null;
+
+      return {
+        legIndex: s.sequence,
+        minutes: start && end ? (end.seconds - start.seconds) / 60 : 0,
+      };
+    })
+    .sort((a, b) => a.legIndex - b.legIndex);
+}
+
+async function fetchHistoricalWeatherForTrip(
+  stops: RouteStopLike[],
+  window: TripTimeWindow
+) {
+  return computeHistoricalWeather(
+    stops as any[],
+    window.startTime.seconds,
+    window.endTime.seconds
+  );
+}
+
+function buildDelayAnalysisPrompt(input: {
+  currentRoute: any;
+  gpsData: GpsPoint[];
+  timeWindow: TripTimeWindow;
+  routeStops: RouteStopLike[];
+  legs: RouteLeg[];
+  legPoints: LegPointSummary[];
+  anomaliesPerLeg: LegAnomalySummary[];
+  etaInputs: EtaInputSummary[];
+  legCompletionTimes: LegTimingSummary[];
+  weatherAtStops: any;
+}): string {
+  const {
+    currentRoute,
+    gpsData,
+    timeWindow,
+    routeStops,
+    legs,
+    legPoints,
+    anomaliesPerLeg,
+    etaInputs,
+    legCompletionTimes,
+    weatherAtStops,
+  } = input;
+
+  return `You are a fleet operations delay analysis engine.
+
+Analyze this completed delivery trip and identify the most likely causes of delay compared to the planned route.
+
+Important definitions:
+- Leg travel time = time spent driving between stops.
+- Dwell time = time spent stationary at or very near a stop location after arrival.
+- Do NOT treat long leg travel time between stops as dwell time.
+- Only classify a delay as dwell_time if there is evidence the driver remained stationary near the stop itself.
+- If there is no clear evidence of stationary time at the stop, prefer traffic, weather, route_inefficiency, or normal_operations instead.
+
+Trip Context:
+- Planned route distance: ${currentRoute.distanceMeters ? (currentRoute.distanceMeters / 1609.344).toFixed(1) + " mi" : "unknown"}
+- Planned route duration: ${currentRoute.durationSeconds ? Math.round(currentRoute.durationSeconds / 60) + " min" : "unknown"}
+- Actual average speed: ${gpsData.length > 0 ? (gpsData.reduce((sum, p) => sum + p.speedMps, 0) / gpsData.length * 2.237).toFixed(1) + " mph" : "unknown"}
+- Trip time window: ${timeWindow.startTime.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} to ${timeWindow.endTime.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} on ${timeWindow.startTime.toDate().toLocaleDateString([], { weekday: "long" })}
+
+Stops:
+${routeStops.map(s => `  ${s.sequence}: "${s.address}" (${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}) - StopId: ${s.stopId}`).join("\n")}
+
+Legs:
+${legs.map((leg, i) => `  Leg ${i}: from ${leg.fromStopId} to ${leg.toStopId}, planned distance: ${leg.distanceMeters ? (leg.distanceMeters / 1609.344).toFixed(3) + " mi" : "unknown"}, planned duration: ${leg.durationSeconds ? (leg.durationSeconds / 60.0).toFixed(2) + " min" : "unknown"}`).join("\n")}
+
+Observed GPS and route evidence:
+${legPoints.map(lp => `  Leg ${lp.legIndex}:
+    GPS points:
+${lp.points.map(p => `      (${p.lat.toFixed(4)},${p.lng.toFixed(4)}) speed: ${(p.speedMps * 2.237).toFixed(0)} mph timestamp: ${new Date(p.timestamp).toLocaleTimeString()}`).join("\n")}
+    Expected route points:
+${lp.decodedRoute.map(p => `      (${p.lat.toFixed(4)},${p.lng.toFixed(4)})`).join("\n")}`).join("\n\n")}
+
+Anomalies:
+${anomaliesPerLeg.map(ap => `  Leg ${ap.legIndex}:
+    ${ap.anomalies.length > 0 ? ap.anomalies.map(a => `- ${a.type} (${a.severity}): ${a.description}`).join("\n    ") : "No anomalies detected"}`).join("\n\n")}
+
+ETA predictions:
+${etaInputs.map((eta, i) => `  Leg ${i}: ETA to ${eta.perStopETA[0]?.address}: ${eta.perStopETA[0]?.etaMinutes} min; confidence ${eta.confidence}; factors: ${eta.factors.join(", ")}`).join("\n")}
+
+Actual Leg Completion Times:
+${legCompletionTimes.map(s => `  Leg ${s.legIndex}: ${s.minutes} mins`).join("\n")}
+
+Weather during trip:
+${weatherAtStops.stops.map((s: any) => `  Stop ${s.stopId} (${s.address}):
+${s.forecast.map((f: any) => `      At ${f.actualTime}: ${f.main}, ${f.description}, temp: ${f.temperatureF}F, precip chance: ${f.precipitationChance}%, visibility: ${f.visibilityMiles} mi, wind: ${f.windSpeedMph} mph`).join("\n")}`).join("\n\n")}
+
+Select from:
+1. traffic
+2. weather
+3. dwell_time
+4. route_inefficiency
+5. normal_operations
+
+Decision rules:
+- Use traffic when travel time is longer than planned and speeds are low while driving.
+- Use weather when poor weather likely explains slower movement or reduced visibility.
+- Use dwell_time only when there is evidence of time spent stationary at/near a stop.
+- Use route_inefficiency when there is off-route movement, backtracking, or extra travel distance.
+- Use normal_operations when there is no meaningful abnormal delay.
+- Do NOT use dwell_time based only on long leg travel time.
+
+Return ONLY a JSON array:
+[
+  {
+    "delayCause": "traffic|weather|dwell_time|route_inefficiency|normal_operations",
+    "confidence": <0.0-1.0>,
+    "summary": "<1-2 sentence explanation>",
+    "factors": ["<supporting observation>", "<supporting observation>"],
+    "estimatedDelayMinutes": <number>,
+    "recommendations": ["<operational improvement>", "<operational improvement>"]
+  }
+]`;
+}
+
+async function buildLegAnalytics(params: {
+  tripId: string;
+  driverId: string;
+  routeStops: RouteStopLike[];
+  legs: RouteLeg[];
+  gpsData: GpsPoint[];
+}) {
+  const { tripId, driverId, routeStops, legs, gpsData } = params;
+
+  const etaInputs: EtaInputSummary[] = [];
+  const anomaliesPerLeg: LegAnomalySummary[] = [];
+  const legDistances: LegDistanceSummary[] = [];
+  const legPoints: LegPointSummary[] = [];
+
+
+
+  
+  const startDate = routeStops[0]?.start_time ? toTimestamp(routeStops[0]?.start_time).toDate() : null;
+
+
+  const input = {
+    tripId: tripId,
+    currentLat: gpsData[0]?.lat ?? 0,
+    currentLng: gpsData[0]?.lng ?? 0,
+    remainingStops: routeStops
+      .filter((s) => s.stopId !== "__driver_origin__")
+      .map((s) => ({
+        address: s.address,
+        lat: s.lat,
+        lng: s.lng,
+        sequence: s.sequence,
+      })),
+    routeDistanceMeters: legs.map((leg) => leg.distanceMeters).reduce((sum, d) => sum + (d ?? 0), 0),
+    routeDurationSeconds: legs.map((leg) => leg.durationSeconds).reduce((sum, d) => sum + (d ?? 0), 0),
+    currentSpeedMps: 40,
+    timeOfDay: startDate
+      ? startDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "",
+    dayOfWeek: startDate
+          ? startDate.toLocaleDateString([], { weekday: "long" })
+          : "",
+  }
+
+  const etaPrediction = await predictETA(input);
+  console.log("ETA Prediction:", etaPrediction);
+
+  let totalEstimatedMinutes = 0;
+  for (let index = 0; index < legs.length; index++) {
+    const leg = legs[index];
+    const legWindow = getLegTimeWindow(leg, routeStops);
+    if (!legWindow) continue;
+
+    const legGpsPoints = getGpsPointsForLeg(gpsData, legWindow);
+
+    const toStop = getStopById(routeStops, leg.toStopId);
+
+    const stopEta = etaPrediction.perStopETA.find(
+      (eta) => eta.stopIndex === toStop?.sequence
+    );
+
+    if (!stopEta) continue;
+
+    const temp = (stopEta?.etaMinutes || 0) - totalEstimatedMinutes;
+
+    totalEstimatedMinutes += (stopEta?.etaMinutes || 0) > 0 ? (stopEta?.etaMinutes || 0) : 0;
+
+    stopEta.etaMinutes = temp > 0 ? temp : 0;
+
+    console.log(`Leg ${index} ETA TIME TEST:`, stopEta);
+    const etaSummary = await buildEtaSummaryForLeg(
+      tripId,
+      leg,
+      routeStops,
+      legGpsPoints,
+      stopEta
+    );
+
+    if (etaSummary) etaInputs.push(etaSummary);
+
+    const anomalySummary = await buildLegAnomalies(
+      driverId,
+      index,
+      legGpsPoints
+    );
+
+    anomaliesPerLeg.push(anomalySummary);
+    legDistances.push(buildLegDistanceSummary(index, legGpsPoints));
+    legPoints.push(buildLegPointSummary(index, leg, legGpsPoints));
+  }
+
+  return {
+    etaInputs,
+    anomaliesPerLeg,
+    legDistances,
+    legPoints,
+  };
+}
+
+export async function delayTripAnalytics(
+  tripId: string,
+  stops: any[]
+): Promise<DelayAnalysisResult[]> {
+  const trip = await fetchTripDoc(tripId);
+  const tripData = trip.data();
+
+  const sortedStops = sortStops(stops);
+  const driverId = tripData?.driverId;
+  const timeWindow = getTripTimeWindow(sortedStops);
+
+  if (!driverId || !timeWindow) {
+    console.error("Missing driverId, start_time, or end_time");
+    return fallbackDelayResult();
+  }
+
+  const gpsData = await fetchGpsData(driverId, timeWindow);
+  const routeContext = buildRouteContext(tripData, sortedStops, gpsData);
+
+  const {
+    etaInputs,
+    anomaliesPerLeg,
+    legDistances,
+    legPoints,
+  } = await buildLegAnalytics({
+    tripId,
+    driverId,
+    routeStops: routeContext.routeStops,
+    legs: routeContext.legs,
+    gpsData,
+  });
+
+  console.log(anomaliesPerLeg);
+  console.log(legDistances);
+
+  const legCompletionTimes = buildLegCompletionTimes(routeContext.routeStops);
+  console.log("Actual leg completion times:", legCompletionTimes);
+
+  const weatherAtStops = await fetchHistoricalWeatherForTrip(
+    sortedStops,
+    timeWindow
+  );
+
+  const prompt = buildDelayAnalysisPrompt({
+    currentRoute: routeContext.currentRoute,
+    gpsData,
+    timeWindow,
+    routeStops: routeContext.routeStops,
+    legs: routeContext.legs,
+    legPoints,
+    anomaliesPerLeg,
+    etaInputs,
+    legCompletionTimes,
+    weatherAtStops,
+  });
+
+  console.log(prompt);
+  return aiJson<DelayAnalysisResult[]>(prompt, 800);
+}
+
+// ───  AI-powered Routing Feedback Loop ─────────────────────────
+
+interface LegPredictionFeedback {
+  legIndex: number;
+  fromStopId: string;
+  toStopId: string;
+  predictedMinutes: number;
+  actualMinutes: number;
+  absoluteErrorMinutes: number;
+  errorPercent: number;
+  accuracyPercent: number;
+}
+
+interface RouteAccuracyFeedback {
+  tripId: string;
+  driverId: string;
+  createdAt: string;
+  plannedRouteId?: string;
+  overallPredictedMinutes: number;
+  overallActualMinutes: number;
+  overallAbsoluteErrorMinutes: number;
+  routeAccuracyPercent: number;
+  legFeedback: LegPredictionFeedback[];
+  promptContextFeedback: {
+    avgLegErrorMinutes: number;
+    underPredictedLegs: number;
+    overPredictedLegs: number;
+    likelyBias: "optimistic" | "pessimistic" | "balanced";
+  };
+  avgSpeedMph?: number;
+  maxSpeedMph?: number;
+  speedingEventCount?: number;
+  totalDwellMinutes?: number;
+  maxDwellMinutes?: number;
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function computeLegAccuracyPercent(predictedMinutes: number, actualMinutes: number): number {
+  const errorPercent =
+    Math.abs(predictedMinutes - actualMinutes) / Math.max(actualMinutes, 1) * 100;
+  return Math.max(0, round2(100 - errorPercent));
+}
+
+function buildLegFeedback(params: {
+  legs: RouteLeg[];
+  legCompletionTimes: LegTimingSummary[];
+  etaInputs: EtaInputSummary[];
+}): LegPredictionFeedback[] {
+  const { legs, legCompletionTimes, etaInputs } = params;
+
+  return legs.map((leg, index) => {
+    const predictedMinutes =
+      etaInputs[index]?.perStopETA?.[0]?.etaMinutes ??
+      etaInputs[index]?.estimatedArrivalMinutes ??
+      0;
+
+    const actualMinutes =
+      legCompletionTimes.find((t) => t.legIndex === index)?.minutes ?? 0;
+
+    const absoluteErrorMinutes = round2(Math.abs(predictedMinutes - actualMinutes));
+    const errorPercent = round2(
+      (absoluteErrorMinutes / Math.max(actualMinutes, 1)) * 100
+    );
+    const accuracyPercent = computeLegAccuracyPercent(
+      predictedMinutes,
+      actualMinutes
+    );
+
+    return {
+      legIndex: index,
+      fromStopId: leg.fromStopId,
+      toStopId: leg.toStopId,
+      predictedMinutes: round2(predictedMinutes),
+      actualMinutes: round2(actualMinutes),
+      absoluteErrorMinutes,
+      errorPercent,
+      accuracyPercent,
+    };
+  });
+}
+
+function buildPromptContextFeedback(
+  legFeedback: LegPredictionFeedback[]
+): RouteAccuracyFeedback["promptContextFeedback"] {
+  const avgLegErrorMinutes = round2(
+    legFeedback.reduce((sum, leg) => sum + leg.absoluteErrorMinutes, 0) /
+      Math.max(legFeedback.length, 1)
+  );
+
+  const underPredictedLegs = legFeedback.filter(
+    (l) => l.predictedMinutes < l.actualMinutes
+  ).length;
+
+  const overPredictedLegs = legFeedback.filter(
+    (l) => l.predictedMinutes > l.actualMinutes
+  ).length;
+
+  let likelyBias: "optimistic" | "pessimistic" | "balanced" = "balanced";
+  if (underPredictedLegs > overPredictedLegs) likelyBias = "optimistic";
+  if (overPredictedLegs > underPredictedLegs) likelyBias = "pessimistic";
+
+  return {
+    avgLegErrorMinutes,
+    underPredictedLegs,
+    overPredictedLegs,
+    likelyBias,
+  };
+}
+
+function buildRouteAccuracyFeedback(params: {
+  tripId: string;
+  driverId: string;
+  currentRoute: any;
+  legs: RouteLeg[];
+  legCompletionTimes: LegTimingSummary[];
+  etaInputs: EtaInputSummary[];
+  avgSpeedMph?: number;
+  maxSpeedMph?: number;
+  speedingEventCount?: number;
+  totalDwellMinutes?: number;
+  maxDwellMinutes?: number;
+}): RouteAccuracyFeedback {
+  const { tripId, driverId, currentRoute, legs, legCompletionTimes, etaInputs } =
+    params;
+
+  const legFeedback = buildLegFeedback({
+    legs,
+    legCompletionTimes,
+    etaInputs,
+  });
+
+  const overallPredictedMinutes = round2(
+    legFeedback.reduce((sum, leg) => sum + leg.predictedMinutes, 0)
+  );
+
+  const overallActualMinutes = round2(
+    legFeedback.reduce((sum, leg) => sum + leg.actualMinutes, 0)
+  );
+
+  const overallAbsoluteErrorMinutes = round2(
+    Math.abs(overallPredictedMinutes - overallActualMinutes)
+  );
+
+  const routeAccuracyPercent = computeLegAccuracyPercent(
+    overallPredictedMinutes,
+    overallActualMinutes
+  );
+
+  return {
+    tripId,
+    driverId,
+    createdAt: new Date().toISOString(),
+    plannedRouteId: currentRoute?.createdAt,
+    overallPredictedMinutes,
+    overallActualMinutes,
+    overallAbsoluteErrorMinutes,
+    routeAccuracyPercent,
+    legFeedback,
+    promptContextFeedback: buildPromptContextFeedback(legFeedback),
+    avgSpeedMph: params.avgSpeedMph,
+    maxSpeedMph: params.maxSpeedMph,
+    speedingEventCount: params.speedingEventCount,
+    totalDwellMinutes: params.totalDwellMinutes,
+    maxDwellMinutes: params.maxDwellMinutes,
+  };
+}
+
+export async function postTripAnalytic(
+  tripId: string,
+  stops: any[]
+): Promise<RouteAccuracyFeedback | null> {
+  const trip = await fetchTripDoc(tripId);
+  const tripData = trip.data();
+
+  if (!trip.exists || !tripData) {
+    console.error(`Trip not found: ${tripId}`);
+    return null;
+  }
+
+  const sortedStops = sortStops(stops);
+  const driverId = tripData?.driverId;
+  const timeWindow = getTripTimeWindow(sortedStops);
+
+  if (!driverId || !timeWindow) {
+    console.error("Missing driverId, start_time, or end_time");
+    return null;
+  }
+
+  const gpsData = await fetchGpsData(driverId, timeWindow);
+  const routeContext = buildRouteContext(tripData, sortedStops, gpsData);
+  const tripDwellTimeMinutes = detectDwellPeriods(gpsData);
+  const speedsMph = gpsData.map((p) => p.speedMps * 2.237);
+  const avgSpeedMph =
+    speedsMph.length > 0
+      ? speedsMph.reduce((a, b) => a + b, 0) / speedsMph.length
+      : 0;
+
+  const maxSpeedMph = speedsMph.length > 0 ? Math.max(...speedsMph) : 0;
+  const speedingEventCount = speedsMph.filter((speed) => speed > 75).length;
+
+  const { etaInputs } = await buildLegAnalytics({
+    tripId,
+    driverId,
+    routeStops: routeContext.routeStops,
+    legs: routeContext.legs,
+    gpsData,
+  });
+
+  const legCompletionTimes = buildLegCompletionTimes(routeContext.routeStops);
+
+  const feedback = buildRouteAccuracyFeedback({
+    tripId,
+    driverId,
+    currentRoute: routeContext.currentRoute,
+    legs: routeContext.legs,
+    legCompletionTimes,
+    etaInputs,
+    avgSpeedMph: round2(avgSpeedMph),
+    maxSpeedMph: round2(maxSpeedMph),
+    speedingEventCount,
+    totalDwellMinutes: round2(tripDwellTimeMinutes.totalDwellMinutes),
+    maxDwellMinutes: round2(tripDwellTimeMinutes.maxDwellMinutes),
+  });
+
+
+  return feedback;
+}
+
+
+type PredictionBias = "optimistic" | "pessimistic" | "balanced";
+
+interface TripDelayReason {
+  reason: string;
+}
+
+interface TripDelayReasonSummary {
+  tripId: string;
+  delayReasons: TripDelayReason[];
+}
+
+interface DriverHistorySummary {
+  completedTrips: number;
+  avgRouteAccuracyPercent: number;
+  avgLegErrorMinutes: number;
+  predictionBias: PredictionBias;
+  avgPredictedMinutes: number;
+  avgActualMinutes: number;
+  dominantDelayCauses: {
+    traffic: number;
+    weather: number;
+    dwell_time: number;
+    route_inefficiency: number;
+    normal_operations: number;
+  };
+  tripDelayReasoning: TripDelayReasonSummary[];
+}
+
+function summarizeDriverHistory(trips: any[]): DriverHistorySummary {
+  const feedbacks = trips
+    .map((t) => t.feedbackAnalysis)
+    .filter(Boolean);
+
+  const delays = trips.flatMap((t) =>
+    Array.isArray(t.delayAnalysis) ? t.delayAnalysis : []
+  );
+
+  const avg = (nums: number[]) =>
+    nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
+
+  const avgRouteAccuracyPercent = avg(
+    feedbacks.map((f: any) => f.routeAccuracyPercent ?? 0)
+  );
+
+  const avgLegErrorMinutes = avg(
+    feedbacks.map((f: any) => f.promptContextFeedback?.avgLegErrorMinutes ?? 0)
+  );
+
+  const avgPredictedMinutes = avg(
+    feedbacks.map((f: any) => f.overallPredictedMinutes ?? 0)
+  );
+
+  const avgActualMinutes = avg(
+    feedbacks.map((f: any) => f.overallActualMinutes ?? 0)
+  );
+
+  const biasCounts: Record<PredictionBias, number> = {
+    optimistic: 0,
+    pessimistic: 0,
+    balanced: 0,
+  };
+
+  for (const f of feedbacks) {
+    const bias =
+      f.promptContextFeedback?.likelyBias as PredictionBias | undefined;
+
+    if (bias && bias in biasCounts) {
+      biasCounts[bias]++;
+    }
+  }
+
+  const predictionBias =
+    (Object.entries(biasCounts).sort((a, b) => b[1] - a[1])[0]?.[0] as PredictionBias) ||
+    "balanced";
+
+  const dominantDelayCauses = {
+    traffic: 0,
+    weather: 0,
+    dwell_time: 0,
+    route_inefficiency: 0,
+    normal_operations: 0,
+  };
+
+  for (const d of delays) {
+    if (d?.delayCause && d.delayCause in dominantDelayCauses) {
+      dominantDelayCauses[
+        d.delayCause as keyof typeof dominantDelayCauses
+      ]++;
+    }
+  }
+
+  
+  const tripDelayReasoning: TripDelayReasonSummary[] = trips.map((trip) => {
+    const delayReasons =
+      Array.isArray(trip.delayAnalysis)
+        ? trip.delayAnalysis
+            .map((d: any) => d?.summary || d?.reasoning)
+            .filter(Boolean)
+            .map((text: string) => ({
+              reason: text,
+            }))
+        : [];
+
+    return {
+      tripId: trip.id ?? trip.tripId ?? "",
+      delayReasons,
+    };
+  });
+
+  return {
+    completedTrips: trips.length,
+    avgRouteAccuracyPercent: Number(avgRouteAccuracyPercent.toFixed(2)),
+    avgLegErrorMinutes: Number(avgLegErrorMinutes.toFixed(2)),
+    predictionBias,
+    avgPredictedMinutes: Number(avgPredictedMinutes.toFixed(2)),
+    avgActualMinutes: Number(avgActualMinutes.toFixed(2)),
+    dominantDelayCauses,
+    tripDelayReasoning,
+  };
+}
+
+export async function retrieveRouteFeedback(
+  todaysDate: Timestamp,
+  driverId: string
+): Promise<DriverHistorySummary> {
+  const endDate = todaysDate.toDate();
+  endDate.setHours(23, 59, 59, 999);
+
+  const startDate = new Date(endDate);
+  startDate.setDate(startDate.getDate() - 30);
+  startDate.setHours(0, 0, 0, 0);
+
+  console.log(startDate, endDate);
+  console.log(driverId);
+
+  const tripsSnapshot = await db
+  .collection("trips")
+  .where("status", "==", "completed")
+  .where("driverId", "==", driverId)
+  .where("updatedAt", ">=", startDate.toISOString())
+  .where("updatedAt", "<=", endDate.toISOString())
+  .get();
+
+  const trips = tripsSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }));
+
+  console.log(trips);
+
+  const driver30days = summarizeDriverHistory(trips);
+
+  return driver30days;
+}
+
+
+// ─── AI-powered Driver Performance ─────────────────────────
+
+type TrendDirection = "improving" | "declining" | "stable";
+
+interface DriverAssessment {
+  driverId: string;
+  weekStart: string;
+  weekEnd: string;
+  createdAt: string;
+
+  performanceScore: number;
+
+  metrics: {
+    completedTrips: number;
+    avgSpeedMph: number;
+    maxSpeedMph: number;
+    speedingEventCount: number;
+    avgDwellMinutes: number;
+    totalDwellMinutes: number;
+    onTimeRatePercent: number;
+    avgRouteAccuracyPercent: number;
+    avgLegErrorMinutes: number;
+  };
+
+  trends: {
+    speedPatterns: string;
+    dwellTimes: string;
+    onTimeRate: TrendDirection;
+  };
+
+  recommendations: string[];
+  summary: string;
+}
+
+function clampScore(score: number): number {
+  return Math.max(1, Math.min(100, Math.round(score)));
+}
+
+function avg(nums: number[]): number {
+  return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
+}
+
+function sum(nums: number[]): number {
+  return nums.reduce((a, b) => a + b, 0);
+}
+
+
+function determineTrend(values: number[]): TrendDirection {
+  if (values.length < 2) return "stable";
+
+  const midpoint = Math.floor(values.length / 2);
+  const firstHalf = values.slice(0, midpoint);
+  const secondHalf = values.slice(midpoint);
+
+  const firstAvg = avg(firstHalf);
+  const secondAvg = avg(secondHalf);
+
+  if (secondAvg > firstAvg * 1.05) return "improving";
+  if (secondAvg < firstAvg * 0.95) return "declining";
+
+  return "stable";
+}
+
+function computeOnTimeRatePercent(trips: any[]): number {
+  const feedbackTrips = trips.filter((t) => t.feedbackAnalysis);
+  if (!feedbackTrips.length) return 0;
+
+  const onTimeTrips = feedbackTrips.filter((t) => {
+    const predicted = t.feedbackAnalysis?.overallPredictedMinutes ?? 0;
+    const actual = t.feedbackAnalysis?.overallActualMinutes ?? 0;
+
+    if (!predicted || !actual) return false;
+
+    return actual <= predicted * 1.1;
+  });
+
+  return round2((onTimeTrips.length / feedbackTrips.length) * 100);
+}
+
+function computeBasePerformanceScore(
+  metrics: DriverAssessment["metrics"]
+): number {
+  let score = 100;
+
+  score -= metrics.speedingEventCount * 2;
+  score -= Math.max(0, metrics.avgDwellMinutes - 8) * 2;
+  score -= Math.max(0, 90 - metrics.onTimeRatePercent) * 0.6;
+  score -= Math.max(0, metrics.avgLegErrorMinutes - 5) * 1.5;
+  score -= Math.max(0, 85 - metrics.avgRouteAccuracyPercent) * 0.5;
+
+  return clampScore(score);
+}
+
+function summarizeDelayCauses(trips: any[]) {
+  const dominantDelayCauses = {
+    traffic: 0,
+    weather: 0,
+    dwell_time: 0,
+    route_inefficiency: 0,
+    normal_operations: 0,
+  };
+
+  const tripDelayReasoning = trips.map((trip) => {
+    const delayReasons =
+      Array.isArray(trip.delayAnalysis)
+        ? trip.delayAnalysis
+            .map((d: any) => d?.summary)
+            .filter(Boolean)
+            .map((reason: string) => ({ reason }))
+        : [];
+
+    for (const d of trip.delayAnalysis ?? []) {
+      if (d?.delayCause && d.delayCause in dominantDelayCauses) {
+        dominantDelayCauses[
+          d.delayCause as keyof typeof dominantDelayCauses
+        ]++;
+      }
+    }
+
+    return {
+      tripId: trip.id ?? trip.tripId ?? "",
+      delayReasons,
+    };
+  });
+
+  return {
+    dominantDelayCauses,
+    tripDelayReasoning,
+  };
+}
+
+function buildWeeklyMetrics(trips: any[]): DriverAssessment["metrics"] {
+  const feedbackTrips = trips.filter((t) => t.feedbackAnalysis);
+
+  const avgSpeedMph = avg(
+    feedbackTrips.map((t) => t.feedbackAnalysis?.avgSpeedMph ?? 0)
+  );
+
+  const maxSpeedMph = Math.max(
+    0,
+    ...feedbackTrips.map((t) => t.feedbackAnalysis?.maxSpeedMph ?? 0)
+  );
+
+  const speedingEventCount = sum(
+    feedbackTrips.map((t) => t.feedbackAnalysis?.speedingEventCount ?? 0)
+  );
+
+  const totalDwellMinutes = sum(
+    feedbackTrips.map((t) => t.feedbackAnalysis?.totalDwellMinutes ?? 0)
+  );
+
+  const avgDwellMinutes =
+    feedbackTrips.length > 0 ? totalDwellMinutes / feedbackTrips.length : 0;
+
+  const avgRouteAccuracyPercent = avg(
+    feedbackTrips.map((t) => t.feedbackAnalysis?.routeAccuracyPercent ?? 0)
+  );
+
+  const avgLegErrorMinutes = avg(
+    feedbackTrips.map(
+      (t) => t.feedbackAnalysis?.promptContextFeedback?.avgLegErrorMinutes ?? 0
+    )
+  );
+
+  const onTimeRatePercent = computeOnTimeRatePercent(trips);
+
+  return {
+    completedTrips: trips.length,
+    avgSpeedMph: round2(avgSpeedMph),
+    maxSpeedMph: round2(maxSpeedMph),
+    speedingEventCount,
+    avgDwellMinutes: round2(avgDwellMinutes),
+    totalDwellMinutes: round2(totalDwellMinutes),
+    onTimeRatePercent,
+    avgRouteAccuracyPercent: round2(avgRouteAccuracyPercent),
+    avgLegErrorMinutes: round2(avgLegErrorMinutes),
+  };
+}
+
+function buildLocalWeeklyFallback(params: {
+  driverId: string;
+  startDate: Date;
+  endDate: Date;
+  trips: any[];
+  metrics: DriverAssessment["metrics"];
+  baseScore: number;
+}): DriverAssessment {
+  const { driverId, startDate, endDate, trips, metrics, baseScore } = params;
+
+  const onTimeRatesByTrip = trips
+    .filter((t) => t.feedbackAnalysis)
+    .map((t) => {
+      const predicted = t.feedbackAnalysis?.overallPredictedMinutes ?? 0;
+      const actual = t.feedbackAnalysis?.overallActualMinutes ?? 0;
+      return predicted && actual && actual <= predicted * 1.1 ? 100 : 0;
+    });
+
+  return {
+    driverId,
+    weekStart: startDate.toISOString(),
+    weekEnd: endDate.toISOString(),
+    createdAt: new Date().toISOString(),
+
+    performanceScore: baseScore,
+
+    metrics,
+
+    trends: {
+      speedPatterns:
+        metrics.speedingEventCount > 0
+          ? `${metrics.speedingEventCount} speeding events were recorded this week.`
+          : "No major speeding pattern detected.",
+      dwellTimes:
+        metrics.avgDwellMinutes > 8
+          ? `Average dwell time was high at ${metrics.avgDwellMinutes} minutes.`
+          : "Dwell time appears within a normal range.",
+      onTimeRate: determineTrend(onTimeRatesByTrip),
+    },
+
+    recommendations: [
+      metrics.speedingEventCount > 0
+        ? "Reduce speeding events and review high-speed trip segments."
+        : "Maintain current safe driving patterns.",
+      metrics.avgDwellMinutes > 8
+        ? "Review long stops and reduce unnecessary dwell time."
+        : "Maintain current stop efficiency.",
+      metrics.onTimeRatePercent < 90
+        ? "Improve route timing consistency and reduce late arrivals."
+        : "Maintain current on-time performance.",
+    ],
+
+    summary: `Driver completed ${metrics.completedTrips} trips with a ${metrics.onTimeRatePercent}% on-time rate and a base performance score of ${baseScore}.`,
+  };
+}
+
+export async function analyzeWeeklyDriverPerformance(
+  driverId: string,
+  todaysDate: Timestamp = Timestamp.now()
+): Promise<DriverAssessment> {
+  const endDate = todaysDate.toDate();
+  endDate.setHours(23, 59, 59, 999);
+
+  const startDate = new Date(endDate);
+  startDate.setDate(startDate.getDate() - 7);
+  startDate.setHours(0, 0, 0, 0);
+
+  const tripsSnapshot = await db
+    .collection("trips")
+    .where("status", "==", "completed")
+    .where("driverId", "==", driverId)
+    .where("updatedAt", ">=", startDate.toISOString())
+    .where("updatedAt", "<=", endDate.toISOString())
+    .get();
+
+  
+
+  const trips = tripsSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }));
+
+  console.log(`Found ${trips.length} completed trips for driver ${driverId} between ${startDate.toISOString()} and ${endDate.toISOString()}`);
+  console.log(trips);
+  const metrics = buildWeeklyMetrics(trips);
+  const baseScore = computeBasePerformanceScore(metrics);
+
+  const { dominantDelayCauses, tripDelayReasoning } =
+    summarizeDelayCauses(trips);
+
+  const fallbackAssessment = buildLocalWeeklyFallback({
+    driverId,
+    startDate,
+    endDate,
+    trips,
+    metrics,
+    baseScore,
+  });
+
+  let assessment: DriverAssessment = fallbackAssessment;
+
+  try {
+    const prompt = `You are a fleet operations analyst.
+
+Analyze this driver's weekly performance using only the provided saved analytics.
+
+Driver ID: ${driverId}
+Week: ${startDate.toISOString()} to ${endDate.toISOString()}
+
+Metrics:
+${JSON.stringify(metrics, null, 2)}
+
+Delay cause counts:
+${JSON.stringify(dominantDelayCauses, null, 2)}
+
+Trip delay reasoning:
+${JSON.stringify(tripDelayReasoning, null, 2)}
+
+Base performance score calculated from real metrics: ${baseScore}
+
+Return ONLY this JSON object:
+{
+  "performanceScore": <number from 1-100, close to the base score unless the evidence strongly suggests otherwise>,
+  "summary": "<2-3 sentence weekly performance summary>",
+  "trends": {
+    "speedPatterns": "<short analysis of speed behavior>",
+    "dwellTimes": "<short analysis of dwell time behavior>",
+    "onTimeRate": "improving|declining|stable"
+  },
+  "recommendations": ["<specific recommendation>", "<specific recommendation>", "<specific recommendation>"]
+}`;
+
+    const aiResult = await aiJson<{
+      performanceScore: number;
+      summary: string;
+      trends: {
+        speedPatterns: string;
+        dwellTimes: string;
+        onTimeRate: TrendDirection;
+      };
+      recommendations: string[];
+    }>(prompt, 700);
+
+    console.log("AI Weekly Assessment Result:", aiResult);
+    assessment = {
+      ...fallbackAssessment,
+      performanceScore: clampScore(
+        aiResult.performanceScore ?? baseScore
+      ),
+      trends: {
+        speedPatterns:
+          aiResult.trends?.speedPatterns ??
+          fallbackAssessment.trends.speedPatterns,
+        dwellTimes:
+          aiResult.trends?.dwellTimes ??
+          fallbackAssessment.trends.dwellTimes,
+        onTimeRate:
+          aiResult.trends?.onTimeRate ??
+          fallbackAssessment.trends.onTimeRate,
+      },
+      recommendations: Array.isArray(aiResult.recommendations)
+        ? aiResult.recommendations
+        : fallbackAssessment.recommendations,
+      summary: aiResult.summary ?? fallbackAssessment.summary,
+    };
+  } catch (err) {
+    console.warn("AI weekly analysis failed, using local fallback:", err);
+  }
+
+  await db.collection("driver_assessments").add(assessment);
+
+  return assessment;
 }

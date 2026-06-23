@@ -8,9 +8,11 @@ import {
   generateDailySummary,
   detectAnomalies,
   predictETA,
+  analyzeWeeklyDriverPerformance,
   distributeStopsAcrossDrivers,
 } from "../services/ai";
 import { geocodeAddress, computeRoute } from "../services/directions";
+import { Timestamp } from "firebase-admin/firestore";
 
 const router = Router();
 
@@ -298,6 +300,18 @@ router.post("/eta", async (req, res) => {
   }
 });
 
+// ─── Weekly Driver Assessment ───────────────────────────────────────
+router.post("/weekly-assessment", requireRole("dispatcher", "admin"), async (req, res) => {
+  const { driverId } = req.body;
+  try {
+    const assessment = await analyzeWeeklyDriverPerformance(driverId);
+    console.log("Weekly Driver Assessment:", assessment);
+    res.json({ ok: true, driverId, assessment });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Driver assessment failed";
+    res.status(500).json({ error: "Internal Error", message });
+  }
+});
 // ─── POST /ai/multi-assign — distribute stops across multiple drivers ─
 
 router.post("/multi-assign", requireRole("dispatcher", "admin"), async (req, res) => {

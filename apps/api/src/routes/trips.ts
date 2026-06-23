@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { db } from "../config/firebase";
+import { Timestamp } from "firebase-admin/firestore";
 import admin from "../config/firebase";
 import { requireRole, requireOrg } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -10,6 +11,7 @@ import {
   updateTripSchema,
   reorderStopsSchema,
   ErrorCode,
+  decodePolyline,
 } from "@quickroutesai/shared";
 import { computeRoute, geocodeAddress } from "../services/directions";
 import { predictEta } from "../services/etaPredictor";
@@ -18,6 +20,9 @@ import { pagination } from "../middleware/pagination";
 import { paginateFirestore } from "../utils/paginateFirestore";
 import { tripStopsValidationGuard, tripTransitionGuard } from "../middleware/trips";
 import { AppError } from "../utils/AppError";
+import fs from "fs";
+import { delayTripAnalytics, postTripAnalytic } from "../services/ai";
+import { computeHistoricalWeather, computeWeather } from "../services/weather";
 import type { PredictedEta, Trip, TripStop } from "@quickroutesai/shared";
 
 const router = Router();
@@ -64,6 +69,8 @@ router.post("/", requireRole("dispatcher", "admin"), requireOrg, validate(create
           lng,
           sequence: s.sequence ?? i,
           notes: s.notes || "",
+          start_time: null,
+          end_time: null,
         };
       }),
     );
@@ -318,6 +325,8 @@ router.post("/:id/duplicate", requireRole("dispatcher", "admin"), requireOrg, tr
         ...stop,
         stopId: stopDocRef.id,
         sequence: stop.sequence ?? i,
+        start_time: null,
+        end_time: null,
       });
     });
     await batch.commit();
@@ -387,6 +396,8 @@ router.patch("/:id", requireRole("dispatcher", "admin"), requireOrg, validate(up
             lng,
             sequence: s.sequence ?? i,
             notes: s.notes || "",
+            start_time: s.start_time || null,
+            end_time: s.end_time || null,
           };
         }),
       );
@@ -503,7 +514,7 @@ router.delete("/:id", requireRole("dispatcher", "admin"), requireOrg, async (req
 router.post("/:id/route", requireRole("dispatcher", "admin"), requireOrg, tripStopsValidationGuard, async (req, res, next) => {
   try {
     const tripDoc = await db.collection("trips").doc(req.params.id).get();
-
+    const { currentLocation } = req.body;
     if (!tripDoc.exists) {
       return next(new AppError(ErrorCode.TRIP_NOT_FOUND, 404));
     }
@@ -520,7 +531,7 @@ router.post("/:id/route", requireRole("dispatcher", "admin"), requireOrg, tripSt
       return next(new AppError(ErrorCode.BAD_REQUEST, 400, "Need at least 2 stops to compute route"));
     }
 
-    const { route: routeResult, optimizedStops } = await computeRoute(stops);
+    const { route: routeResult, optimizedStops } = await computeRoute(stops, currentLocation, trip?.driverId || "no driver");
 
     // Store the latest computed route as a single object. The Trip type and
     // the web client both expect `route: TripRoute | null`; earlier code
@@ -824,7 +835,7 @@ router.post("/:id/status", requireOrg, validate(updateTripStatusSchema), async (
     // When a driver starts a trip, optionally recompute route from their live location.
     if (status === "in_progress" && currentLocation && Array.isArray(req?.stops) && req.stops.length > 0) {
       try {
-        const { route: reroutedRoute, optimizedStops } = await computeRoute(req.stops, currentLocation);
+        const { route: reroutedRoute, optimizedStops } = await computeRoute(req.stops, currentLocation, trip?.driverId || "no driver");
         updateData.route = reroutedRoute;
         const batch = db.batch();
         const tripRef = db.collection("trips").doc(req.params.id);
@@ -842,6 +853,32 @@ router.post("/:id/status", requireOrg, validate(updateTripStatusSchema), async (
       } catch (rerouteErr) {
         const rerouteMessage = rerouteErr instanceof Error ? rerouteErr.message : "Unknown reroute error";
         console.error("Failed to reroute trip from driver location:", rerouteMessage);
+      }
+    }
+    if (status === "in_progress") {
+        const firstStop = await tripRef.collection("stops").orderBy("sequence").limit(1).get().then((snap) => snap.docs[0]?.data());
+
+        await db.collection("trips").doc(req.params.id).collection("stops").doc(firstStop.stopId).update({
+        start_time: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    }
+    if (status === "completed") {
+      try {
+        const delayAnalysis = await delayTripAnalytics(req.params.id, req.stops || []);
+        console.log("Delay analysis result:", delayAnalysis);
+        await db.collection("trips").doc(req.params.id).update({
+          delayAnalysis: delayAnalysis,
+        });
+        
+        const feedbackAnalysis = await postTripAnalytic(req.params.id, req.stops || []);
+        console.log("Feedback analysis result:", feedbackAnalysis);
+        
+        await db.collection("trips").doc(req.params.id).update({
+          feedbackAnalysis: feedbackAnalysis,
+        });
+        
+      } catch (err) {
+        console.error("Failed to post trip analytics:", err);
       }
     }
 
@@ -865,7 +902,7 @@ router.post("/:id/status", requireOrg, validate(updateTripStatusSchema), async (
  * POST /trips/:id/stops/:stopId/complete — driver marks a stop as completed
  * Sequential enforcement: all prior stops must be completed first.
  */
-router.post("/:id/stops/:stopId/complete", requireOrg, async (req, res) => {
+router.post("/:id/stops/:stopId/complete", requireOrg, tripStopsValidationGuard, async (req, res) => {
   try {
     const tripRef = db.collection("trips").doc(req.params.id);
     const tripDoc = await tripRef.get();
@@ -889,28 +926,23 @@ router.post("/:id/stops/:stopId/complete", requireOrg, async (req, res) => {
       return res.status(403).json({ error: "Forbidden", message: "Not your trip" });
     }
 
-    // Stops live in the trips/{id}/stops subcollection (not on the trip doc).
-    const stopRef = tripRef.collection("stops").doc(req.params.stopId);
-    const stopDoc = await stopRef.get();
+    const stops: any[] = req.stops || [];
+    let stopIndex = stops.findIndex((s) => s.stopId === req.params.stopId);
 
-    if (!stopDoc.exists) {
-      return res.status(404).json({ error: "Not Found", message: "Stop not found" });
-    }
-
-    const stop = stopDoc.data() as { sequence: number; status?: string };
-    if (stop.status === "completed") {
+    const stop = stops[stopIndex];
+    if (stop.end_time !== null) {
       return res.status(409).json({ error: "Conflict", message: "Stop already completed" });
     }
 
-    // Sequential enforcement: fetch siblings and confirm all earlier stops are completed.
-    const allStopsSnap = await tripRef.collection("stops").get();
-    const allStops = allStopsSnap.docs.map((d) => ({
-      stopId: d.id,
-      ...(d.data() as { sequence: number; status?: string }),
-    }));
-    const blockedBy = allStops.find(
-      (s) => s.sequence < stop.sequence && s.status !== "completed",
+    // Sequential enforcement: all stops with lower sequence must be completed
+    const sorted = [...stops].sort((a, b) => a.sequence - b.sequence);
+    const stopSequence = stop.sequence;
+    stopIndex = sorted.findIndex((s) => s.stopId === req.params.stopId);
+    const blockedBy = sorted.find(
+      (s) => s.sequence < stopSequence && s.end_time === null,
     );
+
+  
     if (blockedBy) {
       return res.status(400).json({
         error: "Bad Request",
@@ -918,9 +950,19 @@ router.post("/:id/stops/:stopId/complete", requireOrg, async (req, res) => {
       });
     }
 
-    const completedAt = new Date().toISOString();
-    await stopRef.update({ status: "completed", completedAt });
-    await tripRef.update({ updatedAt: completedAt });
+    const completedAt = admin.firestore.FieldValue.serverTimestamp();
+
+    await tripRef.collection("stops").doc(stop.stopId).update({
+      end_time: completedAt,
+    });
+    let nextStopSequence = -1;
+    if(stopIndex < sorted.length - 1) {
+      console.log("test")
+      nextStopSequence = sorted[stopIndex+1].sequence;
+      await tripRef.collection("stops").doc(sorted[nextStopSequence].stopId).update({
+      start_time: completedAt,
+      });
+    }
 
     await db.collection("events").add({
       type: "stop_completed",
@@ -928,8 +970,8 @@ router.post("/:id/stops/:stopId/complete", requireOrg, async (req, res) => {
       payload: { tripId: req.params.id, stopId: req.params.stopId, completedAt },
       createdAt: completedAt,
     });
-
-    res.json({ ok: true, stopId: req.params.stopId, completedAt });
+    console.log("test1")
+    res.json({ ok: true, stopId: req.params.stopId, headingToNext: nextStopSequence });
   } catch (err) {
     res.status(500).json({ error: "Internal Error", message: "Failed to complete stop" });
   }
@@ -968,4 +1010,49 @@ router.post("/:id/cancel", requireRole("dispatcher", "admin"), requireOrg, async
   }
 });
 
+
+/**
+ *  POST to mock a quick completed trip for testing analytics and AI features without going through the full workflow.
+ */
+
+router.post("/completed-trip", requireRole("admin"), async (req, res) => {
+  try {
+    const tripId = req.body.tripId ?? "test_completed_trip_001";
+
+    const tripRef = db.collection("trips").doc(tripId);
+
+    const stops = req.body.stops ?? [];
+
+    const { stops: _stops, ...tripData } = req.body;
+
+    await tripRef.set({
+      ...tripData,
+      status: "completed",
+      createdAt: tripData.createdAt ?? new Date().toISOString(),
+      updatedAt: tripData.updatedAt ?? new Date().toISOString(),
+    });
+
+    const batch = db.batch();
+
+    for (const stop of stops) {
+      const stopRef = tripRef.collection("stops").doc(stop.stopId);
+      batch.set(stopRef, {
+        ...stop,
+        start_time: Timestamp.fromDate(new Date(stop.start_time)),
+        end_time: Timestamp.fromDate(new Date(stop.end_time)),
+      });
+    }
+
+    await batch.commit();
+
+    res.status(201).json({
+      message: "Mock completed trip created",
+      tripId,
+      stopsCreated: stops.length,
+    });
+  } catch (err) {
+    console.error("Failed to create mock trip:", err);
+    res.status(500).json({ error: "Failed to create mock trip" });
+  }
+});
 export default router;

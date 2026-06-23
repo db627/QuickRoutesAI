@@ -1,4 +1,5 @@
 import { Client, TravelMode, Status } from "@googlemaps/google-maps-services-js";
+import { decode, encode } from "@googlemaps/polyline-codec";
 import type { TripRoute, TripStop, RouteLeg, TimeWindowViolation } from "@quickroutesai/shared";
 import { optimizeStopOrder } from "./routeOptimizer";
 import { computeWeather } from "./weather";
@@ -174,6 +175,7 @@ export interface ComputeRouteOptions {
 export async function computeRoute(
   stops: TripStop[],
   optionsOrOrigin?: ComputeRouteOptions | RouteOrigin,
+  driverId:string = "no user"
 ): Promise<ComputeRouteResult> {
   // Support legacy call signature: computeRoute(stops, originOverride)
   // as well as new options object: computeRoute(stops, { skipOptimization, originOverride })
@@ -310,6 +312,7 @@ export async function computeRoute(
     "routes.legs.distanceMeters",
     "routes.legs.duration",
     "routes.legs.staticDuration",
+    "routes.legs.polyline.encodedPolyline",
   ].join(",");
 
   const response = await fetch(
@@ -351,6 +354,7 @@ export async function computeRoute(
     staticDurationSeconds: leg.staticDuration
       ? durationStrToSeconds(leg.staticDuration)
       : undefined,
+      polyline: leg.polyline?.encodedPolyline ?? "",
   }));
 
   const distanceMeters = route.distanceMeters ?? legs.reduce((sum, leg) => sum + leg.distanceMeters, 0);
@@ -391,4 +395,22 @@ export async function computeRoute(
   });
 
   return result;
+}
+
+export function decodePolyline(encoded: string): { lat: number; lng: number }[] {
+  try {
+    return decode(encoded).map(([lat, lng]) => ({ lat, lng }));
+  } catch (err) {
+    console.error("Failed to decode polyline:", err);
+    return [];
+  }
+}
+
+export function encodePolyline(points: { lat: number; lng: number }[]): string {
+  try {
+    return encode(points.map((p) => [p.lat, p.lng]));
+  } catch (err) {
+    console.error("Failed to encode polyline:", err);
+    return "";
+  }
 }
